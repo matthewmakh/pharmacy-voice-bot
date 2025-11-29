@@ -32,7 +32,8 @@ def generate_twiml_gather(
         f'<Gather input="speech" '
         f'action="{action_url}" '
         f'method="POST" '
-        f'speechTimeout="auto" '
+        f'timeout="5" '
+        f'speechTimeout="2" '
         f'language="en-US">'
     )
     
