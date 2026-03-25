@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
+  maxRetries: 4, // built-in retry with backoff for 429/503
+  timeout: 120000,
 });
 
 const MODEL = 'claude-sonnet-4-6';
