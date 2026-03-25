@@ -573,7 +573,15 @@ function LetterTab({ caseData }: { caseData: Case }) {
             </button>
           </div>
           {generateMutation.isError && (
-            <p className="text-red-500 text-sm mt-3">Generation failed. Please try again.</p>
+            <div className="text-red-500 text-sm mt-3 text-left bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="font-medium mb-1">Generation failed</div>
+              <div className="text-xs text-red-400 font-mono break-all">
+                {(generateMutation.error as { response?: { data?: { details?: string; error?: string } } })?.response?.data?.details ||
+                 (generateMutation.error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                 (generateMutation.error as Error)?.message ||
+                 'Unknown error'}
+              </div>
+            </div>
           )}
         </div>
       </div>
