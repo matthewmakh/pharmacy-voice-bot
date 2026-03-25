@@ -88,7 +88,7 @@ export default function NewCase() {
   const prev = () => setStep((s) => Math.max(1, s - 1) as Step);
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-4 lg:p-8">
       <div className="max-w-2xl mx-auto">
         {/* Back */}
         <button

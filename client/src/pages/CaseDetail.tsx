@@ -764,7 +764,7 @@ export default function CaseDetail() {
   const isProcessing = ['ANALYZING', 'GENERATING'].includes(caseData.status);
 
   return (
-    <div className="p-8">
+    <div className="p-4 lg:p-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
