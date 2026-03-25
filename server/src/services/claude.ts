@@ -2,11 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  maxRetries: 4, // built-in retry with backoff for 429/503
+  maxRetries: 4,
   timeout: 120000,
 });
 
 const MODEL = 'claude-sonnet-4-6';
+
+// Strip markdown code fences before JSON.parse
+function extractJson(raw: string): string {
+  return raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
 
 export interface DocumentAnalysis {
   classification: string;
@@ -83,7 +91,7 @@ Return ONLY valid JSON. No markdown, no explanation.`;
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
   try {
-    return JSON.parse(content.text) as DocumentAnalysis;
+    return JSON.parse(extractJson(content.text)) as DocumentAnalysis;
   } catch {
     console.error('Failed to parse Claude document analysis:', content.text);
     return {
@@ -171,7 +179,7 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
   try {
-    return JSON.parse(content.text) as CaseSynthesis;
+    return JSON.parse(extractJson(content.text)) as CaseSynthesis;
   } catch {
     console.error('Failed to parse Claude case synthesis:', content.text);
     return {
@@ -250,7 +258,7 @@ Return ONLY valid JSON.`;
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
   try {
-    return JSON.parse(content.text) as DemandLetterResult;
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
   } catch {
     // If JSON parse fails, try to extract the text directly
     const text = content.text;
