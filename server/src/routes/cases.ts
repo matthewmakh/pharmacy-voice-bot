@@ -199,13 +199,7 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
         caseTimeline: [],
         evidenceSummary: null as never,
         extractedFacts: null as never,
-        strategy: null,
-        demandLetter: null,
-        demandLetterHtml: null,
-        finalNotice: null,
-        finalNoticeHtml: null,
-        filingPacket: null,
-        filingPacketHtml: null,
+        // Preserve: strategy, demandLetter, finalNotice, filingPacket
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
