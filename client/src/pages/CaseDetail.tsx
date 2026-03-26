@@ -609,6 +609,29 @@ function StrategyTab({ caseData }: { caseData: Case }) {
         </div>
       )}
 
+      {/* Analysis results — shown here on Strategy tab after analysis completes */}
+      {caseData.caseStrength && (
+        <div className="card p-5">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">AI Case Assessment</div>
+          <div className={`text-lg font-bold capitalize mb-2 ${STRENGTH_COLORS[caseData.caseStrength] || 'text-slate-700'}`}>
+            {caseData.caseStrength} Case
+          </div>
+          {caseData.caseSummary && (
+            <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+          )}
+          {caseData.missingInfo && caseData.missingInfo.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="text-xs font-semibold text-amber-600 mb-1">Missing info:</div>
+              <ul className="space-y-0.5">
+                {caseData.missingInfo.map((item, i) => (
+                  <li key={i} className="text-xs text-amber-700">• {item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         {strategies.map((s) => {
           const isSelected = caseData.strategy === s.id;
