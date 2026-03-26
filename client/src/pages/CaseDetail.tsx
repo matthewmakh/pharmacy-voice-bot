@@ -238,7 +238,8 @@ function EvidenceTab({
   };
 
   const docs = caseData.documents;
-  const canAnalyze = docs.length > 0 && !['ANALYZING', 'GENERATING'].includes(caseData.status);
+  const hasUnanalyzedDocs = docs.some((d) => d.classification === null);
+  const canAnalyze = docs.length > 0 && !hasUnanalyzedDocs && !['ANALYZING', 'GENERATING'].includes(caseData.status);
 
   return (
     <div className="space-y-6">
@@ -247,7 +248,15 @@ function EvidenceTab({
       {docs.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-slate-900">{docs.length} Document{docs.length !== 1 ? 's' : ''} Uploaded</h3>
+            <h3 className="font-semibold text-slate-900">
+              {docs.length} Document{docs.length !== 1 ? 's' : ''} Uploaded
+              {hasUnanalyzedDocs && (
+                <span className="ml-2 text-xs font-normal text-slate-400 inline-flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Analyzing {docs.filter(d => d.classification === null).length} file{docs.filter(d => d.classification === null).length !== 1 ? 's' : ''}...
+                </span>
+              )}
+            </h3>
             {canAnalyze && (
               <button
                 onClick={handleAnalyze}
@@ -279,6 +288,12 @@ function EvidenceTab({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-sm text-slate-900 truncate">{doc.originalName}</span>
+                          {!doc.classification && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Analyzing...
+                            </span>
+                          )}
                           {doc.classification && (
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${DOC_CLASSIFICATION_COLORS[doc.classification] || 'bg-slate-100 text-slate-600'}`}>
                               {DOC_CLASSIFICATION_LABELS[doc.classification] || doc.classification}
@@ -743,7 +758,8 @@ export default function CaseDetail() {
     refetchInterval: (query) => {
       const data = (query as unknown as { state: { data: Case } }).state?.data;
       if (!data) return false;
-      return ['ANALYZING', 'GENERATING'].includes(data.status) ? 3000 : false;
+      const processingDocs = data.documents?.some((d) => d.classification === null);
+      return ['ANALYZING', 'GENERATING'].includes(data.status) || processingDocs ? 3000 : false;
     },
   });
 

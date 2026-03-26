@@ -8,7 +8,36 @@ import { analyzeDocument } from '../services/claude';
 
 const router = Router({ mergeParams: true });
 
-// POST /api/cases/:caseId/documents — upload + analyze documents
+// Run Claude analysis on a document in the background — fire and forget
+async function analyzeDocumentInBackground(docId: string, filePath: string, mimeType: string, originalName: string) {
+  try {
+    let extractedText: string;
+    if (mimeType.startsWith('image/')) {
+      extractedText = await extractTextFromImage(filePath);
+    } else {
+      extractedText = await extractTextFromFile(filePath, mimeType, originalName);
+    }
+
+    const analysis = await analyzeDocument(extractedText, originalName, mimeType);
+
+    await prisma.document.update({
+      where: { id: docId },
+      data: {
+        extractedText,
+        classification: analysis.classification,
+        confidence: analysis.confidence,
+        supportsTags: analysis.supportsTags,
+        extractedFacts: analysis.extractedFacts as never,
+        summary: analysis.summary,
+      },
+    });
+  } catch (err) {
+    console.error(`Background analysis failed for doc ${docId}:`, err);
+    // Leave the record as-is with null classification — UI shows it as pending
+  }
+}
+
+// POST /api/cases/:caseId/documents — save files immediately, analyze in background
 router.post(
   '/',
   upload.array('files', 20),
@@ -28,22 +57,10 @@ router.post(
         return;
       }
 
-      const results = [];
-
-      for (const file of files) {
-        try {
-          // Extract text
-          let extractedText: string;
-          if (file.mimetype.startsWith('image/')) {
-            extractedText = await extractTextFromImage(file.path);
-          } else {
-            extractedText = await extractTextFromFile(file.path, file.mimetype, file.originalname);
-          }
-
-          // Analyze with Claude
-          const analysis = await analyzeDocument(extractedText, file.originalname, file.mimetype);
-
-          const doc = await prisma.document.create({
+      // Save all records immediately so the response is fast
+      const docs = await Promise.all(
+        files.map((file) =>
+          prisma.document.create({
             data: {
               caseId,
               filename: file.filename,
@@ -51,45 +68,24 @@ router.post(
               mimeType: file.mimetype,
               size: file.size,
               path: file.path,
-              extractedText,
-              classification: analysis.classification,
-              confidence: analysis.confidence,
-              supportsTags: analysis.supportsTags,
-              extractedFacts: analysis.extractedFacts as never,
-              summary: analysis.summary,
+              // classification null = still being analyzed
             },
-          });
+          })
+        )
+      );
 
-          results.push(doc);
-        } catch (docErr) {
-          console.error(`Error processing file ${file.originalname}:`, docErr);
-          // Still create the document record without analysis
-          const doc = await prisma.document.create({
-            data: {
-              caseId,
-              filename: file.filename,
-              originalName: file.originalname,
-              mimeType: file.mimetype,
-              size: file.size,
-              path: file.path,
-            },
-          });
-          results.push(doc);
-        }
-      }
-
-      // Log action
+      // Log upload action
       await prisma.caseAction.create({
         data: {
           caseId,
           type: 'DOCUMENTS_UPLOADED',
           status: 'COMPLETED',
-          label: `${files.length} document${files.length > 1 ? 's' : ''} uploaded and analyzed`,
+          label: `${files.length} document${files.length > 1 ? 's' : ''} uploaded`,
           metadata: { count: files.length },
         },
       });
 
-      // Update case status to ASSEMBLING if still DRAFT
+      // Update case to ASSEMBLING if still DRAFT
       if (caseRecord.status === 'DRAFT') {
         await prisma.case.update({
           where: { id: caseId },
@@ -97,7 +93,15 @@ router.post(
         });
       }
 
-      res.status(201).json(results);
+      // Respond immediately — analysis continues in background
+      res.status(201).json(docs);
+
+      // Kick off background analysis for each file (does not block response)
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const doc = docs[i];
+        analyzeDocumentInBackground(doc.id, file.path, file.mimetype, file.originalname);
+      }
     } catch (err) {
       console.error('Upload error:', err);
       res.status(500).json({ error: 'Upload failed', details: String(err) });
@@ -131,11 +135,8 @@ router.delete('/:docId', async (req: Request, res: Response) => {
       return;
     }
 
-    // Delete file from disk
     try {
-      if (fs.existsSync(doc.path)) {
-        fs.unlinkSync(doc.path);
-      }
+      if (fs.existsSync(doc.path)) fs.unlinkSync(doc.path);
     } catch (fsErr) {
       console.warn('Could not delete file from disk:', fsErr);
     }
