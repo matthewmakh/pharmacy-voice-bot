@@ -8,8 +8,15 @@ const client = new Anthropic({
 
 const MODEL = 'claude-sonnet-4-6';
 
-// Strip markdown code fences before JSON.parse
+// Extract JSON object from Claude response — handles markdown fences and preamble text
 function extractJson(raw: string): string {
+  // Try to find a JSON object by locating first { and last }
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return raw.slice(start, end + 1);
+  }
+  // Fallback: strip markdown code fences
   return raw
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/i, '')
