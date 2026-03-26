@@ -91,16 +91,20 @@ Return ONLY valid JSON. No markdown, no explanation.`;
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: '{' },
+    ],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
+  const rawDoc = '{' + content.text;
   try {
-    return JSON.parse(extractJson(content.text)) as DocumentAnalysis;
+    return JSON.parse(extractJson(rawDoc)) as DocumentAnalysis;
   } catch {
-    console.error('Failed to parse Claude document analysis:', content.text);
+    console.error('Failed to parse Claude document analysis:', rawDoc);
     return {
       classification: 'other',
       confidence: 0.3,
@@ -179,16 +183,22 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: '{' },
+    ],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
+  // Claude continues from our '{' prefill, so prepend it back
+  const raw = '{' + content.text;
   try {
-    return JSON.parse(extractJson(content.text)) as CaseSynthesis;
-  } catch {
-    console.error('Failed to parse Claude case synthesis:', content.text);
+    return JSON.parse(extractJson(raw)) as CaseSynthesis;
+  } catch (e) {
+    console.error('Failed to parse Claude case synthesis. Raw response:', raw);
+    console.error('Parse error:', e);
     return {
       timeline: [],
       caseSummary: 'Analysis could not be completed. Please review the uploaded documents manually.',
