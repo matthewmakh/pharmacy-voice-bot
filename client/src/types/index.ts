@@ -99,6 +99,9 @@ export interface Case {
   caseSummary: string | null;
   demandLetter: string | null;
   demandLetterHtml: string | null;
+  finalNotice: string | null;
+  finalNoticeHtml: string | null;
+  filingPacket: string | null;
 
   documents: Document[];
   actions: CaseAction[];

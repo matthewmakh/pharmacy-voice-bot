@@ -7,13 +7,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  cases        Case[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model Case {
   id     String     @id @default(cuid())
   status CaseStatus @default(DRAFT)
   strategy Strategy?
   title  String?
 
-  // Claimant (platform user's business)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // Claimant
   claimantName     String?
   claimantBusiness String?
   claimantAddress  String?
@@ -51,6 +64,9 @@ model Case {
   caseSummary      String? @db.Text
   demandLetter     String? @db.Text
   demandLetterHtml String? @db.Text
+  finalNotice      String? @db.Text
+  finalNoticeHtml  String? @db.Text
+  filingPacket     String? @db.Text
 
   notes String? @db.Text
 
@@ -60,6 +76,7 @@ model Case {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([userId])
   @@index([status])
   @@index([createdAt])
 }
@@ -75,7 +92,6 @@ model Document {
   size         Int
   path         String
 
-  // AI analysis
   classification String?
   extractedText  String? @db.Text
   extractedFacts Json?
@@ -133,6 +149,8 @@ enum ActionType {
   AI_ANALYSIS_COMPLETED
   STRATEGY_SELECTED
   DEMAND_LETTER_GENERATED
+  FINAL_NOTICE_GENERATED
+  FILING_PACKET_GENERATED
   EMAIL_SENT
   CERTIFIED_MAIL_SENT
   REMINDER_SENT

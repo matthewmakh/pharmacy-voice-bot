@@ -3,7 +3,14 @@ import type { Case, CaseListItem, CreateCaseInput, Strategy } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 120000, // 2 min timeout for AI operations
+  timeout: 120000,
+});
+
+// Inject auth token from localStorage on every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
 });
 
 // ─── Cases ────────────────────────────────────────────────────────────────────
@@ -47,6 +54,16 @@ export const generateLetter = async (id: string): Promise<Case> => {
   return data;
 };
 
+export const generateFinalNotice = async (id: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${id}/final-notice`);
+  return data;
+};
+
+export const generateFilingPacket = async (id: string): Promise<Case & { filingPacketHtml?: string }> => {
+  const { data } = await api.post(`/cases/${id}/filing-packet`);
+  return data;
+};
+
 export const logAction = async (
   id: string,
   type: string,
@@ -63,10 +80,15 @@ export const uploadDocuments = async (caseId: string, files: File[]): Promise<vo
   files.forEach((f) => formData.append('files', f));
   await api.post(`/cases/${caseId}/documents`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 300000, // 5 min for upload + analysis
+    timeout: 60000,
   });
 };
 
 export const deleteDocument = async (caseId: string, docId: string): Promise<void> => {
   await api.delete(`/cases/${caseId}/documents/${docId}`);
+};
+
+export const getDocumentViewUrl = (caseId: string, docId: string): string => {
+  const token = localStorage.getItem('token');
+  return `/api/cases/${caseId}/documents/${docId}/view?token=${token}`;
 };

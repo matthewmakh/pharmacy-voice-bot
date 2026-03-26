@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
+import authRouter from './routes/auth';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -22,6 +23,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.use('/api/auth', authRouter);
 app.use('/api/cases', casesRouter);
 app.use('/api/cases/:caseId/documents', documentsRouter);
 

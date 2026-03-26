@@ -1,9 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateFilingPacket } from '../services/claude';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router();
+
+// All case routes require authentication
+router.use(requireAuth);
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
@@ -50,9 +54,10 @@ function parseDate(val: string | undefined): Date | undefined {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /api/cases
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     const cases = await prisma.case.findMany({
+      where: { userId: req.user!.id },
       orderBy: { createdAt: 'desc' },
       include: {
         documents: { select: { id: true, originalName: true, classification: true } },
@@ -102,6 +107,7 @@ router.post('/', async (req: Request, res: Response) => {
         invoiceNumber: data.invoiceNumber,
         notes: data.notes,
         status: 'ASSEMBLING',
+        userId: req.user!.id,
         actions: {
           create: {
             type: 'CASE_CREATED',
@@ -415,11 +421,102 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
 // DELETE /api/cases/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    await prisma.case.delete({ where: { id: req.params.id } });
+    await prisma.case.delete({ where: { id: req.params.id, userId: req.user!.id } });
     res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete case' });
+  }
+});
+
+// POST /api/cases/:id/final-notice
+router.post('/:id/final-notice', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      invoiceNumber: caseData.invoiceNumber,
+      serviceDescription: caseData.serviceDescription,
+      paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
+      demandLetterSent: !!caseData.demandLetter,
+    };
+
+    const result = await generateFinalNotice(context as Record<string, unknown>);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: {
+        finalNotice: result.text,
+        finalNoticeHtml: result.html,
+        status: 'ESCALATING',
+        actions: {
+          create: { type: 'FINAL_NOTICE_GENERATED', status: 'COMPLETED', label: 'Final notice generated' },
+        },
+      },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    console.error('Final notice error:', err);
+    res.status(500).json({ error: 'Final notice generation failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/filing-packet
+router.post('/:id/filing-packet', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+      include: { documents: { select: { classification: true, supportsTags: true, summary: true, originalName: true } } },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      claimantAddress: caseData.claimantAddress,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      amountOwed: caseData.amountOwed?.toString(),
+      serviceDescription: caseData.serviceDescription,
+      invoiceNumber: caseData.invoiceNumber,
+      agreementDate: caseData.agreementDate?.toISOString().split('T')[0],
+      paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
+      hasWrittenContract: caseData.hasWrittenContract,
+      timeline: caseData.caseTimeline,
+      evidenceSummary: caseData.evidenceSummary,
+      documents: caseData.documents,
+    };
+
+    const result = await generateFilingPacket(context as Record<string, unknown>);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: {
+        filingPacket: result.text,
+        actions: {
+          create: { type: 'FILING_PACKET_GENERATED', status: 'COMPLETED', label: 'Filing packet generated' },
+        },
+      },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json({ ...updated, filingPacketHtml: result.html });
+  } catch (err) {
+    console.error('Filing packet error:', err);
+    res.status(500).json({ error: 'Filing packet generation failed', details: String(err) });
   }
 });
 

@@ -5,8 +5,10 @@ import prisma from '../lib/prisma';
 import { upload } from '../middleware/upload';
 import { extractTextFromFile, extractTextFromImage } from '../services/fileProcessor';
 import { analyzeDocument } from '../services/claude';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router({ mergeParams: true });
+router.use(requireAuth);
 
 // Run Claude analysis on a document in the background — fire and forget
 async function analyzeDocumentInBackground(docId: string, filePath: string, mimeType: string, originalName: string) {
@@ -146,6 +148,27 @@ router.delete('/:docId', async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete document' });
+  }
+});
+
+// GET /api/cases/:caseId/documents/:docId/view — serve inline for preview
+router.get('/:docId/view', async (req: Request, res: Response) => {
+  try {
+    const doc = await prisma.document.findFirst({
+      where: { id: req.params.docId, caseId: req.params.caseId },
+    });
+
+    if (!doc || !fs.existsSync(doc.path)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
+    res.setHeader('Content-Disposition', `inline; filename="${doc.originalName}"`);
+    res.setHeader('Content-Type', doc.mimeType);
+    res.sendFile(path.resolve(doc.path));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to view file' });
   }
 });
 

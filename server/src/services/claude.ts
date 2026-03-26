@@ -271,3 +271,100 @@ Return ONLY valid JSON.`;
     };
   }
 }
+
+export async function generateFinalNotice(
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const prompt = `You are drafting a FINAL NOTICE letter for a collections matter in New York. The initial demand letter was already sent and the deadline has passed without payment.
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+
+This is the final notice before legal action. It should:
+- Open with a firm statement that prior demand went unanswered
+- State clearly that legal action will be initiated within 7 days if payment is not received
+- Reference the original demand letter date if known
+- State the full amount now owed (include any interest if applicable)
+- Be professional but leave no ambiguity about next steps
+- Mention that all costs of collection including legal fees may be sought
+- Be shorter than the original demand letter — 250-350 words
+
+Return JSON with:
+{
+  "text": "plain text version",
+  "html": "HTML version with <p> tags"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
+  } catch {
+    const text = content.text;
+    return {
+      text,
+      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
+        .split('\n\n')
+        .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+        .join('')}</div>`,
+    };
+  }
+}
+
+export async function generateFilingPacket(
+  caseData: Record<string, unknown>
+): Promise<{ text: string; html: string }> {
+  const prompt = `You are preparing a filing summary document for a business collections matter in New York courts.
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+
+Generate a structured filing summary that a court clerk or judge can quickly read. Include:
+
+1. CASE CAPTION — Plaintiff vs. Defendant
+2. NATURE OF CLAIM — Brief description (1-2 sentences)
+3. AMOUNT SOUGHT — Principal + any applicable interest
+4. BASIS FOR CLAIM — Contract, services rendered, invoice, etc.
+5. TIMELINE OF EVENTS — Numbered chronological list of key dates
+6. EVIDENCE AVAILABLE — Bulleted list of supporting documents on hand
+7. PRIOR COLLECTION ATTEMPTS — What steps were taken before filing
+8. RELIEF REQUESTED — What the plaintiff is asking the court for
+
+Keep it factual, concise, and formatted for a legal proceeding. Use placeholders like [DATE] for any unknown values rather than guessing.
+
+Return JSON with:
+{
+  "text": "plain text version",
+  "html": "HTML version with proper heading and list tags"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 3000,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as { text: string; html: string };
+  } catch {
+    const text = content.text;
+    return {
+      text,
+      html: `<div>${text.split('\n\n').map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>`,
+    };
+  }
+}
