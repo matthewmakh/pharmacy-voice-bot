@@ -941,245 +941,337 @@ function EscalationTab({ caseData }: { caseData: Case }) {
 
 // ─── NY Filing Guide Tab ───────────────────────────────────────────────────────
 
+type CourtTrack = 'commercial' | 'civil' | 'supreme';
+
+function ExpandableItem({ label, children, num }: { label: string; children: React.ReactNode; num?: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="border border-slate-100 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 transition-colors"
+      >
+        {num !== undefined && (
+          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold shrink-0">
+            {num}
+          </span>
+        )}
+        <span className="text-sm text-slate-700 flex-1 leading-snug font-medium">{label}</span>
+        {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+      </button>
+      {open && <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-2">{children}</div>}
+    </li>
+  );
+}
+
 function FilingGuideTab({ caseData }: { caseData: Case }) {
-  const [expanded, setExpanded] = useState<number | null>(null);
   const outstanding = parseFloat(caseData.amountOwed || '0') - parseFloat(caseData.amountPaid || '0');
 
-  const getCourtInfo = () => {
-    if (outstanding <= 10000) return {
-      court: 'NYC Small Claims Court',
-      fee: '$15–$20',
-      lawyer: 'No lawyer needed',
-      detail: 'File at your local NYC Civil Court, Small Claims Part. Cases are typically heard within 1–2 months.',
+  const track: CourtTrack = outstanding <= 10000 ? 'commercial' : outstanding <= 50000 ? 'civil' : 'supreme';
+
+  const courtInfo = {
+    commercial: {
+      name: 'NYC Commercial Claims Court',
+      range: 'Up to $10,000',
+      fee: '$25 + postage',
+      rep: 'No attorney required',
       highlight: 'bg-green-50 border-green-200',
-      badge: 'bg-green-100 text-green-700',
-      filingSteps: [
-        'Go to your local NYC Civil Court (Small Claims Part) in person.',
-        'Ask for a "Small Claims" form — staff will assist you.',
-        'Fill out the plaintiff and defendant info, amount owed, and reason.',
-        'Pay the filing fee ($15–$20 by cash or money order).',
-        'The court will mail a notice to the defendant with the hearing date.',
-        'Bring all documents to your hearing date. No attorney needed.',
-      ],
-    };
-    if (outstanding <= 25000) return {
-      court: 'NYC Civil Court',
+      badge: 'text-green-700 bg-green-100',
+      note: 'Best for a clean B2B money claim by a corporation, LLC, or partnership. The court handles notice to the defendant — no process server required. Filing cap: 5 actions per month per claimant.',
+    },
+    civil: {
+      name: 'NYC Civil Court — General Civil Part',
+      range: '$10,001–$50,000',
       fee: '~$45',
-      lawyer: 'Attorney recommended',
-      detail: 'File at NYC Civil Court. You must serve the defendant via process server. Trials are typically within 6–12 months.',
+      rep: 'Attorney recommended',
       highlight: 'bg-amber-50 border-amber-200',
-      badge: 'bg-amber-100 text-amber-700',
-      filingSteps: [
-        'Draft a Summons and Complaint (or have an attorney do it).',
-        'File at NYC Civil Court in the borough where defendant is located. Bring 3 copies.',
-        'Pay the ~$45 filing fee. The clerk stamps and returns your copies.',
-        'Hire a licensed process server to serve the defendant within 120 days.',
-        'File proof of service (affidavit of service) with the court.',
-        'If defendant doesn\'t respond in 20–30 days, apply for a default judgment.',
-        'If they respond, the case proceeds to discovery and trial.',
-      ],
-    };
-    return {
-      court: 'NY Supreme Court',
-      fee: '$210+',
-      lawyer: 'Attorney strongly recommended',
-      detail: 'File in the county where the defendant does business. Discovery process applies. Most formal track.',
+      badge: 'text-amber-700 bg-amber-100',
+      note: 'Standard civil case structure. You file a summons and complaint, serve via process server, and proceed through the formal civil track.',
+    },
+    supreme: {
+      name: 'NY Supreme Court',
+      range: 'Above $50,000',
+      fee: '$210 (index number)',
+      rep: 'Attorney strongly recommended',
       highlight: 'bg-red-50 border-red-200',
-      badge: 'bg-red-100 text-red-700',
-      filingSteps: [
-        'Retain a NY-licensed attorney — Supreme Court filings are complex.',
-        'Attorney drafts a Summons with Notice or Summons and Complaint.',
-        'File at the Supreme Court in the county where defendant is located or does business.',
-        'Pay filing fee ($210+ depending on relief sought).',
-        'Serve defendant via licensed process server within 120 days.',
-        'File affidavit of service. Defendant has 20–30 days to respond.',
-        'Discovery phase (document exchange, depositions) typically takes months.',
-        'Case proceeds to trial or settlement.',
-      ],
-    };
-  };
+      badge: 'text-red-700 bg-red-100',
+      note: 'Full formal litigation. File in the county where the defendant does business. Discovery applies. E-filing is mandatory for represented parties in most NYC counties.',
+    },
+  }[track];
 
-  const info = getCourtInfo();
-
-  const steps: { label: string; detail: React.ReactNode }[] = [
-    {
-      label: 'Ensure your demand letter was sent and documented.',
-      detail: (
-        <p className="text-sm text-slate-600 leading-relaxed">
-          Keep proof of delivery — certified mail receipt, email read receipt, or courier confirmation. Courts expect you to have made a good-faith attempt to collect before filing.
-          {caseData.demandLetter ? (
-            <span className="block mt-1 text-emerald-600 font-medium">✓ Demand letter generated in this case.</span>
-          ) : (
-            <span className="block mt-1 text-amber-600 font-medium">⚠ No demand letter generated yet — go to the Demand Letter tab.</span>
-          )}
-        </p>
-      ),
-    },
-    {
-      label: 'Gather all supporting documents.',
-      detail: (
-        <div>
-          <p className="text-sm text-slate-600 mb-3">You need: contracts, invoices, proof of delivery or work completed, and all written correspondence (emails, texts, messages).</p>
-          {caseData.documents.length > 0 ? (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Uploaded to this case:</p>
-              <div className="flex flex-wrap gap-2">
-                {caseData.documents.map((doc) => (
-                  <span key={doc.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-xs font-medium">
-                    <FileText className="w-3 h-3 shrink-0" />
-                    {doc.originalName}
-                    {doc.classification && (
-                      <span className="text-slate-400">· {DOC_CLASSIFICATION_LABELS[doc.classification] || doc.classification}</span>
-                    )}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-amber-600 font-medium">⚠ No documents uploaded yet — go to the Evidence tab.</p>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: `File a summons and complaint at ${info.court}.`,
-      detail: (
-        <div>
-          <ol className="space-y-2">
-            {info.filingSteps.map((s, i) => (
-              <li key={i} className="flex gap-2 text-sm text-slate-600">
-                <span className="text-slate-400 font-medium shrink-0">{i + 1}.</span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      ),
-    },
-    {
-      label: 'Serve the defendant.',
-      detail: (
-        <p className="text-sm text-slate-600 leading-relaxed">
-          {outstanding <= 10000
-            ? 'For Small Claims, the court mails the notice to the defendant for you — no process server needed.'
-            : 'For Civil/Supreme Court, you must hire a licensed process server. They physically hand the summons to the defendant (personal service) or leave it at their place of business. You then file an affidavit of service with the court.'
-          }
-        </p>
-      ),
-    },
-    {
-      label: 'Attend the hearing.',
-      detail: (
-        <p className="text-sm text-slate-600 leading-relaxed">
-          Bring all originals and copies of your evidence. Present your case clearly and factually. If the defendant does not appear and was properly served, you can request a <strong>default judgment</strong> — the court rules in your favor automatically.
-        </p>
-      ),
-    },
-    {
-      label: 'Enforce the judgment.',
-      detail: (
-        <div className="space-y-3">
-          <p className="text-sm text-slate-600">Winning in court gives you a judgment — a legal right to collect. You still have to enforce it. Three main methods:</p>
-          <div className="space-y-2">
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <div className="text-sm font-semibold text-slate-800 mb-0.5">Bank Levy</div>
-              <p className="text-xs text-slate-600">With a judgment, you can instruct a marshal or sheriff to freeze and seize funds from the debtor's bank account. You need to locate which bank they use (through disclosure proceedings if needed).</p>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <div className="text-sm font-semibold text-slate-800 mb-0.5">Property Lien</div>
-              <p className="text-xs text-slate-600">You can file a lien against real property the debtor owns in NY. They cannot sell or refinance without paying you first. File with the county clerk where the property is located.</p>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <div className="text-sm font-semibold text-slate-800 mb-0.5">Wage Garnishment (Income Execution)</div>
-              <p className="text-xs text-slate-600">If the debtor is an individual with a job, you can garnish up to 10% of their gross wages in NY. A marshal serves the employer, who withholds and sends you payments. Does not apply to business defendants.</p>
-            </div>
-          </div>
-        </div>
-      ),
-    },
-  ];
+  const p = (text: string) => <p className="text-sm text-slate-600 leading-relaxed">{text}</p>;
+  const sub = (text: string) => <p className="text-xs text-slate-500 leading-relaxed">{text}</p>;
+  const warn = (text: string) => <p className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">{text}</p>;
+  const ok = (text: string) => <p className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">{text}</p>;
+  const steps = (items: string[]) => (
+    <ol className="space-y-2 mt-1">
+      {items.map((s, i) => (
+        <li key={i} className="flex gap-2 text-sm text-slate-600">
+          <span className="text-slate-400 font-semibold shrink-0">{i + 1}.</span>
+          <span>{s}</span>
+        </li>
+      ))}
+    </ol>
+  );
 
   return (
     <div className="space-y-6">
-      {/* Court Routing */}
-      <div className={`card p-6 ${info.highlight}`}>
-        <div className="flex items-start justify-between mb-3">
+
+      {/* Court Routing Card */}
+      <div className={`card p-6 ${courtInfo.highlight}`}>
+        <div className="flex items-start justify-between gap-4 mb-3">
           <div>
-            <div className="text-lg font-bold text-slate-900">{info.court}</div>
-            <div className="text-sm text-slate-600 mt-1">{info.detail}</div>
+            <div className="text-lg font-bold text-slate-900">{courtInfo.name}</div>
+            <p className="text-sm text-slate-600 mt-1 leading-relaxed">{courtInfo.note}</p>
           </div>
-          <span className={`text-xs font-semibold px-3 py-1 rounded-full shrink-0 ml-4 ${info.badge}`}>
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full shrink-0 ${courtInfo.badge}`}>
             {formatCurrency(outstanding)} outstanding
           </span>
         </div>
-        <div className="flex gap-6 mt-4 text-sm">
-          <div>
-            <span className="text-slate-500">Filing Fee:</span>{' '}
-            <span className="font-semibold text-slate-800">{info.fee}</span>
-          </div>
-          <div>
-            <span className="text-slate-500">Legal Representation:</span>{' '}
-            <span className="font-semibold text-slate-800">{info.lawyer}</span>
-          </div>
+        <div className="flex flex-wrap gap-6 mt-4 text-sm border-t border-black/5 pt-4">
+          <div><span className="text-slate-500">Filing Fee:</span> <span className="font-semibold text-slate-800">{courtInfo.fee}</span></div>
+          <div><span className="text-slate-500">Representation:</span> <span className="font-semibold text-slate-800">{courtInfo.rep}</span></div>
+          <div><span className="text-slate-500">Claim Range:</span> <span className="font-semibold text-slate-800">{courtInfo.range}</span></div>
         </div>
       </div>
 
-      {/* Court Thresholds */}
-      <div className="card p-6">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Court Thresholds Reference</div>
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: 'Small Claims', range: 'Up to $10,000', fee: '$15–$20', active: outstanding <= 10000 },
-            { label: 'Civil Court', range: '$10,001–$25,000', fee: '~$45', active: outstanding > 10000 && outstanding <= 25000 },
-            { label: 'Supreme Court', range: 'Over $25,000', fee: '$210+', active: outstanding > 25000 },
-          ].map((c) => (
-            <div key={c.label} className={`p-4 rounded-lg border ${c.active ? 'border-blue-300 bg-blue-50' : 'border-slate-100'}`}>
+      {/* Court Thresholds Reference */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">NYC Court Thresholds</div>
+        <div className="grid grid-cols-3 gap-3">
+          {([
+            { key: 'commercial', label: 'Commercial Claims', range: '≤ $10,000', fee: '$25 + postage', note: 'Corp/LLC/partnership, no attorney' },
+            { key: 'civil', label: 'Civil Court', range: '$10,001–$50,000', fee: '~$45', note: 'Summons + complaint, process server' },
+            { key: 'supreme', label: 'Supreme Court', range: '> $50,000', fee: '$210+', note: 'Full litigation, attorney recommended' },
+          ] as const).map((c) => (
+            <div key={c.key} className={`p-4 rounded-lg border transition-all ${track === c.key ? 'border-blue-300 bg-blue-50' : 'border-slate-100'}`}>
               <div className="text-sm font-semibold text-slate-800">{c.label}</div>
               <div className="text-xs text-slate-500 mt-1">{c.range}</div>
               <div className="text-xs text-slate-400 mt-0.5">Fee: {c.fee}</div>
+              <div className="text-xs text-slate-400 mt-1 leading-tight">{c.note}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Steps — expandable */}
-      <div className="card p-6">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Filing Steps</div>
-        <ol className="space-y-2">
-          {steps.map((step, i) => (
-            <li key={i} className="border border-slate-100 rounded-lg overflow-hidden">
-              <button
-                onClick={() => setExpanded(expanded === i ? null : i)}
-                className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 transition-colors"
-              >
-                <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold shrink-0">
-                  {i + 1}
-                </span>
-                <span className="text-sm text-slate-700 flex-1 leading-snug">{step.label}</span>
-                {expanded === i
-                  ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
-                  : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
-                }
-              </button>
-              {expanded === i && (
-                <div className="px-4 pb-4 pt-1 ml-9 border-t border-slate-100">
-                  {step.detail}
-                </div>
-              )}
+      {/* Pre-Filing Checklist */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Pre-Filing Checklist</div>
+        <ul className="space-y-2">
+          {([
+            { label: 'Exact legal name of your company (as registered)', done: !!(caseData.claimantBusiness || caseData.claimantName) },
+            { label: 'Exact legal name and address of the defendant', done: !!(caseData.debtorBusiness || caseData.debtorName) },
+            { label: 'Contract, proposal, or statement of work', done: caseData.documents.some(d => d.classification === 'contract') },
+            { label: 'Invoice(s) with payment terms and due date', done: caseData.documents.some(d => d.classification === 'invoice') },
+            { label: 'Proof of work performed / delivered', done: caseData.documents.some(d => d.classification === 'proof_of_work') },
+            { label: 'Emails or messages showing the deal or non-payment', done: caseData.documents.some(d => d.classification === 'communication') },
+            { label: 'Demand letter sent (required for Commercial Claims)', done: !!caseData.demandLetter },
+            { label: 'One-page chronology of events', done: !!(caseData.caseTimeline && (caseData.caseTimeline as unknown[]).length > 0) },
+          ]).map(({ label, done }, i) => (
+            <li key={i} className={`flex items-start gap-2.5 text-sm ${done ? 'text-slate-700' : 'text-slate-400'}`}>
+              <CheckCircle className={`w-4 h-4 mt-0.5 shrink-0 ${done ? 'text-emerald-500' : 'text-slate-200'}`} />
+              <span>{label}</span>
             </li>
           ))}
+        </ul>
+        {caseData.documents.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="text-xs font-semibold text-slate-500 mb-2">Documents in this case:</div>
+            <div className="flex flex-wrap gap-2">
+              {caseData.documents.map((doc) => (
+                <span key={doc.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full text-xs">
+                  <FileText className="w-3 h-3 shrink-0" />
+                  {doc.originalName}
+                  {doc.classification && <span className="text-slate-400">· {DOC_CLASSIFICATION_LABELS[doc.classification] || doc.classification}</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Step-by-step for selected track */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+          Filing Steps — {courtInfo.name}
+        </div>
+        <ol className="space-y-2">
+          {track === 'commercial' && (
+            <>
+              <ExpandableItem num={1} label="Send a pre-suit demand letter (required)">
+                {p('For Commercial Claims, New York requires you to send a demand letter at least 10 days — and no more than 180 days — before filing. This is a real precondition, not optional.')}
+                {caseData.demandLetter ? ok('✓ Demand letter generated in this case. Keep proof of delivery.') : warn('⚠ No demand letter yet. Go to the Demand Letter tab to generate one before filing.')}
+                {sub('Keep proof of sending: certified mail receipt, delivery confirmation, or email with read receipt.')}
+              </ExpandableItem>
+              <ExpandableItem num={2} label="Verify the defendant's exact legal name and address">
+                {p('Commercial Claims must be brought in the county where the defendant lives, works, or has a place of business. If you are unsure of the correct business name, check NYS entity records or County Clerk records for assumed names.')}
+              </ExpandableItem>
+              <ExpandableItem num={3} label="Go to the Commercial Claims office in the correct county">
+                {p('Bring: your company information, defendant\'s exact legal name and address, amount owed, a short description of the claim, and proof you sent the demand letter.')}
+                {sub('Filing cap: you may begin no more than 5 Commercial Claims actions per month.')}
+              </ExpandableItem>
+              <ExpandableItem num={4} label="Fill out the Statement of Claim and pay the filing fee">
+                {p('The fee is $25 plus postage. Staff will assist with the form. The court handles notice to the defendant under the Commercial Claims process — you do not need to hire a process server.')}
+              </ExpandableItem>
+              <ExpandableItem num={5} label="Attend the hearing">
+                {p('Bring originals and copies of all evidence. Present clearly and factually. If the defendant does not appear after proper notice, you can request a default judgment.')}
+              </ExpandableItem>
+            </>
+          )}
+
+          {track === 'civil' && (
+            <>
+              <ExpandableItem num={1} label="Send a demand letter and document it">
+                {p('While not a strict statutory precondition for Civil Court (unlike Commercial Claims), courts and opposing parties expect to see a pre-suit demand. It also strengthens your position.')}
+                {caseData.demandLetter ? ok('✓ Demand letter generated. Keep proof of delivery.') : warn('⚠ No demand letter yet — generate one in the Demand Letter tab.')}
+              </ExpandableItem>
+              <ExpandableItem num={2} label="Prepare your Summons and Complaint">
+                {p('Draft a summons and complaint that clearly states: who the parties are, what was agreed, what you provided, how much is owed, when payment was due, and what relief you want.')}
+                {p('For a B2B unpaid invoice, common causes of action include breach of contract, account stated, and unjust enrichment / quantum meruit if there is no signed contract.')}
+              </ExpandableItem>
+              <ExpandableItem num={3} label="File with the NYC Civil Court clerk">
+                {p('File in the borough/county where the defendant is located. Bring 3 copies. Pay the ~$45 fee. The clerk stamps your copies and issues the summons.')}
+                {sub('If self-represented, ask the clerk for an Application for a Pro Se Summons, or use your own summons form.')}
+              </ExpandableItem>
+              <ExpandableItem num={4} label="Serve the defendant via process server (within 120 days)">
+                {p('Hire a licensed process server to deliver the summons and complaint. The server must physically hand it to the defendant or leave it at their place of business per NY service rules.')}
+                {p('Get a notarized Affidavit of Service from the process server immediately after service.')}
+              </ExpandableItem>
+              <ExpandableItem num={5} label="File the Affidavit of Service">
+                {p('File the completed, notarized affidavit with the court clerk promptly after service. This is required — do not skip it.')}
+              </ExpandableItem>
+              <ExpandableItem num={6} label="Calendar the defendant's response deadline">
+                {p('The defendant generally has 20 days to respond after personal service, or 30 days after service is completed by other authorized means. Mark this date immediately.')}
+                {p('If they do not respond, you can move for a default judgment. If they respond, the case proceeds to discovery and a hearing/trial date.')}
+              </ExpandableItem>
+            </>
+          )}
+
+          {track === 'supreme' && (
+            <>
+              <ExpandableItem num={1} label="Retain a NY-licensed attorney">
+                {p('Supreme Court filings are complex. While self-representation is technically allowed, it is not recommended for claims of this size. An attorney will draft the papers, manage deadlines, and handle discovery.')}
+              </ExpandableItem>
+              <ExpandableItem num={2} label="Draft a Summons and Complaint (or Summons with Notice)">
+                {p('Your attorney will prepare either a Summons and Complaint or a Summons with Notice. The complaint should plead: parties, the agreement, your performance, the unpaid amount, the due date, non-payment, and the relief requested.')}
+                {p('Causes of action for B2B unpaid invoices typically include breach of contract, account stated, and quantum meruit / unjust enrichment.')}
+              </ExpandableItem>
+              <ExpandableItem num={3} label="Purchase an index number and file">
+                {p('File with the County Clerk in the county where the defendant does business. Pay the $210 index number fee. In New York County and most NYC Supreme Courts, e-filing is mandatory for represented parties (NYSCEF). Unrepresented parties are automatically exempt unless they opt in.')}
+              </ExpandableItem>
+              <ExpandableItem num={4} label="Serve the defendant within 120 days">
+                {p('A summons with notice or summons and complaint must be served within 120 days of filing. Use a licensed process server. Personal service on the defendant\'s registered agent or an officer of the entity is standard for business defendants.')}
+              </ExpandableItem>
+              <ExpandableItem num={5} label="File the notarized Affidavit of Service">
+                {p('File the completed affidavit promptly after service. Calendar the answer deadline (20 days after personal service, 30 days after alternative service). Set a tickler for the default date.')}
+              </ExpandableItem>
+              <ExpandableItem num={6} label="Discovery phase">
+                {p('If the defendant answers, the case proceeds to discovery: document requests, interrogatories, and potentially depositions. A preliminary conference is usually scheduled by the court.')}
+              </ExpandableItem>
+            </>
+          )}
         </ol>
       </div>
 
+      {/* How a serious lawyer handles service */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">How to Handle Service Properly</div>
+        <ul className="space-y-2">
+          {[
+            'Use the defendant\'s exact legal name — service on the wrong entity name can void service.',
+            'Use a licensed process server (required for Civil Court and Supreme Court).',
+            'Get the Affidavit of Service right: it must be notarized and include the date, time, location, and method of service.',
+            'File the affidavit with the court promptly — do not sit on it.',
+            'Calendar the answer deadline the same day service is completed.',
+            'Service mistakes are the easiest way to lose or delay a case. Do not improvise.',
+          ].map((item, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
+              <span className="text-slate-300 font-bold mt-0.5">—</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Deadline tracker */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Deadline Sheet to Maintain</div>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            'Date demand letter sent',
+            'Date claim filed',
+            'Date service completed',
+            'Affidavit of service filed',
+            'Defendant answer due',
+            'Default date if no answer',
+            'Next court date / conference',
+          ].map((item, i) => (
+            <div key={i} className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
+              {item}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Common mistakes */}
+      <div className="card p-5 border-red-100">
+        <div className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-3">Common Mistakes to Avoid</div>
+        <ul className="space-y-2">
+          {[
+            'Suing the wrong entity name — always verify via NYS entity records.',
+            'Filing in the wrong court for your amount.',
+            'Skipping the pre-suit demand letter for Commercial Claims (it is a legal precondition).',
+            'Missing the 120-day service window after filing.',
+            'Failing to file proof of service with the court.',
+            'Not calendaring the defendant\'s answer deadline.',
+            'Serving the wrong person — for business entities, serve an officer, director, or registered agent.',
+          ].map((item, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Judgment enforcement */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Enforcing a Judgment</div>
+        <p className="text-sm text-slate-600 mb-3">Winning in court gives you a judgment — a legal right to collect. The court does not collect for you. Three main enforcement tools:</p>
+        <div className="space-y-2">
+          {[
+            {
+              title: 'Bank Levy',
+              body: 'Instruct a city marshal or sheriff to freeze and seize funds from the debtor\'s bank account. You may need to identify the bank through post-judgment disclosure proceedings (a court-ordered deposition about the debtor\'s assets).',
+            },
+            {
+              title: 'Property Lien',
+              body: 'File a lien against real property the debtor owns in New York. They cannot sell or refinance the property without satisfying your judgment first. File with the county clerk where the property is located.',
+            },
+            {
+              title: 'Income Execution (Wage Garnishment)',
+              body: 'If the debtor is an individual with employment income, you can garnish up to 10% of gross wages in NY. A marshal serves the employer, who withholds the amount and remits it to you. Does not apply to business entity defendants — use bank levy instead.',
+            },
+          ].map(({ title, body }) => (
+            <div key={title} className="p-3 bg-slate-50 rounded-lg">
+              <div className="text-sm font-semibold text-slate-800 mb-1">{title}</div>
+              <p className="text-xs text-slate-600 leading-relaxed">{body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Disclaimer */}
-      <div className="card p-5 border-amber-200 bg-amber-50">
+      <div className="card p-4 border-amber-200 bg-amber-50">
         <div className="flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-800 leading-relaxed">
-            This is general information, not legal advice. Consult a NY-licensed attorney for your specific situation.
+          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800 leading-relaxed">
+            This is general procedural information, not legal advice. Court rules, fees, and procedures change. Consult a NY-licensed attorney before filing, especially for claims above $10,000.
           </p>
         </div>
       </div>
+
     </div>
   );
 }
