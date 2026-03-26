@@ -134,7 +134,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id, userId: req.user!.id },
       include: {
         documents: { orderBy: { uploadedAt: 'desc' } },
         actions: { orderBy: { createdAt: 'asc' } },
@@ -159,7 +159,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const data = updateCaseSchema.parse(req.body);
 
     const updated = await prisma.case.update({
-      where: { id: req.params.id },
+      where: { id: req.params.id, userId: req.user!.id },
       data: {
         ...data,
         claimantEmail: data.claimantEmail || undefined,
@@ -214,7 +214,7 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
 router.post('/:id/analyze', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id, userId: req.user!.id },
       include: { documents: true },
     });
 
@@ -299,7 +299,7 @@ router.post('/:id/strategy', async (req: Request, res: Response) => {
     const { strategy } = strategySchema.parse(req.body);
 
     const updated = await prisma.case.update({
-      where: { id: req.params.id },
+      where: { id: req.params.id, userId: req.user!.id },
       data: {
         strategy,
         status: 'STRATEGY_SELECTED',
@@ -329,7 +329,7 @@ router.post('/:id/strategy', async (req: Request, res: Response) => {
 router.post('/:id/generate', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id, userId: req.user!.id },
       include: { documents: { select: { classification: true, supportsTags: true, summary: true } } },
     });
 
@@ -407,6 +407,10 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
   try {
     const { type, notes, metadata } = req.body;
 
+    // Verify case ownership
+    const caseData = await prisma.case.findUnique({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
     const action = await prisma.caseAction.create({
       data: {
         caseId: req.params.id,
@@ -430,7 +434,7 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
 
     if (statusMap[type]) {
       await prisma.case.update({
-        where: { id: req.params.id },
+        where: { id: req.params.id, userId: req.user!.id },
         data: { status: statusMap[type] as never },
       });
     }

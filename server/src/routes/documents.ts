@@ -10,6 +10,12 @@ import { requireAuth } from '../middleware/auth';
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
 
+// Verify the case belongs to the authenticated user
+async function verifyOwnership(caseId: string, userId: string): Promise<boolean> {
+  const c = await prisma.case.findUnique({ where: { id: caseId, userId }, select: { id: true } });
+  return !!c;
+}
+
 // Run Claude analysis on a document in the background — fire and forget
 async function analyzeDocumentInBackground(docId: string, filePath: string, mimeType: string, originalName: string) {
   try {
@@ -47,7 +53,7 @@ router.post(
     try {
       const { caseId } = req.params;
 
-      const caseRecord = await prisma.case.findUnique({ where: { id: caseId } });
+      const caseRecord = await prisma.case.findUnique({ where: { id: caseId, userId: req.user!.id } });
       if (!caseRecord) {
         res.status(404).json({ error: 'Case not found' });
         return;
@@ -114,6 +120,10 @@ router.post(
 // GET /api/cases/:caseId/documents
 router.get('/', async (req: Request, res: Response) => {
   try {
+    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+      res.status(404).json({ error: 'Case not found' });
+      return;
+    }
     const docs = await prisma.document.findMany({
       where: { caseId: req.params.caseId },
       orderBy: { uploadedAt: 'desc' },
@@ -128,6 +138,11 @@ router.get('/', async (req: Request, res: Response) => {
 // DELETE /api/cases/:caseId/documents/:docId
 router.delete('/:docId', async (req: Request, res: Response) => {
   try {
+    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+      res.status(404).json({ error: 'Case not found' });
+      return;
+    }
+
     const doc = await prisma.document.findFirst({
       where: { id: req.params.docId, caseId: req.params.caseId },
     });
@@ -154,6 +169,11 @@ router.delete('/:docId', async (req: Request, res: Response) => {
 // GET /api/cases/:caseId/documents/:docId/view — serve inline for preview
 router.get('/:docId/view', async (req: Request, res: Response) => {
   try {
+    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
     const doc = await prisma.document.findFirst({
       where: { id: req.params.docId, caseId: req.params.caseId },
     });
@@ -163,7 +183,7 @@ router.get('/:docId/view', async (req: Request, res: Response) => {
       return;
     }
 
-    res.setHeader('Content-Disposition', `inline; filename="${doc.originalName}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.originalName)}"`);
     res.setHeader('Content-Type', doc.mimeType);
     res.sendFile(path.resolve(doc.path));
   } catch (err) {
@@ -175,6 +195,11 @@ router.get('/:docId/view', async (req: Request, res: Response) => {
 // GET /api/cases/:caseId/documents/:docId/download
 router.get('/:docId/download', async (req: Request, res: Response) => {
   try {
+    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
     const doc = await prisma.document.findFirst({
       where: { id: req.params.docId, caseId: req.params.caseId },
     });
@@ -184,7 +209,7 @@ router.get('/:docId/download', async (req: Request, res: Response) => {
       return;
     }
 
-    res.setHeader('Content-Disposition', `attachment; filename="${doc.originalName}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.originalName)}"`);
     res.setHeader('Content-Type', doc.mimeType);
     res.sendFile(path.resolve(doc.path));
   } catch (err) {
