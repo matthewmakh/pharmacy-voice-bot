@@ -34,6 +34,7 @@ import {
   logAction,
   updateCase,
   getDocumentViewUrl,
+  resetAnalysis,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -557,6 +558,11 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
+  const resetMutation = useMutation({
+    mutationFn: () => resetAnalysis(caseData.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -612,7 +618,16 @@ function StrategyTab({ caseData }: { caseData: Case }) {
       {/* Analysis results — shown here on Strategy tab after analysis completes */}
       {caseData.caseStrength && (
         <div className="card p-5">
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">AI Case Assessment</div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">AI Case Assessment</div>
+            <button
+              onClick={() => resetMutation.mutate()}
+              disabled={resetMutation.isPending}
+              className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+            >
+              {resetMutation.isPending ? 'Resetting...' : 'Reset & Re-run'}
+            </button>
+          </div>
           <div className={`text-lg font-bold capitalize mb-2 ${STRENGTH_COLORS[caseData.caseStrength] || 'text-slate-700'}`}>
             {caseData.caseStrength} Case
           </div>

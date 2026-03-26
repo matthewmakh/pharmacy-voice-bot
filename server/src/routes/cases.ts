@@ -186,6 +186,35 @@ router.patch('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/cases/:id/reset-analysis — clear AI results so analysis can be re-run
+router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
+  try {
+    const updated = await prisma.case.update({
+      where: { id: req.params.id, userId: req.user!.id },
+      data: {
+        status: 'ASSEMBLING',
+        caseStrength: null,
+        caseSummary: null,
+        missingInfo: [],
+        caseTimeline: [],
+        evidenceSummary: null as never,
+        extractedFacts: null as never,
+        strategy: null,
+        demandLetter: null,
+        demandLetterHtml: null,
+        finalNotice: null,
+        finalNoticeHtml: null,
+        filingPacket: null,
+      },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to reset analysis' });
+  }
+});
+
 // POST /api/cases/:id/analyze  — run AI synthesis across all uploaded docs
 router.post('/:id/analyze', async (req: Request, res: Response) => {
   try {

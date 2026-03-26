@@ -54,6 +54,11 @@ export const generateLetter = async (id: string): Promise<Case> => {
   return data;
 };
 
+export const resetAnalysis = async (id: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${id}/reset-analysis`);
+  return data;
+};
+
 export const generateFinalNotice = async (id: string): Promise<Case> => {
   const { data } = await api.post(`/cases/${id}/final-notice`);
   return data;
