@@ -91,20 +91,17 @@ Return ONLY valid JSON. No markdown, no explanation.`;
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
-    messages: [
-      { role: 'user', content: prompt },
-      { role: 'assistant', content: '{' },
-    ],
+    system: 'You are a document analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  const rawDoc = '{' + content.text;
   try {
-    return JSON.parse(extractJson(rawDoc)) as DocumentAnalysis;
+    return JSON.parse(extractJson(content.text)) as DocumentAnalysis;
   } catch {
-    console.error('Failed to parse Claude document analysis:', rawDoc);
+    console.error('Failed to parse Claude document analysis:', content.text);
     return {
       classification: 'other',
       confidence: 0.3,
@@ -183,21 +180,17 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
-    messages: [
-      { role: 'user', content: prompt },
-      { role: 'assistant', content: '{' },
-    ],
+    system: 'You are a legal case analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  // Claude continues from our '{' prefill, so prepend it back
-  const raw = '{' + content.text;
   try {
-    return JSON.parse(extractJson(raw)) as CaseSynthesis;
+    return JSON.parse(extractJson(content.text)) as CaseSynthesis;
   } catch (e) {
-    console.error('Failed to parse Claude case synthesis. Raw response:', raw);
+    console.error('Failed to parse Claude case synthesis. Raw response:', content.text);
     console.error('Parse error:', e);
     return {
       timeline: [],

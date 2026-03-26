@@ -604,6 +604,14 @@ function StrategyTab({ caseData }: { caseData: Case }) {
             {analyzeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
             Run AI Analysis
           </button>
+          {analyzeMutation.isError && (
+            <p className="text-xs text-red-500 mt-3">
+              Error: {(analyzeMutation.error as { response?: { data?: { error?: string; details?: string } } })?.response?.data?.error || String(analyzeMutation.error)}
+              {(analyzeMutation.error as { response?: { data?: { details?: string } } })?.response?.data?.details && (
+                <span className="block mt-1 text-red-400">{(analyzeMutation.error as { response?: { data?: { details?: string } } })?.response?.data?.details}</span>
+              )}
+            </p>
+          )}
         </div>
       )}
 
