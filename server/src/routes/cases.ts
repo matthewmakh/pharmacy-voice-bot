@@ -205,6 +205,7 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
         finalNotice: null,
         finalNoticeHtml: null,
         filingPacket: null,
+        filingPacketHtml: null,
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
@@ -535,6 +536,7 @@ router.post('/:id/filing-packet', async (req: Request, res: Response) => {
       where: { id: req.params.id },
       data: {
         filingPacket: result.text,
+        filingPacketHtml: result.html,
         actions: {
           create: { type: 'FILING_PACKET_GENERATED', status: 'COMPLETED', label: 'Filing packet generated' },
         },
@@ -542,7 +544,7 @@ router.post('/:id/filing-packet', async (req: Request, res: Response) => {
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
 
-    res.json({ ...updated, filingPacketHtml: result.html });
+    res.json(updated);
   } catch (err) {
     console.error('Filing packet error:', err);
     res.status(500).json({ error: 'Filing packet generation failed', details: String(err) });

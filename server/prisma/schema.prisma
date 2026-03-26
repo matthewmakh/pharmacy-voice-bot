@@ -67,6 +67,7 @@ model Case {
   finalNotice      String? @db.Text
   finalNoticeHtml  String? @db.Text
   filingPacket     String? @db.Text
+  filingPacketHtml String? @db.Text
 
   notes String? @db.Text
 

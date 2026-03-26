@@ -102,6 +102,7 @@ export interface Case {
   finalNotice: string | null;
   finalNoticeHtml: string | null;
   filingPacket: string | null;
+  filingPacketHtml: string | null;
 
   documents: Document[];
   actions: CaseAction[];

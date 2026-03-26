@@ -886,9 +886,16 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               </button>
             </div>
             <div className="card p-8">
-              <pre className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
-                {caseData.filingPacket}
-              </pre>
+              {caseData.filingPacketHtml ? (
+                <div
+                  className="prose prose-sm max-w-none prose-slate"
+                  dangerouslySetInnerHTML={{ __html: caseData.filingPacketHtml }}
+                />
+              ) : (
+                <pre className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
+                  {caseData.filingPacket}
+                </pre>
+              )}
             </div>
           </div>
         ) : (
