@@ -253,13 +253,32 @@ COUNTERCLAIM RISK SIGNALS:
 Risk-elevating: explicit written dispute of invoice or work quality; fixed-price contract with vague/broad scope; no written acceptance or delivery confirmation; long delay between service completion and invoicing; communications suggesting debtor is unhappy with the work.
 Risk-reducing: partial payment by debtor (implies acceptance); detailed written SOW with specific deliverables; written delivery confirmation or sign-off; client references the work positively in communications; invoice went undisputed for an extended period.
 
+INDUSTRY-SPECIFIC COUNTERCLAIM RISK MODIFIERS (apply if industry is known):
+These reflect real-world litigation patterns — adjust the base risk level accordingly and name the industry in your signals list:
+- Creative / Design / Marketing: elevate risk — "deliverables weren't what I envisioned" is the most common B2B defense in these disputes; subjective quality standards make it hard to prove complete performance
+- Technology / Software: elevate risk — same as creative; scope creep, bug disputes, and "it doesn't work as promised" are standard defenses
+- Construction / Contracting: elevate risk — delay claims, change orders, material substitutions, and "you didn't finish" defenses are common and often well-documented on the debtor's side
+- Professional Services (consulting, accounting, legal): baseline risk — engagement letters typically define scope clearly; harder for debtor to dispute what was delivered
+- Healthcare / Medical: lower risk — services are specific and documentable; denial of service receipt is unusual
+- Retail / Wholesale / Distribution: lower risk — goods delivered is a binary fact; disputes are about quantity/quality, not the transaction itself
+- Real Estate: baseline risk — varies widely by deal type
+- Transportation / Logistics: lower risk — delivery records are usually clear
+- Financial Services: baseline risk
+
+PRIOR COURT CASE MODIFIERS (apply if priorCourtCases data is available in userProvidedFacts):
+If the debtor has prior court cases as defendant: mention this in signals; if 3+ prior cases as defendant, this is a meaningful risk-elevating signal — serial litigants often file reflexive counterclaims; also elevates QUICK_ESCALATION preference.
+If the debtor has prior judgments paid: slightly risk-reducing — they can be collected from.
+If the debtor has multiple active cases as defendant: consider noting possible insolvency risk in strategyReasoning.
+
 ENTITY ENFORCEMENT GUIDE:
-- Individual / sole proprietor: wage garnishment (10% gross wages, CPLR §5231), bank levy, property lien — all tools available
-- LLC / Corporation / LLP: bank levy (business accounts only), lien on business real property — wage garnishment NOT applicable; cannot touch personal assets without piercing the veil; post-judgment disclosure (§5224 subpoena) is often needed to locate bank accounts
-- Unknown entity: flag for verification via NYS entity records at apps.dos.ny.gov
+- Individual / Sole Proprietor: wage garnishment (10% gross wages, CPLR §5231), bank levy, property lien — all tools available
+- LLC: bank levy (business accounts only), lien on business real property — wage garnishment NOT applicable; cannot touch personal assets without piercing the veil; post-judgment disclosure (§5224 subpoena) is often needed to locate bank accounts
+- Corporation: same as LLC enforcement; note that piercing the corporate veil requires showing fraud or complete domination
+- LLP / Partnership: similar to LLC for enforcement; individual partners may have personal liability depending on partnership structure — flag for attorney review
+- Unknown entity: flag for verification via NYS entity records at apps.dos.ny.gov; enforcement path cannot be fully assessed until entity type is confirmed
 
 STRATEGY SELECTION GUIDE:
-- QUICK_ESCALATION: SOL approaching (under 1 year remaining), debtor appears defunct or unresponsive, strong case with clear docs, or time is clearly of the essence
+- QUICK_ESCALATION: SOL approaching (under 1 year remaining), debtor appears defunct or unresponsive, strong case with clear docs, debtor has 3+ prior suits as defendant, or time is clearly of the essence
 - STANDARD_RECOVERY: Typical case — clear claim, some uncertainty about debtor's willingness to engage, no urgency signals
 - GRADUAL_APPROACH: Ongoing business relationship worth preserving, dispute risk is elevated, partial payments suggest good faith, or claim is weak and negotiation is preferable
 

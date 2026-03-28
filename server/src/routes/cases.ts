@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
+import { lookupNYCourtHistory } from '../services/nycourts';
 
 const router = Router();
 
@@ -35,6 +36,7 @@ const createCaseSchema = z.object({
   paymentDueDate: z.string().optional(),
   hasWrittenContract: z.boolean().optional(),
   invoiceNumber: z.string().optional(),
+  industry: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -259,6 +261,7 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
       paymentDueDate: caseData.paymentDueDate?.toISOString(),
       serviceStartDate: caseData.serviceStartDate?.toISOString(),
       serviceEndDate: caseData.serviceEndDate?.toISOString(),
+      industry: caseData.industry,
     };
 
     const synthesis = await synthesizeCase(docInputs, userFacts);
@@ -506,6 +509,29 @@ router.get('/:id/acris', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('ACRIS lookup error:', err);
     res.status(500).json({ error: 'ACRIS lookup failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/court-history — NYC Civil Court prior case lookup for debtor
+router.get('/:id/court-history', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { debtorBusiness: true, debtorName: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const partyName = caseData.debtorBusiness || caseData.debtorName;
+    if (!partyName) {
+      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
+      return;
+    }
+
+    const result = await lookupNYCourtHistory(partyName);
+    res.json(result);
+  } catch (err) {
+    console.error('Court history lookup error:', err);
+    res.status(500).json({ error: 'Court history lookup failed', details: String(err) });
   }
 });
 

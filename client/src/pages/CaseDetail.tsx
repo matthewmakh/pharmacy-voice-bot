@@ -39,6 +39,7 @@ import {
   getDocumentViewUrl,
   resetAnalysis,
   lookupACRIS,
+  lookupCourtHistory,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -235,6 +236,7 @@ function OverviewTab({ caseData }: { caseData: Case }) {
     debtorEmail: caseData.debtorEmail || '',
     debtorPhone: caseData.debtorPhone || '',
     debtorEntityType: caseData.debtorEntityType || '',
+    industry: caseData.industry || '',
     amountOwed: caseData.amountOwed || '',
     amountPaid: caseData.amountPaid || '',
     serviceDescription: caseData.serviceDescription || '',
@@ -284,6 +286,7 @@ function OverviewTab({ caseData }: { caseData: Case }) {
       debtorEmail: caseData.debtorEmail || '',
       debtorPhone: caseData.debtorPhone || '',
       debtorEntityType: caseData.debtorEntityType || '',
+      industry: caseData.industry || '',
       amountOwed: caseData.amountOwed || '',
       amountPaid: caseData.amountPaid || '',
       serviceDescription: caseData.serviceDescription || '',
@@ -345,6 +348,44 @@ function OverviewTab({ caseData }: { caseData: Case }) {
         </div>
       </div>
 
+      {/* Pre-judgment interest (NY CPLR §5001 — 9% per year from breach date) */}
+      {outstanding > 0 && caseData.paymentDueDate && (() => {
+        const breachDate = new Date(caseData.paymentDueDate!);
+        const today = new Date();
+        const daysElapsed = Math.max(0, Math.floor((today.getTime() - breachDate.getTime()) / 86400000));
+        if (daysElapsed < 1) return null;
+        const interest = outstanding * 0.09 * (daysElapsed / 365);
+        const totalWithInterest = outstanding + interest;
+        const yearsElapsed = (daysElapsed / 365).toFixed(1);
+        return (
+          <div className="card p-4 border-amber-100 bg-amber-50">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-amber-700 uppercase tracking-wider">Pre-Judgment Interest</span>
+              <span className="text-xs text-amber-600">NY CPLR §5001 — 9% per year</span>
+            </div>
+            <div className="flex items-baseline gap-4 mt-1">
+              <div>
+                <div className="text-xs text-amber-600 mb-0.5">Accrued interest ({yearsElapsed} yrs)</div>
+                <div className="text-lg font-bold text-amber-700">{formatCurrency(interest)}</div>
+              </div>
+              <div className="text-slate-300 text-xl">+</div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">Principal</div>
+                <div className="text-lg font-semibold text-slate-700">{formatCurrency(outstanding)}</div>
+              </div>
+              <div className="text-slate-300 text-xl">=</div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">Total claim value</div>
+                <div className="text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
+              </div>
+            </div>
+            <p className="text-xs text-amber-600 mt-2 leading-relaxed">
+              Include pre-judgment interest in your demand letter and court filings. Interest runs from the date payment was due ({new Date(caseData.paymentDueDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+            </p>
+          </div>
+        );
+      })()}
+
       {/* Edit Button */}
       {!editing && (
         <div className="flex justify-end">
@@ -374,7 +415,43 @@ function OverviewTab({ caseData }: { caseData: Case }) {
               {field('Address', 'debtorAddress')}
               {field('Email', 'debtorEmail', 'email')}
               {field('Phone', 'debtorPhone', 'tel')}
-              {field('Entity Type', 'debtorEntityType')}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Entity Type</label>
+                <select
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={form.debtorEntityType}
+                  onChange={(e) => setForm((f) => ({ ...f, debtorEntityType: e.target.value }))}
+                >
+                  <option value="">Unknown / Not set</option>
+                  <option value="Individual / Sole Proprietor">Individual / Sole Proprietor</option>
+                  <option value="LLC">LLC (Limited Liability Company)</option>
+                  <option value="Corporation">Corporation (Inc. / Corp.)</option>
+                  <option value="LLP">LLP (Limited Liability Partnership)</option>
+                  <option value="Partnership">General Partnership</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Industry</label>
+                <select
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={form.industry}
+                  onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}
+                >
+                  <option value="">Not specified</option>
+                  <option value="Creative / Design / Marketing">Creative / Design / Marketing</option>
+                  <option value="Technology / Software">Technology / Software</option>
+                  <option value="Construction / Contracting">Construction / Contracting</option>
+                  <option value="Professional Services">Professional Services (Consulting, Accounting, Legal)</option>
+                  <option value="Healthcare / Medical">Healthcare / Medical</option>
+                  <option value="Real Estate">Real Estate</option>
+                  <option value="Retail / Wholesale / Distribution">Retail / Wholesale / Distribution</option>
+                  <option value="Food & Beverage / Hospitality">Food & Beverage / Hospitality</option>
+                  <option value="Transportation / Logistics">Transportation / Logistics</option>
+                  <option value="Media / Entertainment">Media / Entertainment</option>
+                  <option value="Financial Services">Financial Services</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-4">
@@ -435,11 +512,14 @@ function OverviewTab({ caseData }: { caseData: Case }) {
               {caseData.debtorAddress && <div className="text-sm text-slate-500">{caseData.debtorAddress}</div>}
               {caseData.debtorEmail && <div className="text-sm text-slate-500">{caseData.debtorEmail}</div>}
               {caseData.debtorPhone && <div className="text-sm text-slate-500">{caseData.debtorPhone}</div>}
-              {caseData.debtorEntityType && (
-                <div className="inline-block mt-1 px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full">
-                  {caseData.debtorEntityType}
-                </div>
-              )}
+              <div className="flex flex-wrap gap-1 mt-1">
+                {caseData.debtorEntityType && (
+                  <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full">{caseData.debtorEntityType}</span>
+                )}
+                {caseData.industry && (
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-xs rounded-full">{caseData.industry}</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -750,6 +830,25 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     }
   };
 
+  const [courtHistoryResult, setCourtHistoryResult] = useState<{
+    found: boolean; totalCases: number; asDefendant: number; asPlaintiff: number;
+    cases: Array<{ caseIndex: string; filedDate: string | null; plaintiff: string; defendant: string; caseType: string; status: string; court: string; amount: string | null }>;
+    searchedName: string; note: string; error?: string; scraperNote?: string;
+  } | null>(null);
+  const [courtHistoryLoading, setCourtHistoryLoading] = useState(false);
+
+  const handleCourtHistoryLookup = async () => {
+    setCourtHistoryLoading(true);
+    try {
+      const result = await lookupCourtHistory(caseData.id);
+      setCourtHistoryResult(result);
+    } catch {
+      setCourtHistoryResult({ found: false, totalCases: 0, asDefendant: 0, asPlaintiff: 0, cases: [], searchedName: '', note: '', error: 'Lookup failed' });
+    } finally {
+      setCourtHistoryLoading(false);
+    }
+  };
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -987,6 +1086,60 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                 </div>
               </div>
 
+              {/* NYC Civil Court History */}
+              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">NYC Civil Court History</span>
+                  {!courtHistoryResult && (
+                    <button
+                      onClick={handleCourtHistoryLookup}
+                      disabled={courtHistoryLoading}
+                      className="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 font-medium flex items-center gap-1 transition-colors"
+                    >
+                      {courtHistoryLoading ? <><Loader2 className="w-3 h-3 animate-spin" />Searching...</> : 'Search Court Records'}
+                    </button>
+                  )}
+                  {courtHistoryResult && (
+                    <button onClick={handleCourtHistoryLookup} disabled={courtHistoryLoading} className="text-xs text-slate-400 hover:text-slate-600">Refresh</button>
+                  )}
+                </div>
+                {!courtHistoryResult && !courtHistoryLoading && (
+                  <p className="text-xs text-slate-400 leading-relaxed">Search NYC Civil Court records for prior cases against this debtor — prior judgments, defaults, or serial non-payment patterns change your strategy.</p>
+                )}
+                {courtHistoryResult && (
+                  <div className="space-y-2">
+                    {courtHistoryResult.error ? (
+                      <div className="text-xs text-slate-500">
+                        <p>{courtHistoryResult.error}</p>
+                        {courtHistoryResult.scraperNote && <p className="mt-1 text-slate-400 italic">{courtHistoryResult.scraperNote}</p>}
+                      </div>
+                    ) : (
+                      <>
+                        <div className={`text-xs font-semibold ${courtHistoryResult.found ? (courtHistoryResult.asDefendant > 2 ? 'text-amber-700' : 'text-slate-700') : 'text-slate-500'}`}>
+                          {courtHistoryResult.found ? `${courtHistoryResult.totalCases} case(s) found — ${courtHistoryResult.asDefendant} as defendant` : 'No prior cases found'}
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{courtHistoryResult.note}</p>
+                        {courtHistoryResult.found && courtHistoryResult.cases.length > 0 && (
+                          <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                            {courtHistoryResult.cases.slice(0, 6).map((c, i) => (
+                              <div key={i} className="flex gap-2 text-xs p-1.5 bg-white rounded border border-slate-100">
+                                <span className="text-slate-400 shrink-0 font-mono">{c.caseIndex}</span>
+                                <span className="text-slate-600 truncate">{c.plaintiff} v. {c.defendant}</span>
+                                <span className="text-slate-400 shrink-0">{c.status}</span>
+                              </div>
+                            ))}
+                            {courtHistoryResult.cases.length > 6 && (
+                              <p className="text-xs text-slate-400">+{courtHistoryResult.cases.length - 6} more — verify at iapps.courts.state.ny.us</p>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-xs text-slate-400">Verify at: <strong>iapps.courts.state.ny.us/webcivil/FCASMain</strong></p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Strategy reasoning */}
               {a?.strategyReasoning && (
                 <div className="p-4 rounded-lg border border-blue-100 bg-blue-50">
@@ -1001,11 +1154,17 @@ function StrategyTab({ caseData }: { caseData: Case }) {
 
       {/* Strategy Selector */}
       <div>
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Select Strategy</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Select Strategy</div>
+          {needsAnalysis && (
+            <span className="text-xs text-slate-400 italic">Run AI analysis above to get a recommendation</span>
+          )}
+        </div>
         <div className="grid grid-cols-3 gap-4">
           {strategies.map((s) => {
             const isSelected = caseData.strategy === s.id;
             const isRecommended = caseData.caseAssessment?.recommendedStrategy === s.id;
+            const isGeneric = needsAnalysis && !isSelected;
             return (
               <button
                 key={s.id}
@@ -1014,6 +1173,8 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                 className={`card p-5 text-left transition-all relative ${
                   isSelected
                     ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/50'
+                    : isGeneric
+                    ? 'opacity-50 hover:opacity-70 hover:border-slate-300'
                     : 'hover:border-slate-300'
                 }`}
               >

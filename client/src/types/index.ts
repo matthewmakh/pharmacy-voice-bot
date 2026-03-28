@@ -121,6 +121,7 @@ export interface Case {
   paymentDueDate: string | null;
   hasWrittenContract: boolean;
   invoiceNumber: string | null;
+  industry: string | null;
   notes: string | null;
 
   extractedFacts: Record<string, unknown> | null;
@@ -192,5 +193,6 @@ export interface CreateCaseInput {
   paymentDueDate?: string;
   hasWrittenContract?: boolean;
   invoiceNumber?: string;
+  industry?: string;
   notes?: string;
 }

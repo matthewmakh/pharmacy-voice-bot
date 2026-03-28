@@ -103,6 +103,30 @@ export const getDocumentViewUrl = (caseId: string, docId: string): string => {
   return `/api/cases/${caseId}/documents/${docId}/view?token=${token}`;
 };
 
+export const lookupCourtHistory = async (caseId: string): Promise<{
+  found: boolean;
+  totalCases: number;
+  asDefendant: number;
+  asPlaintiff: number;
+  cases: Array<{
+    caseIndex: string;
+    filedDate: string | null;
+    plaintiff: string;
+    defendant: string;
+    caseType: string;
+    status: string;
+    court: string;
+    amount: string | null;
+  }>;
+  searchedName: string;
+  note: string;
+  error?: string;
+  scraperNote?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/court-history`);
+  return data;
+};
+
 export const lookupACRIS = async (caseId: string): Promise<{
   found: boolean;
   totalRecords: number;

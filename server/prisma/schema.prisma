@@ -75,6 +75,7 @@ model Case {
   defaultJudgment       String? @db.Text
   defaultJudgmentHtml   String? @db.Text
 
+  industry String?
   notes String? @db.Text
 
   documents Document[]
