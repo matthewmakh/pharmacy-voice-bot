@@ -285,19 +285,25 @@ Return ONLY valid JSON.`;
 export async function generateFinalNotice(
   caseData: Record<string, unknown>
 ): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
   const prompt = `You are drafting a FINAL NOTICE letter for a collections matter in New York. The initial demand letter was already sent and the deadline has passed without payment.
+
+TODAY'S DATE: ${today}
 
 CASE FACTS:
 ${JSON.stringify(caseData, null, 2)}
 
 This is the final notice before legal action. It should:
+- Open with today's date (${today}) at the top of the letter
+- Address the debtor by name with their correct address
 - Open with a firm statement that prior demand went unanswered
 - State clearly that legal action will be initiated within 7 days if payment is not received
-- Reference the original demand letter date if known
-- State the full amount now owed (include any interest if applicable)
+- State the full outstanding balance (amountOwed minus amountPaid)
 - Be professional but leave no ambiguity about next steps
 - Mention that all costs of collection including legal fees may be sought
 - Be shorter than the original demand letter — 250-350 words
+- Sign off with the claimant's name and business
 
 Return JSON with:
 {
