@@ -705,51 +705,28 @@ Generate a Motion for Default Judgment package. Include these sections:
    - For completion by process server or plaintiff
 
 Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
-Format as court-document HTML (serif font, proper caption, numbered paragraphs, signature lines).
 
-Return JSON:
-{
-  "text": "plain text version",
-  "html": "complete HTML with proper court document formatting"
-}
-
-Return ONLY valid JSON.`;
+Return ONLY a complete HTML document — no JSON, no markdown, no code fences, no explanations.
+Use inline styles only (no external CSS). Use single quotes for all HTML attribute values.
+Use serif font, proper court caption formatting, numbered paragraphs, and signature lines.`;
 
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no commentary.',
     messages: [{ role: 'user', content: prompt }],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    // Last-resort: if JSON parse still fails, convert the raw text to readable HTML
-    // Strip any markdown fences first
-    const text = content.text
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```\s*$/i, '')
-      .trim();
-    // If it looks like JSON, try once more after stripping fences
-    if (text.startsWith('{')) {
-      try {
-        return JSON.parse(text) as DemandLetterResult;
-      } catch {
-        // fall through
-      }
-    }
-    return {
-      text,
-      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
-        .split('\n\n')
-        .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-        .join('')}</div>`,
-    };
-  }
+  // Strip any accidental markdown fences
+  const html = content.text
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+
+  return { text: html, html };
 }
 
 export interface VerificationCheck {
