@@ -364,123 +364,177 @@ export async function generateCourtForm(
   const trackPrompts = {
     commercial: `You are filling out NYC Commercial Claims Court form CIV-SC-70.
 
+TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+CURRENT YEAR: ${new Date().getFullYear()}
+
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
 
-Generate a pre-filled HTML version of the CIV-SC-70 form. The form must include these sections, filled with case data. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields:
+Generate a pre-filled HTML version of the CIV-SC-70 form. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
+
+CRITICAL RULES:
+- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
+- Amount claimed = outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
+- Derive the correct filing county from debtorAddress (defendant's county determines where you file)
+- Leave any court-assigned fields (index number, return date) as blank underscores
 
 SECTION 1 — CLAIMANT INFORMATION:
-- Business/Individual Name (claimantBusiness or claimantName)
-- Address
-- Phone
+- Business/Individual Name: claimantBusiness or claimantName
+- Address: claimantAddress
+- Phone: claimantPhone
+- Email: claimantEmail
 
 SECTION 2 — DEFENDANT INFORMATION:
-- Full Legal Name (debtorBusiness or debtorName)
-- DBA (if applicable)
-- Address (debtorAddress)
-- Phone (if known)
+- Full Legal Name: debtorBusiness or debtorName (include DBA if both exist)
+- Address: debtorAddress
+- Phone: debtorPhone (if known)
 
 SECTION 3 — CLAIM DETAILS:
-- Amount Claimed (amountOwed minus amountPaid)
-- Invoice/Account Number(s)
-- Date of Original Transaction (agreementDate or invoiceDate)
-- Brief Statement of Claim (2-4 sentences: what was agreed, what was delivered, what remains unpaid)
+- Amount Claimed: outstandingBalance (state as a dollar figure)
+- Invoice/Account Number(s): invoiceNumber if available
+- Date of Original Transaction: agreementDate or invoiceDate (use actual date from data, formatted as MM/DD/YYYY)
+- Brief Statement of Claim (3-4 sentences using actual names and facts from case data): describe what was agreed, what the claimant delivered, and what remains unpaid
 
-SECTION 4 — CERTIFICATION:
-Pre-fill with: "I certify that I have made a good faith effort to resolve this matter prior to filing this claim."
+SECTION 4 — CERTIFICATION (pre-filled boilerplate):
+"I hereby certify that I have made a good-faith attempt to resolve this dispute prior to bringing this claim, that no other action has been filed or is pending in any court for this claim, and that the above information is true to the best of my knowledge."
 
-Format as clean HTML with:
-- A header: "CIVIL COURT OF THE CITY OF NEW YORK — COMMERCIAL CLAIMS PART"
-- "Form CIV-SC-70" subtitle
-- Each section in a bordered box with label/value pairs
-- A disclaimer at the bottom: "This form was pre-filled from your case data. Review every field carefully before filing."
-- Print-friendly styling (max-width 700px, serif font, 1in margins equivalent)
+Signature line + "Dated: _____________, ${new Date().getFullYear()}"
+
+Format as clean HTML:
+- Header: "CIVIL COURT OF THE CITY OF NEW YORK — COMMERCIAL CLAIMS PART"
+- Subtitle: "Statement of Claim — CIV-SC-70"
+- Each section in a bordered box with clear label/value pairs
+- Disclaimer banner at top: "⚠ This form was pre-filled from your case data. Review every field carefully before filing. Verify the defendant's exact legal name via NYS entity records before submission."
+- Print-friendly styling (max-width 700px, serif font)
 
 Return JSON:
 {
   "html": "complete HTML string",
   "formType": "Commercial Claims Court — CIV-SC-70",
-  "instructions": ["specific step 1", "specific step 2", "specific step 3", "specific step 4", "specific step 5"]
+  "instructions": ["5 specific steps"]
 }
 
-Instructions should be specific NYC steps: where to go, what to bring, cost, copies needed.
+Instructions must be specific: the correct Commercial Claims office address for the filing county, filing fee ($25 + postage), bring 2 copies + proof of demand letter sent, filing cap (5 claims/month), court handles defendant notice (no process server needed).
 Return ONLY valid JSON.`,
 
     civil: `You are filling out an NYC Civil Court Pro Se Summons and Complaint.
+
+TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+CURRENT YEAR: ${new Date().getFullYear()}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
 
 Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
+CRITICAL RULES:
+- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
+- Derive county from debtorAddress (e.g. "Glendale, NY" → Queens County; "Brooklyn" → Kings County; "Bronx" → Bronx County; "Staten Island" → Richmond County; Manhattan/New York → New York County)
+- In the signature block, the location must match the county/city of filing — NOT "New York, New York" generically. Use the city derived from the claimant's address or the court's county
+- Leave index number and date lines as blank underscores for handwriting
+- The Verification block must say "State of New York" and the county of the plaintiff's address (not defendant's)
+- Relief sought must use outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
+
 SUMMONS SECTION:
-- Court: "CIVIL COURT OF THE CITY OF NEW YORK, COUNTY OF [county derived from debtorAddress, or UNKNOWN]"
-- Index Number: [ASSIGNED BY COURT CLERK — do not fill]
-- Plaintiff: claimantBusiness or claimantName + address
-- Defendant: debtorBusiness/debtorName + address
-- Notice to Defendant boilerplate: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the county listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint."
+- Court header: "CIVIL COURT OF THE CITY OF NEW YORK" + "County of [derived from debtorAddress]"
+- Index Number: blank line — [ASSIGNED BY COURT CLERK — DO NOT FILL]
+- Plaintiff box: claimantBusiness or claimantName + full address + phone + email
+- Defendant box: debtorBusiness or debtorName (include DBA if both exist) + full address + phone
+- Summons notice: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the County listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint. You must respond to this complaint within the time period prescribed by law (20 days after personal service; 30 days if service is by other means). Failure to appear or respond may result in a default judgment being entered against you for the amount demanded, together with interest, costs, and disbursements."
+- Include the specific courthouse address for the county (e.g. Queens: 89-17 Sutphin Blvd, Jamaica NY 11435; Brooklyn/Kings: 141 Livingston St, Brooklyn NY 11201; Manhattan/NY County: 111 Centre St, New York NY 10013; Bronx: 851 Grand Concourse, Bronx NY 10451; Staten Island/Richmond: 927 Castleton Ave, Staten Island NY 10310)
 
 COMPLAINT SECTION:
-- Cause of Action: Breach of Contract / Account Stated (pick most applicable from case data)
-- Factual Allegations (numbered paragraphs, 3-5 sentences using case data):
-  1. Agreement allegation
-  2. Performance allegation
-  3. Default/non-payment allegation
-- Relief Sought: "Plaintiff demands judgment against Defendant in the sum of $[amountOwed] together with interest, costs, and disbursements."
+- Header: "Plaintiff [claimantName or claimantBusiness], [doing business as X if applicable], appearing Pro Se, alleges as follows:"
+- Cause of Action heading: pick the most accurate from: BREACH OF CONTRACT / ACCOUNT STATED / QUANTUM MERUIT (use Breach of Contract if there was an agreement; add Account Stated if there was an invoice the defendant didn't dispute; add Quantum Meruit if no written contract)
+- Numbered factual allegations (use actual names, dates, amounts from case data):
+  1. The Parties and Agreement — who the parties are, what was agreed, when, for how much
+  2. Plaintiff's Full Performance — what was delivered/completed and when
+  3. Defendant's Default and Outstanding Balance — invoice amount, partial payment if any, balance remaining, demand made, non-payment
+- Relief Sought box: "WHEREFORE, Plaintiff demands judgment against Defendant in the sum of $[outstandingBalance], together with statutory interest from the date of default, costs, and disbursements of this action, and for such other and further relief as this Court deems just and proper."
 
-Format as print-ready HTML (max-width 750px, serif font, court-document style).
-Include disclaimer: "This document was pre-filled from your case data. Have an attorney review before filing if possible."
+SIGNATURE BLOCK:
+- "Dated: _____________, ${new Date().getFullYear()}" followed by the city and state derived from claimant's address (e.g. "Jamaica, New York" not "New York, New York")
+- Signature line + claimant's full name bold + "Plaintiff, Pro Se" + address + phone + email
+
+VERIFICATION:
+- "State of New York )"
+- "County of [county of claimant's address] ) ss.:"
+- "I, [claimantName], being duly sworn, depose and say that I am the Plaintiff in the above-captioned action; that I have read the foregoing Complaint and know the contents thereof; and that the same is true to my own knowledge, except as to matters therein stated to be alleged on information and belief, and as to those matters I believe them to be true."
+- Signature line + printed name
+- "Sworn to before me this _____ day of _____________, ${new Date().getFullYear()}"
+- Notary Public signature line
+
+Format as print-ready HTML (max-width 750px, serif font, court-document style, 1.4 line spacing).
+Include disclaimer banner at top: "⚠ DISCLAIMER: This document was pre-filled from your case data. Have an attorney review before filing if possible. Fields marked [UNKNOWN — VERIFY BEFORE FILING] require your attention before submission."
 
 Return JSON:
 {
   "html": "complete HTML string",
   "formType": "NYC Civil Court — Pro Se Summons & Complaint",
-  "instructions": ["5 specific steps"]
+  "instructions": ["5 specific numbered steps"]
 }
 
-Instructions must include: where to file (60 Centre Street or borough courthouse), index number purchase, fee amount, copies needed, service requirements.
+Instructions must be specific: exact courthouse address for the county, filing fee (~$45), bring 3 copies, process server requirement (within 120 days), file Affidavit of Service after service, calendar defendant's answer deadline (20 days personal service / 30 days other).
 Return ONLY valid JSON.`,
 
     supreme: `You are filling out a New York Supreme Court Summons with Notice.
+
+TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+CURRENT YEAR: ${new Date().getFullYear()}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
 
 Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
-The document must contain:
+CRITICAL RULES:
+- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
+- Relief sought must use outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
+- Derive county from debtorAddress — that is where you file (defendant's county)
+- County map: Glendale/Jamaica/Flushing/Astoria/Long Island City → Queens; Brooklyn/Flatbush/Bay Ridge → Kings; Bronx → Bronx; Staten Island → Richmond; Manhattan/New York/Midtown/Downtown → New York County
+- Signature block location must match the city from claimant's address, not generically "New York, New York"
+- Nature of Action: choose all that apply from — BREACH OF CONTRACT (if agreement exists), ACCOUNT STATED (if invoice was sent and not disputed), QUANTUM MERUIT (if no written contract but services were rendered and accepted)
 
-HEADER:
+DOCUMENT STRUCTURE:
+
+HEADER (all caps, centered):
 "SUPREME COURT OF THE STATE OF NEW YORK
-COUNTY OF [county from debtorAddress or UNKNOWN]"
+COUNTY OF [county derived from debtorAddress]"
 
-CAPTION:
-Plaintiff name(s) and address(es) vs. Defendant name(s) and address(es)
-Index No.: [PURCHASE FROM COUNTY CLERK — $210 filing fee]
+CAPTION (two-column):
+Left: Plaintiff(s) full name(s) + address(es) + label "Plaintiff"
+Right: Index No.: [PURCHASE FROM COUNTY CLERK — $210]
+Center: "— against —"
+Below: Defendant(s) full name(s) + address(es) + label "Defendant"
+Document title: "SUMMONS WITH NOTICE"
 
-SUMMONS:
+SUMMONS (statutory CPLR language — reproduce exactly):
 "TO THE ABOVE-NAMED DEFENDANT(S):
-YOU ARE HEREBY SUMMONED to answer the complaint in this action and to serve a copy of your answer, or, if the complaint is not served with this summons, to serve a notice of appearance, on the Plaintiff's attorney within TWENTY (20) days after the service of this summons, exclusive of the day of service (or within THIRTY (30) days after the service is complete if this summons is not personally delivered to you within the State of New York); and in case of your failure to appear or answer, judgment will be taken against you by default for the relief demanded in the notice set forth below."
+YOU ARE HEREBY SUMMONED to answer the complaint in this action and to serve a copy of your answer, or, if the complaint is not served with this summons, to serve a notice of appearance, on the Plaintiff or Plaintiff's attorney within TWENTY (20) days after the service of this summons, exclusive of the day of service (or within THIRTY (30) days after the service is complete if this summons is not personally delivered to you within the State of New York); and in case of your failure to appear or answer, judgment will be taken against you by default for the relief demanded in the notice set forth below."
 
-NOTICE:
-- Nature of Action: Breach of Contract / Account Stated / Quantum Meruit (most applicable)
-- The relief sought: "Judgment against Defendant in the sum of $[amountOwed], together with interest from [invoiceDate or agreementDate], costs and disbursements of this action."
+NOTICE OF NATURE OF ACTION AND RELIEF SOUGHT:
+- Nature of Action: [list applicable causes — Breach of Contract / Account Stated / Quantum Meruit]
+- Brief factual basis (2-3 sentences using actual names, dates, amounts from case data): what was agreed, what was delivered, what remains unpaid
+- Relief Sought: "Judgment against Defendant(s) in the sum of $[outstandingBalance], together with statutory interest from [invoiceDate or agreementDate or 'the date of default'], costs and disbursements of this action, and such other and further relief as the Court deems just and proper."
 
 SIGNATURE BLOCK:
-"Dated: [TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}]
-Plaintiff Pro Se: [claimantName or claimantBusiness]
-Address: [claimant address if known]"
+"Dated: _________________, ${new Date().getFullYear()}     [city from claimant's address], New York"
+Blank signature line
+"[claimantName or claimantBusiness]"
+"Plaintiff Pro Se"
+claimant address, phone, email
 
-Format as official court document HTML (max-width 750px, serif font, 1.5 line spacing, all-caps headers).
-Include banner: "IMPORTANT: Review every field. Have an attorney review this document before filing if possible. This is your legal pleading."
+Format as official court document HTML (max-width 750px, serif font, 1.5 line spacing, all-caps section headers).
+Include banner at top: "⚠ IMPORTANT: This Summons with Notice was pre-filled from your case data. Review every field before filing. Have an attorney review if possible. This is a legal pleading."
 
 Return JSON:
 {
   "html": "complete HTML string",
   "formType": "Supreme Court of the State of New York — Summons with Notice",
-  "instructions": ["5 specific steps including index number purchase, service requirements under CPLR, RJI filing"]
+  "instructions": ["5 specific steps"]
 }
 
+Instructions must cover: purchase index number from County Clerk ($210), file Summons with Notice, serve defendant within 120 days via licensed process server (CPLR Article 3), file notarized Affidavit of Service, file RJI (Request for Judicial Intervention) within 60 days of filing to get a judge assigned.
 Return ONLY valid JSON.`,
   };
 
