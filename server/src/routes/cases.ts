@@ -545,8 +545,47 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
       extractedFacts: caseData.extractedFacts,
     };
 
+    const GENERATION_FAILED_MARKER = 'Form generation failed';
+
     // ── Pass 1: Generate ──────────────────────────────────────────────────────
     let form = await generateCourtForm(context as Record<string, unknown>, track);
+
+    // ── Pass 1b: Retry generation if it produced an error fallback ────────────
+    // This is a generation failure (JSON parse/truncation), not a content issue.
+    // Don't send an error message into the verify pipeline — retry generation directly.
+    if (form.html.includes(GENERATION_FAILED_MARKER)) {
+      console.log(`Court form generation failed on first attempt — retrying generation (case ${req.params.id})`);
+      form = await generateCourtForm(context as Record<string, unknown>, track);
+    }
+
+    // If both generation attempts failed, save the error state and return early
+    if (form.html.includes(GENERATION_FAILED_MARKER)) {
+      console.error(`Court form generation failed on both attempts (case ${req.params.id})`);
+      const updated = await prisma.case.update({
+        where: { id: req.params.id },
+        data: {
+          filingPacketHtml: form.html,
+          filingPacket: form.formType,
+          courtFormType: form.formType,
+          courtFormInstructions: form.instructions as never,
+          courtFormVerification: {
+            overallStatus: 'issues_found',
+            checks: [],
+            summary: 'Form generation failed after two attempts. This is usually a temporary issue — please try again.',
+            blankFields: [],
+            verifiedAt: new Date().toISOString(),
+            didRetry: false,
+            generationFailed: true,
+          } as never,
+          actions: {
+            create: { type: 'COURT_FORM_GENERATED', status: 'FAILED', label: 'Court form generation failed' },
+          },
+        },
+        include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+      });
+      res.json(updated);
+      return;
+    }
 
     // ── Pass 2: Verify ────────────────────────────────────────────────────────
     let verification = await verifyCourtForm(form.html, context as Record<string, unknown>);
@@ -556,7 +595,7 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
     // Only retry on 'issues_found' (mismatch / hallucination). 'review_needed' means
     // missing data — retrying won't fix that, it's a data gap on the case.
     if (verification.overallStatus === 'issues_found') {
-      console.log(`Court form verification: issues_found — retrying once (case ${req.params.id})`);
+      console.log(`Court form verification: issues_found — retrying with corrections (case ${req.params.id})`);
       const retried = await retryCourtForm(
         form.html,
         verification,

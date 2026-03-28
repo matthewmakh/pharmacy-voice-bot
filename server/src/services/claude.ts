@@ -179,7 +179,7 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: 'You are a legal case analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });

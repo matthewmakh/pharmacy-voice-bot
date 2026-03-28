@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -52,6 +52,59 @@ import {
 } from '../lib/utils';
 import type { Case, Strategy, ActionType } from '../types';
 import UploadZone from '../components/evidence/UploadZone';
+
+// ─── Rotating Facts Loader ─────────────────────────────────────────────────────
+
+const LOADING_FACTS = [
+  'In New York, Commercial Claims Court caps recovery at $10,000 — but costs you just $25 to file.',
+  'A demand letter sent via certified mail creates a paper trail courts take seriously.',
+  'Defendants have 20 days to respond after personal service in NY Civil Court — mark it immediately.',
+  'Account stated is a powerful cause of action: if you sent an invoice and they didn\'t dispute it, they may have accepted the debt.',
+  'NYC City Marshals collect roughly 5% of the judgment amount as their fee — recoverable from the debtor.',
+  'Quantum meruit means "as much as deserved" — it lets you collect even without a signed contract.',
+  'Filing in the wrong county is one of the most common pro se mistakes. Always file where the defendant does business.',
+  'Winning a judgment is step one. Enforcing it — bank levy, property lien, income execution — is step two.',
+  'The 120-day service window starts the day you file, not the day you serve. Calendar it immediately.',
+  'An Affidavit of Service must be notarized and filed with the court promptly — don\'t sit on it.',
+  'In NY Supreme Court, e-filing is mandatory for represented parties on NYSCEF. Pro se filers are exempt unless they opt in.',
+  'Partial payment by a debtor is powerful evidence — it shows they acknowledged the debt.',
+  'Interest runs at 9% per year on NY judgments under CPLR § 5004.',
+  'A default judgment can be entered if the defendant fails to appear or answer by the deadline.',
+  'The RJI (Request for Judicial Intervention) must be filed within 60 days to get a judge assigned in Supreme Court.',
+];
+
+function RotatingFact({ label, sublabel }: { label: string; sublabel?: string }) {
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * LOADING_FACTS.length));
+  const [visible, setVisible] = useState(true);
+
+  // Rotate facts every 4 seconds with a fade transition
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setIdx(i => (i + 1) % LOADING_FACTS.length);
+        setVisible(true);
+      }, 400);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="card p-8 text-center">
+      <Loader2 className="w-10 h-10 text-purple-500 mx-auto mb-4 animate-spin" />
+      <div className="text-sm font-semibold text-slate-800 mb-1">{label}</div>
+      {sublabel && <p className="text-xs text-slate-400 mb-6">{sublabel}</p>}
+      <div
+        className="mt-4 mx-auto max-w-sm transition-opacity duration-300"
+        style={{ opacity: visible ? 1 : 0 }}
+      >
+        <div className="text-xs font-semibold text-purple-500 uppercase tracking-wider mb-2">Did you know?</div>
+        <p className="text-sm text-slate-600 leading-relaxed italic">"{LOADING_FACTS[idx]}"</p>
+      </div>
+    </div>
+  );
+}
 
 type Tab = 'overview' | 'evidence' | 'strategy' | 'letter' | 'escalation' | 'filing' | 'timeline';
 
@@ -623,11 +676,7 @@ function StrategyTab({ caseData }: { caseData: Case }) {
       )}
 
       {isAnalyzing && (
-        <div className="card p-6 text-center">
-          <Loader2 className="w-10 h-10 text-purple-500 mx-auto mb-3 animate-spin" />
-          <div className="text-sm font-semibold text-slate-800">Analyzing your case...</div>
-          <p className="text-xs text-slate-400 mt-1">This usually takes 15–30 seconds.</p>
-        </div>
+        <RotatingFact label="Analyzing your case..." sublabel="This usually takes 15–30 seconds." />
       )}
 
       {/* Analysis results — shown here on Strategy tab after analysis completes */}
@@ -747,13 +796,7 @@ function LetterTab({ caseData }: { caseData: Case }) {
   }
 
   if (isGenerating) {
-    return (
-      <div className="card p-8 text-center">
-        <Loader2 className="w-10 h-10 text-purple-500 mx-auto mb-3 animate-spin" />
-        <div className="text-sm font-semibold text-slate-800">Generating demand letter...</div>
-        <p className="text-xs text-slate-400 mt-1">This usually takes 20–40 seconds.</p>
-      </div>
-    );
+    return <RotatingFact label="Generating demand letter..." sublabel="This usually takes 20–40 seconds." />;
   }
 
   return (
