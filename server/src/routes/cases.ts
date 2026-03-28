@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, generateDefaultJudgment } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -545,21 +545,47 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
       extractedFacts: caseData.extractedFacts,
     };
 
-    const result = await generateCourtForm(context as Record<string, unknown>, track);
+    // ── Pass 1: Generate ──────────────────────────────────────────────────────
+    let form = await generateCourtForm(context as Record<string, unknown>, track);
 
-    // Verify the generated form against case data — runs in parallel after generation
-    const verification = await verifyCourtForm(result.html, context as Record<string, unknown>);
+    // ── Pass 2: Verify ────────────────────────────────────────────────────────
+    let verification = await verifyCourtForm(form.html, context as Record<string, unknown>);
+    let didRetry = false;
+
+    // ── Pass 3: Retry once if hard issues found ───────────────────────────────
+    // Only retry on 'issues_found' (mismatch / hallucination). 'review_needed' means
+    // missing data — retrying won't fix that, it's a data gap on the case.
+    if (verification.overallStatus === 'issues_found') {
+      console.log(`Court form verification: issues_found — retrying once (case ${req.params.id})`);
+      const retried = await retryCourtForm(
+        form.html,
+        verification,
+        context as Record<string, unknown>,
+        track,
+        form.formType
+      );
+      // Verify the retry result — one final check, no further retries
+      const retryVerification = await verifyCourtForm(retried.html, context as Record<string, unknown>);
+      form = retried;
+      verification = retryVerification;
+      didRetry = true;
+    }
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
       data: {
-        filingPacketHtml: result.html,
-        filingPacket: result.formType,
-        courtFormType: result.formType,
-        courtFormInstructions: result.instructions as never,
-        courtFormVerification: verification as never,
+        filingPacketHtml: form.html,
+        filingPacket: form.formType,
+        courtFormType: form.formType,
+        courtFormInstructions: form.instructions as never,
+        courtFormVerification: { ...verification, didRetry } as never,
         actions: {
-          create: { type: 'COURT_FORM_GENERATED', status: 'COMPLETED', label: `Court form generated: ${result.formType}` },
+          create: {
+            type: 'COURT_FORM_GENERATED',
+            status: 'COMPLETED',
+            label: `Court form generated: ${form.formType}${didRetry ? ' (auto-corrected)' : ''}`,
+            metadata: { overallStatus: verification.overallStatus, didRetry },
+          },
         },
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },

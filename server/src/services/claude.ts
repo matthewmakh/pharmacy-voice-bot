@@ -544,24 +544,23 @@ Instructions must cover: purchase index number from County Clerk ($210), file Su
 Return ONLY valid JSON.`,
   };
 
-  const response = await client.messages.create({
+  // ── Pass 1: Generate ────────────────────────────────────────────────────────
+  const genResponse = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
     system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: trackPrompts[track] }],
   });
 
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+  const genContent = genResponse.content[0];
+  if (genContent.type !== 'text') throw new Error('Unexpected response type from Claude');
 
+  let result: CourtFormResult;
   try {
-    const result = JSON.parse(extractJson(content.text)) as CourtFormResult;
-    // Ensure formType is set correctly
+    result = JSON.parse(extractJson(genContent.text)) as CourtFormResult;
     result.formType = result.formType || formMeta.formType;
-    return result;
   } catch {
-    // Fallback: return basic structure
-    return {
+    result = {
       html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;"><h2>${formMeta.formType}</h2><p>Form generation failed. Please try again.</p></div>`,
       formType: formMeta.formType,
       instructions: [
@@ -572,6 +571,73 @@ Return ONLY valid JSON.`,
         'Review all fields before submitting',
       ],
     };
+  }
+
+  return result;
+}
+
+// Exported separately so the route can orchestrate: generate → verify → retry if needed → verify retry
+export async function retryCourtForm(
+  originalHtml: string,
+  verification: CourtFormVerification,
+  caseData: Record<string, unknown>,
+  track: 'commercial' | 'civil' | 'supreme',
+  formType: string
+): Promise<CourtFormResult> {
+  const issues = verification.checks.filter(c => c.status !== 'ok');
+  const issueList = issues
+    .map(c => `- ${c.field}: expected "${c.expected ?? 'not in case data'}", found "${c.found ?? 'missing'}". Note: ${c.note}`)
+    .join('\n');
+
+  const retryPrompt = `You previously generated a court form that failed verification. You must regenerate it, correcting only the specific issues listed below. Do not change anything that was already correct.
+
+ORIGINAL FORM (for reference — your previous output):
+${originalHtml.slice(0, 4000)}
+
+VERIFICATION ISSUES TO FIX (${issues.length} problem${issues.length === 1 ? '' : 's'}):
+${issueList}
+
+${verification.blankFields.length > 0 ? `FIELDS STILL BLANK (fill if the data is available in case data, otherwise leave as [UNKNOWN — VERIFY BEFORE FILING]):\n${verification.blankFields.join(', ')}` : ''}
+
+SOURCE CASE DATA (ground truth — use this to correct the issues above):
+${JSON.stringify(caseData, null, 2)}
+
+TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+CURRENT YEAR: ${new Date().getFullYear()}
+
+Rules:
+- Fix every issue listed above using the case data as ground truth
+- Keep everything that was already verified as correct
+- Do not invent any facts not present in the case data
+- Signature date must be today's date — do not leave it blank
+- Use [UNKNOWN — VERIFY BEFORE FILING] only for fields genuinely missing from case data
+
+Return the corrected form as JSON:
+{
+  "html": "complete corrected HTML string",
+  "formType": "${formType}",
+  "instructions": ["same 5 steps as before unless corrections require changes"]
+}
+
+Return ONLY valid JSON.`;
+
+  const retryResponse = await client.messages.create({
+    model: MODEL,
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: retryPrompt }],
+  });
+
+  const retryContent = retryResponse.content[0];
+  if (retryContent.type !== 'text') throw new Error('Unexpected response type from Claude on retry');
+
+  try {
+    const retryResult = JSON.parse(extractJson(retryContent.text)) as CourtFormResult;
+    retryResult.formType = retryResult.formType || formType;
+    return retryResult;
+  } catch {
+    // Retry parse failed — return original rather than an error state
+    return { html: originalHtml, formType, instructions: [] };
   }
 }
 

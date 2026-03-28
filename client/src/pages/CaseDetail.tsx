@@ -968,7 +968,12 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               return (
                 <div className={`card p-5 border ${statusConfig.bg}`}>
                   <div className="flex items-center justify-between mb-3">
-                    <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Verification Report</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Verification Report</div>
+                      {v.didRetry && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">Auto-corrected</span>
+                      )}
+                    </div>
                     <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${statusConfig.badge}`}>
                       {statusConfig.icon} {statusConfig.label}
                     </span>

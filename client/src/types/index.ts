@@ -121,6 +121,7 @@ export interface Case {
     summary: string;
     blankFields: string[];
     verifiedAt: string;
+    didRetry?: boolean;
   } | null;
   defaultJudgment: string | null;
   defaultJudgmentHtml: string | null;
