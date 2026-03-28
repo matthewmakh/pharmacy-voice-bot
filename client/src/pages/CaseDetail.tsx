@@ -101,7 +101,11 @@ function RotatingFact({ label, sublabel }: { label: string; sublabel?: string })
     const interval = setInterval(() => {
       setVisible(false);
       setTimeout(() => {
-        setIdx(i => (i + 1) % LOADING_FACTS.length);
+        setIdx(i => {
+          let next = Math.floor(Math.random() * LOADING_FACTS.length);
+          if (next === i) next = (i + 1) % LOADING_FACTS.length;
+          return next;
+        });
         setVisible(true);
       }, 500);
     }, 5500);
