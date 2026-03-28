@@ -11,6 +11,9 @@ import authRouter from './routes/auth';
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
+// Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
+app.set('trust proxy', 1);
+
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 // Strict limit for auth routes (prevents brute force)
 const authLimiter = rateLimit({
