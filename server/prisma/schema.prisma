@@ -66,8 +66,12 @@ model Case {
   demandLetterHtml String? @db.Text
   finalNotice      String? @db.Text
   finalNoticeHtml  String? @db.Text
-  filingPacket     String? @db.Text
-  filingPacketHtml String? @db.Text
+  filingPacket         String? @db.Text
+  filingPacketHtml     String? @db.Text
+  courtFormType        String?
+  courtFormInstructions Json?
+  defaultJudgment      String? @db.Text
+  defaultJudgmentHtml  String? @db.Text
 
   notes String? @db.Text
 
@@ -152,6 +156,8 @@ enum ActionType {
   DEMAND_LETTER_GENERATED
   FINAL_NOTICE_GENERATED
   FILING_PACKET_GENERATED
+  COURT_FORM_GENERATED
+  DEFAULT_JUDGMENT_GENERATED
   EMAIL_SENT
   CERTIFIED_MAIL_SENT
   REMINDER_SENT

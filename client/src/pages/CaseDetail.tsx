@@ -30,7 +30,8 @@ import {
   setStrategy,
   generateLetter,
   generateFinalNotice,
-  generateFilingPacket,
+  generateCourtForm,
+  generateDefaultJudgment,
   uploadDocuments,
   deleteDocument,
   logAction,
@@ -85,6 +86,10 @@ const ACTION_ICONS: Partial<Record<ActionType, React.ElementType>> = {
   AI_ANALYSIS_COMPLETED: Zap,
   STRATEGY_SELECTED: Zap,
   DEMAND_LETTER_GENERATED: FileText,
+  FINAL_NOTICE_GENERATED: Shield,
+  FILING_PACKET_GENERATED: FileText,
+  COURT_FORM_GENERATED: Scale,
+  DEFAULT_JUDGMENT_GENERATED: Scale,
   EMAIL_SENT: Mail,
   CERTIFIED_MAIL_SENT: Send,
   REMINDER_SENT: Send,
@@ -787,15 +792,30 @@ function LetterTab({ caseData }: { caseData: Case }) {
 function EscalationTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const [copiedFN, setCopiedFN] = useState(false);
-  const [copiedFP, setCopiedFP] = useState(false);
+  const [showProcessServerModal, setShowProcessServerModal] = useState(false);
+  const [serviceNotes, setServiceNotes] = useState('');
+  const [serviceLogging, setServiceLogging] = useState(false);
+
+  const outstanding = parseFloat(caseData.amountOwed || '0') - parseFloat(caseData.amountPaid || '0');
+  const courtTrack = outstanding <= 10000 ? 'commercial' : outstanding <= 50000 ? 'civil' : 'supreme';
+  const courtFormName = courtTrack === 'commercial'
+    ? 'Commercial Claims Court — CIV-SC-70'
+    : courtTrack === 'civil'
+    ? 'NYC Civil Court — Pro Se Summons & Complaint'
+    : 'Supreme Court — Summons with Notice';
 
   const finalNoticeMutation = useMutation({
     mutationFn: () => generateFinalNotice(caseData.id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
-  const filingPacketMutation = useMutation({
-    mutationFn: () => generateFilingPacket(caseData.id),
+  const courtFormMutation = useMutation({
+    mutationFn: () => generateCourtForm(caseData.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const defaultJudgmentMutation = useMutation({
+    mutationFn: () => generateDefaultJudgment(caseData.id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
@@ -807,14 +827,6 @@ function EscalationTab({ caseData }: { caseData: Case }) {
     }
   };
 
-  const handleCopyFP = () => {
-    if (caseData.filingPacket) {
-      navigator.clipboard.writeText(caseData.filingPacket);
-      setCopiedFP(true);
-      setTimeout(() => setCopiedFP(false), 2000);
-    }
-  };
-
   const handleEmailFN = () => {
     if (!caseData.debtorEmail || !caseData.finalNotice) return;
     const subject = encodeURIComponent(`Final Notice — ${caseData.debtorBusiness || caseData.debtorName || 'Outstanding Balance'}`);
@@ -822,13 +834,45 @@ function EscalationTab({ caseData }: { caseData: Case }) {
     window.open(`mailto:${caseData.debtorEmail}?subject=${subject}&body=${body}`);
   };
 
+  const handlePrintCourtForm = () => {
+    const html = caseData.filingPacketHtml;
+    if (!html) return;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html><head><title>Court Form</title><style>
+      @media print { body { margin: 1in; } }
+      body { font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem; }
+    </style></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  const handleLogServiceInitiated = async () => {
+    setServiceLogging(true);
+    try {
+      await logAction(
+        caseData.id,
+        'SERVICE_INITIATED',
+        serviceNotes || `Process server engagement initiated. Defendant address: ${caseData.debtorAddress || '[unknown]'}`,
+        { debtorAddress: caseData.debtorAddress, notes: serviceNotes }
+      );
+      await queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+      setShowProcessServerModal(false);
+      setServiceNotes('');
+    } finally {
+      setServiceLogging(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
-      {/* Section 1: Final Notice */}
+      {/* Section 1: Pre-Filing Notice */}
       <div>
-        <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
-          <Shield className="w-4 h-4 text-red-500" /> Final Notice
+        <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Shield className="w-4 h-4 text-red-500" /> Pre-Filing Notice
         </h3>
+        <p className="text-xs text-slate-500 mb-4">Send this before filing to give the debtor a final opportunity to pay and to document your escalation path.</p>
         {caseData.finalNoticeHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
@@ -861,7 +905,7 @@ function EscalationTab({ caseData }: { caseData: Case }) {
         ) : (
           <div className="card p-6 text-center">
             <p className="text-sm text-slate-500 mb-4">
-              Generate a final notice before escalating to legal action.
+              Generate a pre-filing notice — a short, firm letter stating legal action is imminent.
             </p>
             <button
               onClick={() => finalNoticeMutation.mutate()}
@@ -869,72 +913,228 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               className="btn-primary"
             >
               {finalNoticeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
-              Generate Final Notice
+              Generate Pre-Filing Notice
             </button>
           </div>
         )}
       </div>
 
-      {/* Section 2: Filing Packet */}
+      {/* Section 2: Court Form */}
       <div>
-        <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
-          <Scale className="w-4 h-4 text-blue-500" /> Filing Packet
+        <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Scale className="w-4 h-4 text-blue-600" /> Court Form — {caseData.courtFormType || courtFormName}
         </h3>
-        {caseData.filingPacket ? (
+        <p className="text-xs text-slate-500 mb-4">
+          Based on your outstanding balance of <span className="font-semibold">${outstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>, the applicable form is: <span className="font-semibold">{courtFormName}</span>.
+        </p>
+
+        {/* Warning banner */}
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 mb-4">
+          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>This form will be pre-filled with your case data. <strong>Review every field carefully before filing.</strong> Use [UNKNOWN — VERIFY BEFORE FILING] placeholders where data is missing.</span>
+        </div>
+
+        {caseData.filingPacketHtml ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <button onClick={handleCopyFP} className="btn-secondary text-sm flex items-center gap-2">
-                <Copy className="w-4 h-4" /> {copiedFP ? 'Copied!' : 'Copy Text'}
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={handlePrintCourtForm}
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" /> Print Form
               </button>
               <button
-                onClick={() => filingPacketMutation.mutate()}
-                disabled={filingPacketMutation.isPending}
+                onClick={() => courtFormMutation.mutate()}
+                disabled={courtFormMutation.isPending}
+                className="btn-secondary text-sm"
+              >
+                {courtFormMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
+                Regenerate
+              </button>
+            </div>
+
+            {/* Instructions list */}
+            {caseData.courtFormInstructions && caseData.courtFormInstructions.length > 0 && (
+              <div className="card p-5 bg-blue-50 border-blue-100">
+                <div className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-3">Next Steps</div>
+                <ol className="space-y-2">
+                  {caseData.courtFormInstructions.map((step, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-blue-900">
+                      <span className="font-bold text-blue-400 shrink-0">{i + 1}.</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            <div className="card p-8">
+              <div
+                className="prose prose-sm max-w-none prose-slate"
+                dangerouslySetInnerHTML={{ __html: caseData.filingPacketHtml }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="card p-6 text-center">
+            <div className="text-sm font-semibold text-slate-700 mb-2">{courtFormName}</div>
+            <p className="text-sm text-slate-500 mb-4">
+              Generate a pre-filled, print-ready version of the correct NYC court form for your case.
+            </p>
+            <button
+              onClick={() => courtFormMutation.mutate()}
+              disabled={courtFormMutation.isPending}
+              className="btn-primary"
+            >
+              {courtFormMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
+              Generate Pre-Filled Court Form
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Process Server Engagement */}
+      {(courtTrack === 'civil' || courtTrack === 'supreme') && (
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+            <Send className="w-4 h-4 text-violet-500" /> Process Server Engagement
+          </h3>
+          <p className="text-xs text-slate-500 mb-4">
+            For Civil Court and Supreme Court cases, a licensed process server must serve the summons. Log when service is initiated.
+          </p>
+          <div className="card p-5">
+            <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+              <div>
+                <div className="text-xs text-slate-500 mb-1">Defendant</div>
+                <div className="font-medium text-slate-800">{caseData.debtorBusiness || caseData.debtorName || '[unknown]'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-1">Address</div>
+                <div className="font-medium text-slate-800">{caseData.debtorAddress || '[unknown — required for service]'}</div>
+              </div>
+            </div>
+            {caseData.actions.some(a => a.type === 'SERVICE_INITIATED') ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-4 py-3">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>Service initiated — see Timeline for details.</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowProcessServerModal(true)}
+                className="btn-secondary text-sm"
+              >
+                Log Service Initiated
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Section 4: Default Judgment Motion */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Scale className="w-4 h-4 text-slate-500" /> Default Judgment Motion
+        </h3>
+        <p className="text-xs text-slate-500 mb-4">
+          If the defendant was served but failed to appear or answer within the required deadline (20 days after personal service, 30 days after alternative service), you can move for a default judgment.
+        </p>
+        {caseData.defaultJudgmentHtml ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const w = window.open('', '_blank');
+                  if (!w || !caseData.defaultJudgmentHtml) return;
+                  w.document.write(`<!DOCTYPE html><html><head><title>Default Judgment Motion</title><style>
+                    @media print { body { margin: 1in; } }
+                    body { font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem; }
+                  </style></head><body>${caseData.defaultJudgmentHtml}</body></html>`);
+                  w.document.close();
+                  w.focus();
+                  w.print();
+                }}
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" /> Print Motion
+              </button>
+              <button
+                onClick={() => defaultJudgmentMutation.mutate()}
+                disabled={defaultJudgmentMutation.isPending}
                 className="btn-secondary text-sm ml-auto"
               >
-                {filingPacketMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
+                {defaultJudgmentMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
                 Regenerate
               </button>
             </div>
             <div className="card p-8">
-              {caseData.filingPacketHtml ? (
-                <div
-                  className="prose prose-sm max-w-none prose-slate"
-                  dangerouslySetInnerHTML={{ __html: caseData.filingPacketHtml }}
-                />
-              ) : (
-                <pre className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
-                  {(() => {
-                    const raw = caseData.filingPacket || '';
-                    try {
-                      const start = raw.indexOf('{');
-                      const end = raw.lastIndexOf('}');
-                      if (start !== -1 && end > start) {
-                        const parsed = JSON.parse(raw.slice(start, end + 1)) as { text?: string };
-                        if (parsed.text) return parsed.text.replace(/\\n/g, '\n');
-                      }
-                    } catch { /* show raw */ }
-                    return raw;
-                  })()}
-                </pre>
-              )}
+              <div
+                className="prose prose-sm max-w-none prose-slate"
+                dangerouslySetInnerHTML={{ __html: caseData.defaultJudgmentHtml }}
+              />
             </div>
           </div>
         ) : (
           <div className="card p-6 text-center">
             <p className="text-sm text-slate-500 mb-4">
-              Generate a filing packet with all necessary information for court filing.
+              Generate a Motion for Default Judgment package — Notice of Motion, Affidavit in Support, Proposed Order, and blank Affidavit of Service template.
             </p>
             <button
-              onClick={() => filingPacketMutation.mutate()}
-              disabled={filingPacketMutation.isPending}
+              onClick={() => defaultJudgmentMutation.mutate()}
+              disabled={defaultJudgmentMutation.isPending}
               className="btn-primary"
             >
-              {filingPacketMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
-              Generate Filing Packet
+              {defaultJudgmentMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
+              Generate Default Judgment Motion
             </button>
           </div>
         )}
       </div>
+
+      {/* Process Server Modal */}
+      {showProcessServerModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-slate-900">Log Service Initiated</h3>
+              <button onClick={() => setShowProcessServerModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-50 rounded-lg text-sm">
+                <div className="text-xs text-slate-500 mb-1">Serving</div>
+                <div className="font-semibold text-slate-800">{caseData.debtorBusiness || caseData.debtorName || '[unknown defendant]'}</div>
+                <div className="text-slate-600 mt-1">{caseData.debtorAddress || '[address unknown — update case before proceeding]'}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Notes (optional)</label>
+                <textarea
+                  value={serviceNotes}
+                  onChange={(e) => setServiceNotes(e.target.value)}
+                  placeholder="Process server name, instructions, date engaged..."
+                  className="input w-full h-24 text-sm resize-none"
+                />
+              </div>
+              <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-800">
+                This logs a SERVICE_INITIATED action in the case timeline. The process server is responsible for completing service and providing an Affidavit of Service.
+              </div>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setShowProcessServerModal(false)} className="btn-secondary text-sm">
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogServiceInitiated}
+                  disabled={serviceLogging}
+                  className="btn-primary text-sm flex items-center gap-2"
+                >
+                  {serviceLogging && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Confirm — Log Service Initiated
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1260,6 +1460,68 @@ function FilingGuideTab({ caseData }: { caseData: Case }) {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* NYC City Marshal Directory */}
+      <div className="card p-5">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">NYC City Marshals — Judgment Enforcement</div>
+        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+          Once you have a judgment, a City Marshal can levy bank accounts, seize property, and execute income executions. Marshals are private officers appointed by the Mayor — you hire them directly.
+        </p>
+        <div className="space-y-3">
+          {[
+            {
+              name: 'Marshal Vadim Khavinson',
+              borough: 'Manhattan / All Boroughs',
+              address: '26 Court St, Brooklyn, NY 11242',
+              phone: '(718) 855-6066',
+              note: 'Large commercial enforcement practice. Bank levies and property executions.',
+            },
+            {
+              name: 'Marshal Louis Minuto',
+              borough: 'Manhattan',
+              address: '18 E 48th St, Suite 1101, New York, NY 10017',
+              phone: '(212) 486-0600',
+              note: 'Midtown Manhattan — commercial and residential enforcement.',
+            },
+            {
+              name: 'Marshal David Grate',
+              borough: 'Brooklyn / Queens',
+              address: '16 Court St, Suite 1800, Brooklyn, NY 11241',
+              phone: '(718) 422-9222',
+              note: 'Brooklyn and Queens commercial enforcement.',
+            },
+            {
+              name: 'Marshal Richard Browne',
+              borough: 'Bronx',
+              address: '215 E 161st St, Bronx, NY 10451',
+              phone: '(718) 590-3511',
+              note: 'Bronx-based enforcement. Bank levies and income executions.',
+            },
+            {
+              name: 'Marshal Patricia McNulty',
+              borough: 'Staten Island',
+              address: '26 Central Ave, Staten Island, NY 10301',
+              phone: '(718) 273-8000',
+              note: 'Staten Island enforcement.',
+            },
+          ].map((m) => (
+            <div key={m.name} className="p-4 rounded-lg border border-slate-100 bg-slate-50">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">{m.name}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{m.borough}</div>
+                  <div className="text-xs text-slate-500 mt-1">{m.address}</div>
+                  <div className="text-xs text-slate-600 mt-0.5 font-medium">{m.phone}</div>
+                  <div className="text-xs text-slate-400 mt-1 leading-snug">{m.note}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-slate-400 mt-4 leading-relaxed">
+          Full directory: <span className="text-blue-500">nyc.gov/marshals</span> — search by borough. Marshals charge a fee (typically 5% of amount collected) on top of filing fees. You advance costs; they are recoverable from the debtor.
+        </p>
       </div>
 
       {/* Disclaimer */}

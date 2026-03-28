@@ -330,38 +330,238 @@ Return ONLY valid JSON.`;
   }
 }
 
-export async function generateFilingPacket(
+export interface CourtFormResult {
+  html: string;
+  formType: string;
+  instructions: string[];
+}
+
+export async function generateCourtForm(
+  caseData: Record<string, unknown>,
+  track: 'commercial' | 'civil' | 'supreme'
+): Promise<CourtFormResult> {
+  const formMeta = {
+    commercial: {
+      formType: 'Commercial Claims Court — CIV-SC-70',
+      fee: '$25',
+      office: 'NYC Civil Court Commercial Claims Clerk',
+      maxAmount: '$10,000',
+    },
+    civil: {
+      formType: 'NYC Civil Court — Pro Se Summons & Complaint',
+      fee: '$45',
+      office: 'NYC Civil Court Clerk',
+      maxAmount: '$50,000',
+    },
+    supreme: {
+      formType: 'Supreme Court of the State of New York — Summons with Notice',
+      fee: '$210 (Index Number)',
+      office: 'County Clerk (Supreme Court)',
+      maxAmount: 'Unlimited',
+    },
+  }[track];
+
+  const trackPrompts = {
+    commercial: `You are filling out NYC Commercial Claims Court form CIV-SC-70.
+
+CASE DATA:
+${JSON.stringify(caseData, null, 2)}
+
+Generate a pre-filled HTML version of the CIV-SC-70 form. The form must include these sections, filled with case data. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields:
+
+SECTION 1 — CLAIMANT INFORMATION:
+- Business/Individual Name (claimantBusiness or claimantName)
+- Address
+- Phone
+
+SECTION 2 — DEFENDANT INFORMATION:
+- Full Legal Name (debtorBusiness or debtorName)
+- DBA (if applicable)
+- Address (debtorAddress)
+- Phone (if known)
+
+SECTION 3 — CLAIM DETAILS:
+- Amount Claimed (amountOwed minus amountPaid)
+- Invoice/Account Number(s)
+- Date of Original Transaction (agreementDate or invoiceDate)
+- Brief Statement of Claim (2-4 sentences: what was agreed, what was delivered, what remains unpaid)
+
+SECTION 4 — CERTIFICATION:
+Pre-fill with: "I certify that I have made a good faith effort to resolve this matter prior to filing this claim."
+
+Format as clean HTML with:
+- A header: "CIVIL COURT OF THE CITY OF NEW YORK — COMMERCIAL CLAIMS PART"
+- "Form CIV-SC-70" subtitle
+- Each section in a bordered box with label/value pairs
+- A disclaimer at the bottom: "This form was pre-filled from your case data. Review every field carefully before filing."
+- Print-friendly styling (max-width 700px, serif font, 1in margins equivalent)
+
+Return JSON:
+{
+  "html": "complete HTML string",
+  "formType": "Commercial Claims Court — CIV-SC-70",
+  "instructions": ["specific step 1", "specific step 2", "specific step 3", "specific step 4", "specific step 5"]
+}
+
+Instructions should be specific NYC steps: where to go, what to bring, cost, copies needed.
+Return ONLY valid JSON.`,
+
+    civil: `You are filling out an NYC Civil Court Pro Se Summons and Complaint.
+
+CASE DATA:
+${JSON.stringify(caseData, null, 2)}
+
+Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
+
+SUMMONS SECTION:
+- Court: "CIVIL COURT OF THE CITY OF NEW YORK, COUNTY OF [county derived from debtorAddress, or UNKNOWN]"
+- Index Number: [ASSIGNED BY COURT CLERK — do not fill]
+- Plaintiff: claimantBusiness or claimantName + address
+- Defendant: debtorBusiness/debtorName + address
+- Notice to Defendant boilerplate: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the county listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint."
+
+COMPLAINT SECTION:
+- Cause of Action: Breach of Contract / Account Stated (pick most applicable from case data)
+- Factual Allegations (numbered paragraphs, 3-5 sentences using case data):
+  1. Agreement allegation
+  2. Performance allegation
+  3. Default/non-payment allegation
+- Relief Sought: "Plaintiff demands judgment against Defendant in the sum of $[amountOwed] together with interest, costs, and disbursements."
+
+Format as print-ready HTML (max-width 750px, serif font, court-document style).
+Include disclaimer: "This document was pre-filled from your case data. Have an attorney review before filing if possible."
+
+Return JSON:
+{
+  "html": "complete HTML string",
+  "formType": "NYC Civil Court — Pro Se Summons & Complaint",
+  "instructions": ["5 specific steps"]
+}
+
+Instructions must include: where to file (60 Centre Street or borough courthouse), index number purchase, fee amount, copies needed, service requirements.
+Return ONLY valid JSON.`,
+
+    supreme: `You are filling out a New York Supreme Court Summons with Notice.
+
+CASE DATA:
+${JSON.stringify(caseData, null, 2)}
+
+Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
+
+The document must contain:
+
+HEADER:
+"SUPREME COURT OF THE STATE OF NEW YORK
+COUNTY OF [county from debtorAddress or UNKNOWN]"
+
+CAPTION:
+Plaintiff name(s) and address(es) vs. Defendant name(s) and address(es)
+Index No.: [PURCHASE FROM COUNTY CLERK — $210 filing fee]
+
+SUMMONS:
+"TO THE ABOVE-NAMED DEFENDANT(S):
+YOU ARE HEREBY SUMMONED to answer the complaint in this action and to serve a copy of your answer, or, if the complaint is not served with this summons, to serve a notice of appearance, on the Plaintiff's attorney within TWENTY (20) days after the service of this summons, exclusive of the day of service (or within THIRTY (30) days after the service is complete if this summons is not personally delivered to you within the State of New York); and in case of your failure to appear or answer, judgment will be taken against you by default for the relief demanded in the notice set forth below."
+
+NOTICE:
+- Nature of Action: Breach of Contract / Account Stated / Quantum Meruit (most applicable)
+- The relief sought: "Judgment against Defendant in the sum of $[amountOwed], together with interest from [invoiceDate or agreementDate], costs and disbursements of this action."
+
+SIGNATURE BLOCK:
+"Dated: [TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}]
+Plaintiff Pro Se: [claimantName or claimantBusiness]
+Address: [claimant address if known]"
+
+Format as official court document HTML (max-width 750px, serif font, 1.5 line spacing, all-caps headers).
+Include banner: "IMPORTANT: Review every field. Have an attorney review this document before filing if possible. This is your legal pleading."
+
+Return JSON:
+{
+  "html": "complete HTML string",
+  "formType": "Supreme Court of the State of New York — Summons with Notice",
+  "instructions": ["5 specific steps including index number purchase, service requirements under CPLR, RJI filing"]
+}
+
+Return ONLY valid JSON.`,
+  };
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: trackPrompts[track] }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(content.text)) as CourtFormResult;
+    // Ensure formType is set correctly
+    result.formType = result.formType || formMeta.formType;
+    return result;
+  } catch {
+    // Fallback: return basic structure
+    return {
+      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;"><h2>${formMeta.formType}</h2><p>Form generation failed. Please try again.</p></div>`,
+      formType: formMeta.formType,
+      instructions: [
+        `File at: ${formMeta.office}`,
+        `Filing fee: ${formMeta.fee}`,
+        'Bring 3 copies of all documents',
+        'Bring a valid government-issued ID',
+        'Review all fields before submitting',
+      ],
+    };
+  }
+}
+
+export async function generateDefaultJudgment(
   caseData: Record<string, unknown>
-): Promise<{ text: string; html: string }> {
-  const prompt = `You are preparing a filing summary document for a business collections matter in New York courts.
+): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const prompt = `You are preparing a Motion for Default Judgment for a New York collections matter. The defendant was served but failed to appear or answer within the required time period.
 
 CASE FACTS:
 ${JSON.stringify(caseData, null, 2)}
 
-Generate a structured filing summary that a court clerk or judge can quickly read. Include:
+Today's date: ${today}
 
-1. CASE CAPTION — Plaintiff vs. Defendant
-2. NATURE OF CLAIM — Brief description (1-2 sentences)
-3. AMOUNT SOUGHT — Principal + any applicable interest
-4. BASIS FOR CLAIM — Contract, services rendered, invoice, etc.
-5. TIMELINE OF EVENTS — Numbered chronological list of key dates
-6. EVIDENCE AVAILABLE — Bulleted list of supporting documents on hand
-7. PRIOR COLLECTION ATTEMPTS — What steps were taken before filing
-8. RELIEF REQUESTED — What the plaintiff is asking the court for
+Generate a Motion for Default Judgment package. Include these sections:
 
-Keep it factual, concise, and formatted for a legal proceeding. Use placeholders like [DATE] for any unknown values rather than guessing.
+1. NOTICE OF MOTION
+   - Court caption (plaintiff v. defendant, index number if known or [INDEX NO.])
+   - "PLEASE TAKE NOTICE that upon the annexed affidavit of [claimant name], sworn to [date], and all prior proceedings, Plaintiff will move this Court for an Order granting default judgment..."
+   - Relief requested: default judgment in the sum of $[amount] plus interest, costs, disbursements
 
-Return JSON with:
+2. AFFIDAVIT IN SUPPORT
+   - Party identification
+   - Facts establishing: (a) valid service of summons, (b) defendant's failure to appear or answer, (c) the underlying debt (agreement, services rendered, amount owed)
+   - Statement that defendant has not paid and has not contacted plaintiff
+   - Sworn signature block with notary acknowledgment form
+
+3. PROPOSED ORDER / JUDGMENT
+   - "IT IS HEREBY ORDERED that Plaintiff is granted default judgment against Defendant [name] in the sum of $[amount], together with statutory interest from [date], costs of $[filing fee], and disbursements."
+
+4. AFFIDAVIT OF SERVICE (BLANK TEMPLATE)
+   - Who served what document, on what date, by what method, at what address
+   - For completion by process server or plaintiff
+
+Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
+Format as court-document HTML (serif font, proper caption, numbered paragraphs, signature lines).
+
+Return JSON:
 {
   "text": "plain text version",
-  "html": "HTML version with proper heading and list tags"
+  "html": "complete HTML with proper court document formatting"
 }
 
 Return ONLY valid JSON.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 3000,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
 
@@ -369,12 +569,15 @@ Return ONLY valid JSON.`;
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
   try {
-    return JSON.parse(extractJson(content.text)) as { text: string; html: string };
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
   } catch {
     const text = content.text;
     return {
       text,
-      html: `<div>${text.split('\n\n').map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>`,
+      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
+        .split('\n\n')
+        .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+        .join('')}</div>`,
     };
   }
 }

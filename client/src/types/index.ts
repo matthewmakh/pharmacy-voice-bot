@@ -21,6 +21,10 @@ export type ActionType =
   | 'AI_ANALYSIS_COMPLETED'
   | 'STRATEGY_SELECTED'
   | 'DEMAND_LETTER_GENERATED'
+  | 'FINAL_NOTICE_GENERATED'
+  | 'FILING_PACKET_GENERATED'
+  | 'COURT_FORM_GENERATED'
+  | 'DEFAULT_JUDGMENT_GENERATED'
   | 'EMAIL_SENT'
   | 'CERTIFIED_MAIL_SENT'
   | 'REMINDER_SENT'
@@ -103,6 +107,10 @@ export interface Case {
   finalNoticeHtml: string | null;
   filingPacket: string | null;
   filingPacketHtml: string | null;
+  courtFormType: string | null;
+  courtFormInstructions: string[] | null;
+  defaultJudgment: string | null;
+  defaultJudgmentHtml: string | null;
 
   documents: Document[];
   actions: CaseAction[];

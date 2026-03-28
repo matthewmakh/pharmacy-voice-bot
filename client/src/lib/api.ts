@@ -64,8 +64,13 @@ export const generateFinalNotice = async (id: string): Promise<Case> => {
   return data;
 };
 
-export const generateFilingPacket = async (id: string): Promise<Case & { filingPacketHtml?: string }> => {
-  const { data } = await api.post(`/cases/${id}/filing-packet`);
+export const generateCourtForm = async (id: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${id}/court-form`);
+  return data;
+};
+
+export const generateDefaultJudgment = async (id: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${id}/default-judgment`);
   return data;
 };
 

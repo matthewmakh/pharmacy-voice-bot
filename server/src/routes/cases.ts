@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateFilingPacket } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, generateDefaultJudgment } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -501,12 +501,78 @@ router.post('/:id/final-notice', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/cases/:id/filing-packet
-router.post('/:id/filing-packet', async (req: Request, res: Response) => {
+// POST /api/cases/:id/court-form
+router.post('/:id/court-form', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findFirst({
       where: { id: req.params.id, userId: req.user!.id },
-      include: { documents: { select: { classification: true, supportsTags: true, summary: true, originalName: true } } },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    // Determine track from outstanding balance
+    const amountOwed = Number(caseData.amountOwed || 0);
+    const amountPaid = Number(caseData.amountPaid || 0);
+    const outstanding = amountOwed - amountPaid;
+
+    let track: 'commercial' | 'civil' | 'supreme';
+    if (outstanding <= 10000) {
+      track = 'commercial';
+    } else if (outstanding <= 50000) {
+      track = 'civil';
+    } else {
+      track = 'supreme';
+    }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      claimantAddress: caseData.claimantAddress,
+      claimantEmail: caseData.claimantEmail,
+      claimantPhone: caseData.claimantPhone,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      debtorPhone: caseData.debtorPhone,
+      amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      outstandingBalance: outstanding.toFixed(2),
+      serviceDescription: caseData.serviceDescription,
+      invoiceNumber: caseData.invoiceNumber,
+      agreementDate: caseData.agreementDate?.toISOString().split('T')[0],
+      invoiceDate: caseData.invoiceDate?.toISOString().split('T')[0],
+      paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
+      hasWrittenContract: caseData.hasWrittenContract,
+      extractedFacts: caseData.extractedFacts,
+    };
+
+    const result = await generateCourtForm(context as Record<string, unknown>, track);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: {
+        filingPacketHtml: result.html,
+        filingPacket: result.formType,
+        courtFormType: result.formType,
+        courtFormInstructions: result.instructions as never,
+        actions: {
+          create: { type: 'COURT_FORM_GENERATED', status: 'COMPLETED', label: `Court form generated: ${result.formType}` },
+        },
+      },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    console.error('Court form error:', err);
+    res.status(500).json({ error: 'Court form generation failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/default-judgment
+router.post('/:id/default-judgment', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
@@ -518,25 +584,27 @@ router.post('/:id/filing-packet', async (req: Request, res: Response) => {
       debtorBusiness: caseData.debtorBusiness,
       debtorAddress: caseData.debtorAddress,
       amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      outstandingBalance: (Number(caseData.amountOwed || 0) - Number(caseData.amountPaid || 0)).toFixed(2),
       serviceDescription: caseData.serviceDescription,
       invoiceNumber: caseData.invoiceNumber,
       agreementDate: caseData.agreementDate?.toISOString().split('T')[0],
+      invoiceDate: caseData.invoiceDate?.toISOString().split('T')[0],
       paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
-      hasWrittenContract: caseData.hasWrittenContract,
-      timeline: caseData.caseTimeline,
-      evidenceSummary: caseData.evidenceSummary,
-      documents: caseData.documents,
+      courtFormType: caseData.courtFormType,
+      demandLetterSent: !!caseData.demandLetter,
+      finalNoticeSent: !!caseData.finalNotice,
     };
 
-    const result = await generateFilingPacket(context as Record<string, unknown>);
+    const result = await generateDefaultJudgment(context as Record<string, unknown>);
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
       data: {
-        filingPacket: result.text,
-        filingPacketHtml: result.html,
+        defaultJudgment: result.text,
+        defaultJudgmentHtml: result.html,
         actions: {
-          create: { type: 'FILING_PACKET_GENERATED', status: 'COMPLETED', label: 'Filing packet generated' },
+          create: { type: 'DEFAULT_JUDGMENT_GENERATED', status: 'COMPLETED', label: 'Default judgment motion generated' },
         },
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
@@ -544,8 +612,8 @@ router.post('/:id/filing-packet', async (req: Request, res: Response) => {
 
     res.json(updated);
   } catch (err) {
-    console.error('Filing packet error:', err);
-    res.status(500).json({ error: 'Filing packet generation failed', details: String(err) });
+    console.error('Default judgment error:', err);
+    res.status(500).json({ error: 'Default judgment generation failed', details: String(err) });
   }
 });
 
