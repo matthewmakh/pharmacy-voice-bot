@@ -812,6 +812,12 @@ function StrategyTab({ caseData }: { caseData: Case }) {
 
         return (
           <div className="space-y-4">
+            {/* Disclaimer */}
+            <div className="flex items-start gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500 leading-relaxed">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-slate-400" />
+              AI-assisted analysis — legal framework is grounded in NY law, but element-by-element assessment is based on AI reasoning from your documents, not legal research or case precedent. Not a legal opinion. Verify entity status via Middesk before relying on enforcement path guidance.
+            </div>
+
             {/* Header: strength + reset */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -902,7 +908,10 @@ function StrategyTab({ caseData }: { caseData: Case }) {
 
               {a?.debtorEntityNotes && (
                 <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Enforcement Path</div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Enforcement Path</div>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium ml-auto">Entity unverified — confirm via Middesk</span>
+                  </div>
                   <p className="text-xs text-slate-600 leading-relaxed">{a.debtorEntityNotes}</p>
                 </div>
               )}

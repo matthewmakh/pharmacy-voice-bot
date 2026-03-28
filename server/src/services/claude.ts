@@ -447,6 +447,37 @@ export interface CourtFormResult {
   instructions: string[];
 }
 
+// ── Verified courthouse address lookup ─────────────────────────────────────────
+// Source: NYC Courts official website. Verify at nycourts.gov if fees or locations change.
+
+function deriveCounty(debtorAddress: string | null | undefined): string {
+  if (!debtorAddress) return 'Queens';
+  const a = debtorAddress.toLowerCase();
+  if (a.includes('manhattan') || a.includes(', ny 100') || a.includes('new york, ny 100') || a.includes('midtown') || a.includes('tribeca') || a.includes('soho') || a.includes('harlem') || a.includes('upper east') || a.includes('upper west') || a.includes('lower east') || a.includes('lower west') || a.includes('greenwich village') || a.includes('chelsea, ny') || a.includes('hell\'s kitchen')) return 'New York';
+  if (a.includes('brooklyn') || a.includes('kings county') || a.includes(' ny 112') || a.includes('flatbush') || a.includes('bay ridge') || a.includes('park slope') || a.includes('bed-stuy') || a.includes('williamsburg') || a.includes('bushwick') || a.includes('bensonhurst') || a.includes('crown heights') || a.includes('cobble hill') || a.includes('carroll gardens')) return 'Kings';
+  if (a.includes('bronx') || a.includes(', ny 104')) return 'Bronx';
+  if (a.includes('staten island') || a.includes('richmond county') || a.includes(', ny 103')) return 'Richmond';
+  // Queens neighborhoods / zip patterns
+  if (a.includes('queens') || a.includes('jamaica') || a.includes('flushing') || a.includes('astoria') || a.includes('long island city') || a.includes('glendale') || a.includes('forest hills') || a.includes('bayside') || a.includes('ridgewood') || a.includes('rego park') || a.includes('jackson heights') || a.includes('corona') || a.includes('howard beach') || a.includes('ozone park') || a.includes(', ny 113') || a.includes(', ny 114') || a.includes(', ny 116')) return 'Queens';
+  return 'Queens'; // default for NYC-area unknowns
+}
+
+const CIVIL_COURT_ADDRESSES: Record<string, { address: string; borough: string }> = {
+  'New York': { address: '111 Centre Street, Room 410, New York, NY 10013', borough: 'Manhattan' },
+  'Kings':    { address: '141 Livingston Street, Brooklyn, NY 11201', borough: 'Brooklyn' },
+  'Queens':   { address: '89-17 Sutphin Boulevard, Jamaica, NY 11435', borough: 'Queens' },
+  'Bronx':    { address: '851 Grand Concourse, Bronx, NY 10451', borough: 'Bronx' },
+  'Richmond': { address: '927 Castleton Avenue, Staten Island, NY 10310', borough: 'Staten Island' },
+};
+
+const SUPREME_COURT_ADDRESSES: Record<string, { address: string; borough: string }> = {
+  'New York': { address: '60 Centre Street, New York, NY 10007', borough: 'Manhattan' },
+  'Kings':    { address: '360 Adams Street, Brooklyn, NY 11201', borough: 'Brooklyn' },
+  'Queens':   { address: '88-11 Sutphin Boulevard, Jamaica, NY 11435', borough: 'Queens' },
+  'Bronx':    { address: '851 Grand Concourse, Bronx, NY 10451', borough: 'Bronx' },
+  'Richmond': { address: '18 Richmond Terrace, Staten Island, NY 10301', borough: 'Staten Island' },
+};
+
 export async function generateCourtForm(
   caseData: Record<string, unknown>,
   track: 'commercial' | 'civil' | 'supreme'
@@ -472,11 +503,19 @@ export async function generateCourtForm(
     },
   }[track];
 
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const year = new Date().getFullYear();
+  const county = deriveCounty(caseData.debtorAddress as string | null);
+  const civilAddr = CIVIL_COURT_ADDRESSES[county] ?? CIVIL_COURT_ADDRESSES['Queens'];
+  const supremeAddr = SUPREME_COURT_ADDRESSES[county] ?? SUPREME_COURT_ADDRESSES['Queens'];
+
   const trackPrompts = {
     commercial: `You are filling out NYC Commercial Claims Court form CIV-SC-70.
 
-TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-CURRENT YEAR: ${new Date().getFullYear()}
+TODAY'S DATE: ${today}
+CURRENT YEAR: ${year}
+FILING COUNTY: ${county} County
+COURTHOUSE (verified — do not change): ${civilAddr.address}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -484,9 +523,10 @@ ${JSON.stringify(caseData, null, 2)}
 Generate a pre-filled HTML version of the CIV-SC-70 form. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
 CRITICAL RULES:
-- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
+- Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Amount claimed = outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
-- Derive the correct filing county from debtorAddress (defendant's county determines where you file)
+- Filing county is ${county} County — use this, do not re-derive
+- Courthouse address is ${civilAddr.address} — use this exactly, do not change or guess
 - Leave any court-assigned fields (index number, return date) as blank underscores
 
 SECTION 1 — CLAIMANT INFORMATION:
@@ -525,13 +565,15 @@ Return JSON:
   "instructions": ["5 specific steps"]
 }
 
-Instructions must be specific: the correct Commercial Claims office address for the filing county, filing fee ($25 + postage), bring 2 copies + proof of demand letter sent, filing cap (5 claims/month), court handles defendant notice (no process server needed).
+Instructions must use the exact courthouse address already provided: ${civilAddr.address} (${county} County Commercial Claims). Include: filing fee ($25 + postage), bring 2 copies of this form + proof that a demand letter was sent, filing cap is 5 commercial claims per month per claimant, the court handles notice to the defendant — no process server required.
 Return ONLY valid JSON.`,
 
     civil: `You are filling out an NYC Civil Court Pro Se Summons and Complaint.
 
-TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-CURRENT YEAR: ${new Date().getFullYear()}
+TODAY'S DATE: ${today}
+CURRENT YEAR: ${year}
+FILING COUNTY: ${county} County
+COURTHOUSE (verified — do not change): ${civilAddr.address}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -539,20 +581,21 @@ ${JSON.stringify(caseData, null, 2)}
 Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
 CRITICAL RULES:
-- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
-- Derive county from debtorAddress (e.g. "Glendale, NY" → Queens County; "Brooklyn" → Kings County; "Bronx" → Bronx County; "Staten Island" → Richmond County; Manhattan/New York → New York County)
+- Use CURRENT YEAR (${year}) everywhere — never write a past year
+- Filing county is ${county} County — use this, do not re-derive
+- Courthouse address is ${civilAddr.address} — use this exactly, do not change or guess
 - In the signature block, the location must match the county/city of filing — NOT "New York, New York" generically. Use the city derived from the claimant's address or the court's county
 - Leave index number and date lines as blank underscores for handwriting
 - The Verification block must say "State of New York" and the county of the plaintiff's address (not defendant's)
 - Relief sought must use outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
 
 SUMMONS SECTION:
-- Court header: "CIVIL COURT OF THE CITY OF NEW YORK" + "County of [derived from debtorAddress]"
+- Court header: "CIVIL COURT OF THE CITY OF NEW YORK" + "County of ${county}"
 - Index Number: blank line — [ASSIGNED BY COURT CLERK — DO NOT FILL]
 - Plaintiff box: claimantBusiness or claimantName + full address + phone + email
 - Defendant box: debtorBusiness or debtorName (include DBA if both exist) + full address + phone
 - Summons notice: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the County listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint. You must respond to this complaint within the time period prescribed by law (20 days after personal service; 30 days if service is by other means). Failure to appear or respond may result in a default judgment being entered against you for the amount demanded, together with interest, costs, and disbursements."
-- Include the specific courthouse address for the county (e.g. Queens: 89-17 Sutphin Blvd, Jamaica NY 11435; Brooklyn/Kings: 141 Livingston St, Brooklyn NY 11201; Manhattan/NY County: 111 Centre St, New York NY 10013; Bronx: 851 Grand Concourse, Bronx NY 10451; Staten Island/Richmond: 927 Castleton Ave, Staten Island NY 10310)
+- Courthouse address: ${civilAddr.address} — use this exactly
 
 COMPLAINT SECTION:
 - Header: "Plaintiff [claimantName or claimantBusiness], [doing business as X if applicable], appearing Pro Se, alleges as follows:"
@@ -564,7 +607,7 @@ COMPLAINT SECTION:
 - Relief Sought box: "WHEREFORE, Plaintiff demands judgment against Defendant in the sum of $[outstandingBalance], together with statutory interest from the date of default, costs, and disbursements of this action, and for such other and further relief as this Court deems just and proper."
 
 SIGNATURE BLOCK:
-- "Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}" followed by the city and state derived from claimant's address (e.g. "Jamaica, New York" not "New York, New York") — pre-fill the date, do NOT leave it blank
+- "Dated: ${today}" followed by the city and state derived from claimant's address — pre-fill the date, do NOT leave it blank
 - Signature line + claimant's full name bold + "Plaintiff, Pro Se" + address + phone + email
 
 VERIFICATION:
@@ -572,7 +615,7 @@ VERIFICATION:
 - "County of [county of claimant's address] ) ss.:"
 - "I, [claimantName], being duly sworn, depose and say that I am the Plaintiff in the above-captioned action; that I have read the foregoing Complaint and know the contents thereof; and that the same is true to my own knowledge, except as to matters therein stated to be alleged on information and belief, and as to those matters I believe them to be true."
 - Signature line + printed name
-- "Sworn to before me this _____ day of _____________, ${new Date().getFullYear()}"
+- "Sworn to before me this _____ day of _____________, ${year}"
 - Notary Public signature line
 
 Format as print-ready HTML (max-width 750px, serif font, court-document style, 1.4 line spacing).
@@ -585,13 +628,15 @@ Return JSON:
   "instructions": ["5 specific numbered steps"]
 }
 
-Instructions must be specific: exact courthouse address for the county, filing fee (~$45), bring 3 copies, process server requirement (within 120 days), file Affidavit of Service after service, calendar defendant's answer deadline (20 days personal service / 30 days other).
+Instructions must use the exact courthouse address already provided: ${civilAddr.address} (${county} County Civil Court). Include: filing fee (~$45), bring 3 copies, you must hire a licensed NY process server to serve the defendant within 120 days of filing, file the notarized Affidavit of Service with the clerk after service, calendar the defendant's answer deadline (20 days after personal service, 30 days after other service methods).
 Return ONLY valid JSON.`,
 
     supreme: `You are filling out a New York Supreme Court Summons with Notice.
 
-TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-CURRENT YEAR: ${new Date().getFullYear()}
+TODAY'S DATE: ${today}
+CURRENT YEAR: ${year}
+FILING COUNTY: ${county} County
+COURTHOUSE (verified — do not change): ${supremeAddr.address}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -599,10 +644,10 @@ ${JSON.stringify(caseData, null, 2)}
 Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
 CRITICAL RULES:
-- Use CURRENT YEAR (${new Date().getFullYear()}) everywhere — never write a past year
+- Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Relief sought must use outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
-- Derive county from debtorAddress — that is where you file (defendant's county)
-- County map: Glendale/Jamaica/Flushing/Astoria/Long Island City → Queens; Brooklyn/Flatbush/Bay Ridge → Kings; Bronx → Bronx; Staten Island → Richmond; Manhattan/New York/Midtown/Downtown → New York County
+- Filing county is ${county} County — use this, do not re-derive
+- Courthouse address is ${supremeAddr.address} — use this exactly, do not change or guess
 - Signature block location must match the city from claimant's address, not generically "New York, New York"
 - Nature of Action: choose all that apply from — BREACH OF CONTRACT (if agreement exists), ACCOUNT STATED (if invoice was sent and not disputed), QUANTUM MERUIT (if no written contract but services were rendered and accepted)
 
@@ -629,7 +674,7 @@ NOTICE OF NATURE OF ACTION AND RELIEF SOUGHT:
 - Relief Sought: "Judgment against Defendant(s) in the sum of $[outstandingBalance], together with statutory interest from [invoiceDate or agreementDate or 'the date of default'], costs and disbursements of this action, and such other and further relief as the Court deems just and proper."
 
 SIGNATURE BLOCK:
-"Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}     [city from claimant's address], New York" — pre-fill the date, do NOT leave it blank
+"Dated: ${today}     [city from claimant's address], New York" — pre-fill the date, do NOT leave it blank
 Blank signature line
 "[claimantName or claimantBusiness]"
 "Plaintiff Pro Se"
@@ -645,7 +690,7 @@ Return JSON:
   "instructions": ["5 specific steps"]
 }
 
-Instructions must cover: purchase index number from County Clerk ($210), file Summons with Notice, serve defendant within 120 days via licensed process server (CPLR Article 3), file notarized Affidavit of Service, file RJI (Request for Judicial Intervention) within 60 days of filing to get a judge assigned.
+Instructions must use the exact courthouse address already provided: ${supremeAddr.address} (${county} County Supreme Court). Include: purchase an index number from the County Clerk ($210) before filing, file the Summons with Notice, serve the defendant within 120 days via a licensed process server (CPLR Article 3), file the notarized Affidavit of Service with the clerk promptly after service, file an RJI (Request for Judicial Intervention) within 60 days of the first filing to get a judge assigned.
 Return ONLY valid JSON.`,
   };
 
