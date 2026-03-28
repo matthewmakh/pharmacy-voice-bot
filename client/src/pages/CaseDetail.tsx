@@ -953,6 +953,60 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               </button>
             </div>
 
+            {/* Verification panel */}
+            {caseData.courtFormVerification && (() => {
+              const v = caseData.courtFormVerification!;
+              const statusConfig = {
+                verified: { bg: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-800', icon: '✓', label: 'Verified' },
+                review_needed: { bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-800', icon: '⚠', label: 'Review Needed' },
+                issues_found: { bg: 'bg-red-50 border-red-200', badge: 'bg-red-100 text-red-800', icon: '✗', label: 'Issues Found' },
+              }[v.overallStatus];
+              const checkIcon = { ok: '✓', missing: '○', mismatch: '✗', hallucinated: '!' };
+              const checkColor = { ok: 'text-emerald-600', missing: 'text-amber-500', mismatch: 'text-red-600', hallucinated: 'text-red-700 font-bold' };
+              const issues = v.checks.filter(c => c.status !== 'ok');
+              const okCount = v.checks.filter(c => c.status === 'ok').length;
+              return (
+                <div className={`card p-5 border ${statusConfig.bg}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Verification Report</div>
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${statusConfig.badge}`}>
+                      {statusConfig.icon} {statusConfig.label}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 mb-4">{v.summary}</p>
+                  <div className="flex gap-4 text-xs text-slate-500 mb-4">
+                    <span><span className="font-semibold text-emerald-600">{okCount}</span> verified</span>
+                    <span><span className="font-semibold text-amber-500">{v.checks.filter(c => c.status === 'missing').length}</span> missing</span>
+                    <span><span className="font-semibold text-red-600">{v.checks.filter(c => c.status === 'mismatch' || c.status === 'hallucinated').length}</span> errors</span>
+                  </div>
+                  {issues.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {issues.map((check, i) => (
+                        <div key={i} className="flex items-start gap-2 text-sm">
+                          <span className={`shrink-0 font-bold w-4 text-center ${checkColor[check.status]}`}>{checkIcon[check.status]}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-medium text-slate-700">{check.field}</span>
+                            {check.note && <span className="text-slate-500"> — {check.note}</span>}
+                            {(check.expected || check.found) && (
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                {check.expected && <span>Expected: <span className="text-slate-600">{check.expected}</span></span>}
+                                {check.found && check.status !== 'ok' && <span className="ml-3">Found: <span className="text-slate-600">{check.found}</span></span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {v.blankFields.length > 0 && (
+                    <div className="text-xs text-slate-500 border-t border-black/5 pt-3">
+                      <span className="font-semibold">Blank / UNKNOWN fields:</span> {v.blankFields.join(', ')}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Instructions list */}
             {caseData.courtFormInstructions && caseData.courtFormInstructions.length > 0 && (
               <div className="card p-5 bg-blue-50 border-blue-100">

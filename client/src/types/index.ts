@@ -109,6 +109,19 @@ export interface Case {
   filingPacketHtml: string | null;
   courtFormType: string | null;
   courtFormInstructions: string[] | null;
+  courtFormVerification: {
+    overallStatus: 'verified' | 'review_needed' | 'issues_found';
+    checks: Array<{
+      field: string;
+      status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
+      expected: string | null;
+      found: string | null;
+      note: string;
+    }>;
+    summary: string;
+    blankFields: string[];
+    verifiedAt: string;
+  } | null;
   defaultJudgment: string | null;
   defaultJudgmentHtml: string | null;
 

@@ -398,7 +398,7 @@ SECTION 3 — CLAIM DETAILS:
 SECTION 4 — CERTIFICATION (pre-filled boilerplate):
 "I hereby certify that I have made a good-faith attempt to resolve this dispute prior to bringing this claim, that no other action has been filed or is pending in any court for this claim, and that the above information is true to the best of my knowledge."
 
-Signature line + "Dated: _____________, ${new Date().getFullYear()}"
+Signature line + "Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}" (pre-filled with today's date — do NOT leave blank)
 
 Format as clean HTML:
 - Header: "CIVIL COURT OF THE CITY OF NEW YORK — COMMERCIAL CLAIMS PART"
@@ -453,7 +453,7 @@ COMPLAINT SECTION:
 - Relief Sought box: "WHEREFORE, Plaintiff demands judgment against Defendant in the sum of $[outstandingBalance], together with statutory interest from the date of default, costs, and disbursements of this action, and for such other and further relief as this Court deems just and proper."
 
 SIGNATURE BLOCK:
-- "Dated: _____________, ${new Date().getFullYear()}" followed by the city and state derived from claimant's address (e.g. "Jamaica, New York" not "New York, New York")
+- "Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}" followed by the city and state derived from claimant's address (e.g. "Jamaica, New York" not "New York, New York") — pre-fill the date, do NOT leave it blank
 - Signature line + claimant's full name bold + "Plaintiff, Pro Se" + address + phone + email
 
 VERIFICATION:
@@ -518,7 +518,7 @@ NOTICE OF NATURE OF ACTION AND RELIEF SOUGHT:
 - Relief Sought: "Judgment against Defendant(s) in the sum of $[outstandingBalance], together with statutory interest from [invoiceDate or agreementDate or 'the date of default'], costs and disbursements of this action, and such other and further relief as the Court deems just and proper."
 
 SIGNATURE BLOCK:
-"Dated: _________________, ${new Date().getFullYear()}     [city from claimant's address], New York"
+"Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}     [city from claimant's address], New York" — pre-fill the date, do NOT leave it blank
 Blank signature line
 "[claimantName or claimantBusiness]"
 "Plaintiff Pro Se"
@@ -632,6 +632,108 @@ Return ONLY valid JSON.`;
         .split('\n\n')
         .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
         .join('')}</div>`,
+    };
+  }
+}
+
+export interface VerificationCheck {
+  field: string;
+  status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
+  expected: string | null;
+  found: string | null;
+  note: string;
+}
+
+export interface CourtFormVerification {
+  overallStatus: 'verified' | 'review_needed' | 'issues_found';
+  checks: VerificationCheck[];
+  summary: string;
+  blankFields: string[];
+  verifiedAt: string;
+}
+
+export async function verifyCourtForm(
+  formHtml: string,
+  caseData: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const prompt = `You are an adversarial reviewer checking a pre-filled court form for accuracy. Your job is to catch hallucinations, wrong facts, missing fields, and any discrepancy between the generated document and the source case data.
+
+SOURCE CASE DATA (ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+GENERATED COURT FORM HTML:
+${formHtml.slice(0, 6000)}
+
+Systematically extract every factual claim from the generated form and verify it against the source case data.
+
+Check each of the following fields if they appear in the document:
+- Plaintiff/claimant name and business name
+- Plaintiff address, phone, email
+- Defendant/debtor name and business name
+- Defendant address, phone
+- Amount claimed (must equal outstandingBalance = amountOwed minus amountPaid, NOT the full amountOwed)
+- Invoice number
+- Agreement date / transaction date
+- Payment due date
+- Service description / nature of claim
+- County of filing (must match defendant's address)
+- Courthouse name and address (must match county)
+- Date on the document (must be today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })})
+- Year references (must all be ${new Date().getFullYear()})
+- Signature block city/location (must derive from plaintiff's address, not be generic)
+
+For each check, determine:
+- "ok": the form matches the case data exactly
+- "missing": the field was needed but left blank or marked UNKNOWN
+- "mismatch": the form contains a value that contradicts the case data
+- "hallucinated": the form contains a specific fact (name, number, date, address) that does not appear anywhere in the case data and was not derivable from it
+
+Also identify any fields left blank or marked [UNKNOWN — VERIFY BEFORE FILING].
+
+Return a JSON object:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [
+    {
+      "field": "field name",
+      "status": "ok" | "missing" | "mismatch" | "hallucinated",
+      "expected": "what the case data says (or null if not in case data)",
+      "found": "what appears in the generated form (or null if absent)",
+      "note": "brief explanation, empty string if ok"
+    }
+  ],
+  "summary": "1-2 sentence plain-language summary of verification result",
+  "blankFields": ["list of field names that are blank or marked UNKNOWN"]
+}
+
+Status rules:
+- "verified": all checked fields match, no hallucinations, 0-1 missing fields that are genuinely not available
+- "review_needed": 2-3 missing fields OR minor uncertainty, no clear errors
+- "issues_found": any mismatch, any hallucination, or more than 3 missing required fields
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const verifyContent = response.content[0];
+  if (verifyContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(verifyContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return {
+      overallStatus: 'review_needed',
+      checks: [],
+      summary: 'Verification could not be completed automatically. Please review the form manually before filing.',
+      blankFields: [],
+      verifiedAt: new Date().toISOString(),
     };
   }
 }

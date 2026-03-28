@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, generateDefaultJudgment } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, generateDefaultJudgment } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -547,6 +547,9 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
 
     const result = await generateCourtForm(context as Record<string, unknown>, track);
 
+    // Verify the generated form against case data — runs in parallel after generation
+    const verification = await verifyCourtForm(result.html, context as Record<string, unknown>);
+
     const updated = await prisma.case.update({
       where: { id: req.params.id },
       data: {
@@ -554,6 +557,7 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
         filingPacket: result.formType,
         courtFormType: result.formType,
         courtFormInstructions: result.instructions as never,
+        courtFormVerification: verification as never,
         actions: {
           create: { type: 'COURT_FORM_GENERATED', status: 'COMPLETED', label: `Court form generated: ${result.formType}` },
         },

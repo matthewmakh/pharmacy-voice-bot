@@ -68,10 +68,11 @@ model Case {
   finalNoticeHtml  String? @db.Text
   filingPacket         String? @db.Text
   filingPacketHtml     String? @db.Text
-  courtFormType        String?
+  courtFormType         String?
   courtFormInstructions Json?
-  defaultJudgment      String? @db.Text
-  defaultJudgmentHtml  String? @db.Text
+  courtFormVerification Json?
+  defaultJudgment       String? @db.Text
+  defaultJudgmentHtml   String? @db.Text
 
   notes String? @db.Text
 
