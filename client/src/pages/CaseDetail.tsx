@@ -38,6 +38,7 @@ import {
   updateCase,
   getDocumentViewUrl,
   resetAnalysis,
+  lookupACRIS,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -731,6 +732,24 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
+  const [acrisResult, setAcrisResult] = useState<{
+    found: boolean; totalRecords: number; asGrantee: number; asGrantor: number;
+    searchedName: string; note: string; error?: string;
+  } | null>(null);
+  const [acrisLoading, setAcrisLoading] = useState(false);
+
+  const handleACRISLookup = async () => {
+    setAcrisLoading(true);
+    try {
+      const result = await lookupACRIS(caseData.id);
+      setAcrisResult(result);
+    } catch {
+      setAcrisResult({ found: false, totalRecords: 0, asGrantee: 0, asGrantor: 0, searchedName: '', note: '', error: 'Lookup failed' });
+    } finally {
+      setAcrisLoading(false);
+    }
+  };
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -912,7 +931,48 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                     <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Enforcement Path</div>
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium ml-auto">Entity unverified — confirm via Middesk</span>
                   </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">{a.debtorEntityNotes}</p>
+                  <p className="text-xs text-slate-600 leading-relaxed mb-3">{a.debtorEntityNotes}</p>
+                  {/* ACRIS NYC Property Check */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">NYC Property Records (ACRIS)</span>
+                      {!acrisResult && (
+                        <button
+                          onClick={handleACRISLookup}
+                          disabled={acrisLoading}
+                          className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-medium flex items-center gap-1 transition-colors"
+                        >
+                          {acrisLoading ? <><Loader2 className="w-3 h-3 animate-spin" />Checking...</> : 'Run ACRIS Lookup'}
+                        </button>
+                      )}
+                    </div>
+                    {!acrisResult && !acrisLoading && (
+                      <p className="text-xs text-slate-400 leading-relaxed">Check if debtor owns NYC real property — a post-judgment lien can prevent them from selling or refinancing. Free NYC Open Data lookup.</p>
+                    )}
+                    {acrisResult && (
+                      <div className={`p-3 rounded-lg border text-xs ${acrisResult.error ? 'border-slate-200 bg-slate-50' : acrisResult.found ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+                        {acrisResult.error ? (
+                          <p className="text-slate-500">{acrisResult.error}</p>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className={`font-semibold ${acrisResult.found ? 'text-emerald-700' : 'text-slate-600'}`}>
+                                {acrisResult.found ? `${acrisResult.totalRecords} record(s) found` : 'No records found'}
+                              </span>
+                              {acrisResult.found && (
+                                <span className="text-slate-400">· {acrisResult.searchedName}</span>
+                              )}
+                              <button onClick={handleACRISLookup} disabled={acrisLoading} className="ml-auto text-slate-400 hover:text-slate-600 text-xs">Refresh</button>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">{acrisResult.note}</p>
+                            {acrisResult.found && (
+                              <p className="text-slate-400 mt-1.5">Verify at: <strong>a836-acris.nyc.gov</strong> → Document Search → Party Name Search</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1003,11 +1063,15 @@ function LetterTab({ caseData }: { caseData: Case }) {
     }
   };
 
-  const handleEmail = () => {
+  const handleEmail = async () => {
     if (!caseData.debtorEmail) return;
     const subject = encodeURIComponent(`Demand for Payment — ${caseData.debtorBusiness || caseData.debtorName || 'Outstanding Balance'}`);
     const body = encodeURIComponent(caseData.demandLetter || '');
     window.open(`mailto:${caseData.debtorEmail}?subject=${subject}&body=${body}`);
+    try {
+      await logAction(caseData.id, 'EMAIL_SENT', `Demand letter emailed to ${caseData.debtorEmail}`);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    } catch { /* non-blocking */ }
   };
 
   if (!caseData.demandLetterHtml && !isGenerating) {
@@ -1106,11 +1170,15 @@ function EscalationTab({ caseData }: { caseData: Case }) {
     }
   };
 
-  const handleEmailFN = () => {
+  const handleEmailFN = async () => {
     if (!caseData.debtorEmail || !caseData.finalNotice) return;
     const subject = encodeURIComponent(`Final Notice — ${caseData.debtorBusiness || caseData.debtorName || 'Outstanding Balance'}`);
     const body = encodeURIComponent(caseData.finalNotice);
     window.open(`mailto:${caseData.debtorEmail}?subject=${subject}&body=${body}`);
+    try {
+      await logAction(caseData.id, 'EMAIL_SENT', `Final notice emailed to ${caseData.debtorEmail}`);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    } catch { /* non-blocking */ }
   };
 
   const handlePrintCourtForm = () => {
@@ -1347,19 +1415,60 @@ function EscalationTab({ caseData }: { caseData: Case }) {
                 <div className="font-medium text-slate-800">{caseData.debtorAddress || '[unknown — required for service]'}</div>
               </div>
             </div>
-            {caseData.actions.some(a => a.type === 'SERVICE_INITIATED') ? (
-              <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-4 py-3">
-                <CheckCircle className="w-4 h-4 shrink-0" />
-                <span>Service initiated — see Timeline for details.</span>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowProcessServerModal(true)}
-                className="btn-secondary text-sm"
-              >
-                Log Service Initiated
-              </button>
-            )}
+            {(() => {
+              const svcAction = caseData.actions.find(a => a.type === 'SERVICE_INITIATED');
+              if (!svcAction) {
+                return (
+                  <button
+                    onClick={() => setShowProcessServerModal(true)}
+                    className="btn-secondary text-sm"
+                  >
+                    Log Service Initiated
+                  </button>
+                );
+              }
+              const svcDate = new Date(svcAction.createdAt);
+              const personalDeadline = new Date(svcDate);
+              personalDeadline.setDate(personalDeadline.getDate() + 20);
+              const altDeadline = new Date(svcDate);
+              altDeadline.setDate(altDeadline.getDate() + 30);
+              const defaultDate = new Date(altDeadline);
+              defaultDate.setDate(defaultDate.getDate() + 1);
+              const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+              const today = new Date();
+              const personalDaysLeft = Math.ceil((personalDeadline.getTime() - today.getTime()) / 86400000);
+              const altDaysLeft = Math.ceil((altDeadline.getTime() - today.getTime()) / 86400000);
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-4 py-2">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    <span>Service initiated {fmt(svcDate)} — deadlines calculated below.</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Answer deadline (personal service)', date: personalDeadline, days: personalDaysLeft, note: 'CPLR: 20 days' },
+                      { label: 'Answer deadline (other service)', date: altDeadline, days: altDaysLeft, note: 'CPLR: 30 days' },
+                      { label: 'Default motion date', date: defaultDate, days: altDaysLeft + 1, note: 'Day after answer deadline' },
+                    ].map(({ label, date, days, note }) => {
+                      const isPast = days < 0;
+                      const isUrgent = days >= 0 && days <= 7;
+                      const color = isPast ? 'border-red-200 bg-red-50' : isUrgent ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50';
+                      const textColor = isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-slate-700';
+                      return (
+                        <div key={label} className={`p-3 rounded-lg border ${color}`}>
+                          <div className="text-xs text-slate-500 leading-tight mb-1">{label}</div>
+                          <div className={`text-sm font-semibold ${textColor}`}>{fmt(date)}</div>
+                          <div className="text-xs text-slate-400 mt-0.5">{note}</div>
+                          {isPast && <div className="text-xs font-bold text-red-600 mt-0.5">PASSED</div>}
+                          {isUrgent && !isPast && <div className="text-xs font-bold text-amber-600 mt-0.5">{days}d left</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">Calendar these immediately. If the defendant does not appear or answer by the applicable deadline, you may move for default judgment.</p>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1736,26 +1845,58 @@ function FilingGuideTab({ caseData }: { caseData: Case }) {
         </ul>
       </div>
 
-      {/* Deadline tracker */}
-      <div className="card p-5">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Deadline Sheet to Maintain</div>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            'Date demand letter sent',
-            'Date claim filed',
-            'Date service completed',
-            'Affidavit of service filed',
-            'Defendant answer due',
-            'Default date if no answer',
-            'Next court date / conference',
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
-              {item}
+      {/* Deadline tracker — computed from case data */}
+      {(() => {
+        const demandSentAction = caseData.actions.find(a => a.type === 'EMAIL_SENT' || a.type === 'CERTIFIED_MAIL_SENT' || a.type === 'DEMAND_LETTER_GENERATED');
+        const svcAction = caseData.actions.find(a => a.type === 'SERVICE_INITIATED');
+        const svcDate = svcAction ? new Date(svcAction.createdAt) : null;
+        const personalAnswerDue = svcDate ? new Date(new Date(svcDate).setDate(svcDate.getDate() + 20)) : null;
+        const altAnswerDue = svcDate ? new Date(new Date(svcDate).setDate(svcDate.getDate() + 30)) : null;
+        const defaultMotionDate = altAnswerDue ? new Date(new Date(altAnswerDue).setDate(altAnswerDue.getDate() + 1)) : null;
+        const fmt = (d: Date | null) => d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+        const today = new Date();
+        const daysLeft = (d: Date | null) => d ? Math.ceil((d.getTime() - today.getTime()) / 86400000) : null;
+
+        const deadlines = [
+          { label: 'Demand letter sent', value: demandSentAction ? formatDate(demandSentAction.createdAt) : null, note: 'Required for Commercial Claims (10+ days before filing)' },
+          { label: 'Claim filed', value: null, note: 'Record date you file at the courthouse' },
+          { label: 'Service completed', value: svcDate ? fmt(svcDate) : null, note: 'Must occur within 120 days of filing' },
+          { label: 'Affidavit of service filed', value: null, note: 'File promptly after service — do not wait' },
+          { label: 'Answer due (personal service)', value: fmt(personalAnswerDue), days: daysLeft(personalAnswerDue), note: '20 days from personal service (CPLR)' },
+          { label: 'Answer due (other service)', value: fmt(altAnswerDue), days: daysLeft(altAnswerDue), note: '30 days from completed service (CPLR)' },
+          { label: 'Default motion eligible', value: fmt(defaultMotionDate), days: daysLeft(defaultMotionDate), note: 'Day after answer deadline passes' },
+          { label: 'RJI deadline (Supreme Court)', value: null, note: '60 days from first filing (Supreme Court only)' },
+        ];
+
+        return (
+          <div className="card p-5">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Case Deadline Tracker</div>
+            <div className="space-y-2">
+              {deadlines.map(({ label, value, days, note }, i) => {
+                const isPast = days != null && days < 0;
+                const isUrgent = days != null && days >= 0 && days <= 14;
+                const hasDays = days != null;
+                return (
+                  <div key={i} className={`flex items-start gap-3 p-2.5 rounded-lg ${isPast ? 'bg-red-50 border border-red-100' : value ? 'bg-emerald-50 border border-emerald-100' : 'bg-slate-50 border border-transparent'}`}>
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${isPast ? 'bg-red-400' : value ? 'bg-emerald-400' : 'bg-slate-300'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className={`text-xs font-medium ${isPast ? 'text-red-700' : value ? 'text-emerald-800' : 'text-slate-600'}`}>{label}</span>
+                        {value && <span className={`text-xs font-semibold ml-auto shrink-0 ${isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-slate-700'}`}>{value}{hasDays && days! >= 0 ? ` (${days}d)` : isPast ? ' (PASSED)' : ''}</span>}
+                        {!value && <span className="text-xs text-slate-300 ml-auto shrink-0">—</span>}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">{note}</div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
-      </div>
+            {!svcAction && (
+              <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-100">Log "Service Initiated" in the Escalation tab to calculate answer and default deadlines automatically.</p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Common mistakes */}
       <div className="card p-5 border-red-100">
@@ -1851,12 +1992,19 @@ function TimelineTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const [actionType, setActionType] = useState<ActionType>('EMAIL_SENT');
   const [actionNotes, setActionNotes] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState('');
 
   const logMutation = useMutation({
-    mutationFn: () => logAction(caseData.id, actionType, actionNotes || undefined),
+    mutationFn: () => logAction(
+      caseData.id,
+      actionType,
+      actionNotes || undefined,
+      actionType === 'PAYMENT_RECEIVED' && paymentAmount ? { amount: parseFloat(paymentAmount) } : undefined
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
       setActionNotes('');
+      setPaymentAmount('');
     },
   });
 
@@ -1894,6 +2042,20 @@ function TimelineTab({ caseData }: { caseData: Case }) {
               placeholder="Optional notes..."
             />
           </div>
+          {actionType === 'PAYMENT_RECEIVED' && (
+            <div className="w-48 shrink-0">
+              <label className="block text-xs text-slate-500 mb-1">Amount Received ($)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="0.00"
+              />
+            </div>
+          )}
           <button
             onClick={() => logMutation.mutate()}
             disabled={logMutation.isPending}

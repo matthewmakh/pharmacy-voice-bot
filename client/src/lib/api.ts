@@ -102,3 +102,16 @@ export const getDocumentViewUrl = (caseId: string, docId: string): string => {
   const token = localStorage.getItem('token');
   return `/api/cases/${caseId}/documents/${docId}/view?token=${token}`;
 };
+
+export const lookupACRIS = async (caseId: string): Promise<{
+  found: boolean;
+  totalRecords: number;
+  asGrantee: number;
+  asGrantor: number;
+  searchedName: string;
+  note: string;
+  error?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/acris`);
+  return data;
+};

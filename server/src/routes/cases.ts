@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
+import { lookupACRIS } from '../services/acris';
 
 const router = Router();
 
@@ -241,13 +242,23 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
     const userFacts = {
       claimantName: caseData.claimantName,
       claimantBusiness: caseData.claimantBusiness,
+      claimantAddress: caseData.claimantAddress,
+      claimantPhone: caseData.claimantPhone,
       debtorName: caseData.debtorName,
       debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      debtorPhone: caseData.debtorPhone,
+      debtorEntityType: caseData.debtorEntityType,
       amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
       serviceDescription: caseData.serviceDescription,
+      invoiceNumber: caseData.invoiceNumber,
+      hasWrittenContract: caseData.hasWrittenContract,
       agreementDate: caseData.agreementDate?.toISOString(),
       invoiceDate: caseData.invoiceDate?.toISOString(),
       paymentDueDate: caseData.paymentDueDate?.toISOString(),
+      serviceStartDate: caseData.serviceStartDate?.toISOString(),
+      serviceEndDate: caseData.serviceEndDate?.toISOString(),
     };
 
     const synthesis = await synthesizeCase(docInputs, userFacts);
@@ -268,10 +279,22 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
           caseData.debtorAddress ||
           (synthesis.extractedFacts as Record<string, string>)?.debtorAddress ||
           undefined,
-        invoiceNumber:
-          caseData.invoiceNumber ||
-          (synthesis.extractedFacts as Record<string, string>)?.invoiceNumber ||
-          undefined,
+        // Auto-fill more missing fields from AI extraction
+        ...((() => {
+          const f = synthesis.extractedFacts as Record<string, string | boolean | number | null>;
+          const safeDate = (v: unknown) => { if (!v || typeof v !== 'string') return undefined; const d = new Date(v); return isNaN(d.getTime()) ? undefined : d; };
+          return {
+            debtorName: caseData.debtorName || (f?.debtorName as string) || undefined,
+            debtorBusiness: caseData.debtorBusiness || (f?.debtorBusiness as string) || undefined,
+            claimantName: caseData.claimantName || (f?.claimantName as string) || undefined,
+            claimantBusiness: caseData.claimantBusiness || (f?.claimantBusiness as string) || undefined,
+            amountOwed: caseData.amountOwed ?? (f?.amountOwed != null ? Number(f.amountOwed) : undefined),
+            invoiceDate: caseData.invoiceDate ?? safeDate(f?.invoiceDate),
+            agreementDate: caseData.agreementDate ?? safeDate(f?.agreementDate),
+            paymentDueDate: caseData.paymentDueDate ?? safeDate(f?.paymentDueDate),
+            invoiceNumber: caseData.invoiceNumber || (f?.invoiceNumber as string) || undefined,
+          };
+        })()),
         actions: {
           create: {
             type: 'AI_ANALYSIS_COMPLETED',
@@ -441,10 +464,48 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
       });
     }
 
+    // When payment received with amount, update amountPaid
+    if (type === 'PAYMENT_RECEIVED' && metadata?.amount) {
+      const paymentAmount = parseFloat(String(metadata.amount));
+      if (!isNaN(paymentAmount) && paymentAmount > 0) {
+        const existing = await prisma.case.findUnique({ where: { id: req.params.id } });
+        if (existing) {
+          const newPaid = Number(existing.amountPaid || 0) + paymentAmount;
+          await prisma.case.update({
+            where: { id: req.params.id },
+            data: { amountPaid: newPaid },
+          });
+        }
+      }
+    }
+
     res.status(201).json(action);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to log action' });
+  }
+});
+
+// GET /api/cases/:id/acris — ACRIS NYC property lookup for debtor
+router.get('/:id/acris', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { debtorBusiness: true, debtorName: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const partyName = caseData.debtorBusiness || caseData.debtorName;
+    if (!partyName) {
+      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
+      return;
+    }
+
+    const result = await lookupACRIS(partyName);
+    res.json(result);
+  } catch (err) {
+    console.error('ACRIS lookup error:', err);
+    res.status(500).json({ error: 'ACRIS lookup failed', details: String(err) });
   }
 });
 

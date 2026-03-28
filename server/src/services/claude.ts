@@ -745,6 +745,11 @@ export async function retryCourtForm(
     .map(c => `✓ ${c.field}: "${c.found}"`)
     .join('\n');
 
+  const county = deriveCounty(caseData.debtorAddress as string | null);
+  const civilAddr = CIVIL_COURT_ADDRESSES[county] ?? CIVIL_COURT_ADDRESSES['Queens'];
+  const supremeAddr = SUPREME_COURT_ADDRESSES[county] ?? SUPREME_COURT_ADDRESSES['Queens'];
+  const reinjectedAddr = track === 'supreme' ? supremeAddr : civilAddr;
+
   const retryPrompt = `You previously generated a court form. An adversarial verification pass found issues. Your job is to regenerate the form with corrections — but read these rules carefully before acting.
 
 ═══════════════════════════════════════════════════
@@ -754,6 +759,11 @@ ${verification.summary}
 
 SOURCE CASE DATA (absolute ground truth — always wins over the verifier):
 ${JSON.stringify(caseData, null, 2)}
+
+HARDCODED VERIFIED COURTHOUSE ADDRESSES (do not change, do not remove — injected from verified lookup table, not from AI):
+- Filing county: ${county} County
+- Courthouse address for this case: ${reinjectedAddr.address} (${reinjectedAddr.borough})
+- If the verifier flagged these as wrong or hallucinated, ignore that — they are correct. Do not replace them with different addresses.
 
 TODAY'S DATE (explicitly provided — not a hallucination): ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
 CURRENT YEAR: ${new Date().getFullYear()}
