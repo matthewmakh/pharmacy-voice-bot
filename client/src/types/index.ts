@@ -63,6 +63,35 @@ export interface CaseAction {
   createdAt: string;
 }
 
+export interface MissingInfoItem {
+  item: string;
+  consequence: string;
+  impact: 'high' | 'medium' | 'low';
+  workaround?: string;
+}
+
+export interface CaseAssessment {
+  primaryCauseOfAction: {
+    theory: 'breach_of_written_contract' | 'breach_of_oral_contract' | 'account_stated' | 'quantum_meruit';
+    reasoning: string;
+    elements: Array<{
+      element: string;
+      satisfied: boolean;
+      evidence: string | null;
+      gap: string | null;
+    }>;
+  };
+  alternativeCauses: string[];
+  counterclaimRisk: {
+    level: 'low' | 'medium' | 'high';
+    reasoning: string;
+    signals: string[];
+  };
+  debtorEntityNotes: string | null;
+  recommendedStrategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
+  strategyReasoning: string;
+}
+
 export interface Case {
   id: string;
   status: CaseStatus;
@@ -97,8 +126,9 @@ export interface Case {
   extractedFacts: Record<string, unknown> | null;
   caseTimeline: Array<{ date: string; event: string; source?: string }> | null;
   evidenceSummary: Record<string, unknown> | null;
-  missingInfo: string[] | null;
+  missingInfo: Array<MissingInfoItem | string> | null;
   caseStrength: string | null;
+  caseAssessment: CaseAssessment | null;
 
   caseSummary: string | null;
   demandLetter: string | null;

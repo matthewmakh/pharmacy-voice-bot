@@ -59,6 +59,7 @@ model Case {
   evidenceSummary Json?
   missingInfo     Json?
   caseStrength    String?
+  caseAssessment  Json?
 
   // Generated outputs
   caseSummary      String? @db.Text

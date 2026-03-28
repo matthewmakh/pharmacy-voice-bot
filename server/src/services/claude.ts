@@ -31,13 +31,43 @@ export interface DocumentAnalysis {
   summary: string;
 }
 
+export interface MissingInfoItem {
+  item: string;
+  consequence: string;
+  impact: 'high' | 'medium' | 'low';
+  workaround?: string;
+}
+
+export interface CaseAssessment {
+  primaryCauseOfAction: {
+    theory: 'breach_of_written_contract' | 'breach_of_oral_contract' | 'account_stated' | 'quantum_meruit';
+    reasoning: string;
+    elements: Array<{
+      element: string;
+      satisfied: boolean;
+      evidence: string | null;
+      gap: string | null;
+    }>;
+  };
+  alternativeCauses: string[];
+  counterclaimRisk: {
+    level: 'low' | 'medium' | 'high';
+    reasoning: string;
+    signals: string[];
+  };
+  debtorEntityNotes: string | null;
+  recommendedStrategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
+  strategyReasoning: string;
+}
+
 export interface CaseSynthesis {
   timeline: Array<{ date: string; event: string; source?: string }>;
   caseSummary: string;
-  missingInfo: string[];
+  missingInfo: MissingInfoItem[];
   caseStrength: 'strong' | 'moderate' | 'weak';
   extractedFacts: Record<string, unknown>;
   evidenceSummary: Record<string, unknown>;
+  caseAssessment: CaseAssessment;
 }
 
 export interface DemandLetterResult {
@@ -133,7 +163,7 @@ Facts: ${JSON.stringify(d.extractedFacts || {}, null, 2)}`
     )
     .join('\n\n---\n\n');
 
-  const prompt = `You are synthesizing a business collections case from uploaded documents.
+  const prompt = `You are a New York collections attorney synthesizing a B2B debt collection case from uploaded documents and user-provided facts. Your analysis will drive a legal workflow — be precise, honest, and grounded in the actual case data.
 
 USER-PROVIDED CASE FACTS:
 ${JSON.stringify(userProvidedFacts, null, 2)}
@@ -141,14 +171,17 @@ ${JSON.stringify(userProvidedFacts, null, 2)}
 UPLOADED DOCUMENTS (${documents.length} total):
 ${docsContext}
 
-Synthesize this into a structured case analysis. Return a JSON object with exactly these fields:
+Return a single JSON object with exactly these fields:
+
 {
   "timeline": [
     {"date": "ISO date string or 'unknown'", "event": "clear description of what happened", "source": "document name or 'user-provided'"}
   ],
-  "caseSummary": "2-3 paragraph plain-language summary of the dispute, what happened, and where things stand",
-  "missingInfo": ["list of specific missing information that would strengthen the case, e.g. 'Written contract', 'Invoice with payment terms', 'Proof of delivery'"],
+
+  "caseSummary": "2-3 paragraph plain-language summary of the dispute, what happened, and where things stand. Include the legal relationship, what was agreed, what was delivered, and what remains unpaid.",
+
   "caseStrength": "strong" | "moderate" | "weak",
+
   "extractedFacts": {
     "claimantName": "best guess from all sources",
     "claimantBusiness": "...",
@@ -164,6 +197,7 @@ Synthesize this into a structured case analysis. Return a JSON object with exact
     "hasWrittenContract": boolean,
     "invoiceNumber": "... or null"
   },
+
   "evidenceSummary": {
     "hasContract": boolean,
     "hasInvoice": boolean,
@@ -172,8 +206,67 @@ Synthesize this into a structured case analysis. Return a JSON object with exact
     "hasPaymentRecord": boolean,
     "documentCount": number,
     "strongestEvidence": "description of most compelling evidence"
+  },
+
+  "missingInfo": [
+    {
+      "item": "name of missing item, e.g. 'Written contract'",
+      "consequence": "specific legal consequence of this gap — what theory it weakens, what element it leaves unproven, how a defendant could exploit it",
+      "impact": "high" | "medium" | "low",
+      "workaround": "if a substitute or mitigation exists, describe it — otherwise omit this field"
+    }
+  ],
+
+  "caseAssessment": {
+    "primaryCauseOfAction": {
+      "theory": one of: "breach_of_written_contract" | "breach_of_oral_contract" | "account_stated" | "quantum_meruit",
+      "reasoning": "1-2 sentences explaining why this is the strongest theory given the available evidence",
+      "elements": [
+        {
+          "element": "specific legal element, e.g. 'Valid written contract existed between the parties'",
+          "satisfied": true | false,
+          "evidence": "which document or fact satisfies this element, or null if not satisfied",
+          "gap": "what is missing if not satisfied, or null if satisfied"
+        }
+      ]
+    },
+    "alternativeCauses": ["list of additional theories to plead in the alternative, e.g. 'Account stated', 'Quantum meruit / unjust enrichment'"],
+    "counterclaimRisk": {
+      "level": "low" | "medium" | "high",
+      "reasoning": "1-2 sentences explaining your assessment",
+      "signals": ["list of specific signals observed in the case data that informed this rating — both risk-elevating and risk-reducing"]
+    },
+    "debtorEntityNotes": "Based on the debtor entity type, explain the enforcement path after judgment: what tools are available (wage garnishment, bank levy, property lien), what is NOT available, and any practical notes about collecting from this type of entity. If entity type is unknown, flag this and recommend verification via NYS entity records.",
+    "recommendedStrategy": "QUICK_ESCALATION" | "STANDARD_RECOVERY" | "GRADUAL_APPROACH",
+    "strategyReasoning": "1-2 sentences explaining why this strategy fits this specific case — reference the SOL position if payment due date is known, case strength, counterclaim risk, and debtor behavior signals"
   }
 }
+
+CAUSE OF ACTION GUIDE (use to select primaryCauseOfAction):
+- breach_of_written_contract: Requires a signed/written agreement (contract, SOW, proposal, or email chain forming a contract). Elements: (1) valid written contract, (2) plaintiff performed, (3) defendant breached by non-payment, (4) damages.
+- breach_of_oral_contract: For verbal or implied agreements with no written record. Same elements but harder to prove.
+- account_stated: Powerful when invoices were sent, received, and not disputed within a reasonable time. Elements: (1) prior business dealings, (2) invoice/statement sent, (3) defendant received and did not dispute, (4) balance unpaid. Does not require a formal contract.
+- quantum_meruit: Fallback when no contract exists. Elements: (1) services rendered in good faith, (2) defendant accepted the benefit, (3) failure to pay would unjustly enrich defendant. Damages = reasonable value of services.
+In NY practice, plead all applicable theories in the alternative. Pick the strongest as primary.
+
+COUNTERCLAIM RISK SIGNALS:
+Risk-elevating: explicit written dispute of invoice or work quality; fixed-price contract with vague/broad scope; no written acceptance or delivery confirmation; long delay between service completion and invoicing; communications suggesting debtor is unhappy with the work.
+Risk-reducing: partial payment by debtor (implies acceptance); detailed written SOW with specific deliverables; written delivery confirmation or sign-off; client references the work positively in communications; invoice went undisputed for an extended period.
+
+ENTITY ENFORCEMENT GUIDE:
+- Individual / sole proprietor: wage garnishment (10% gross wages, CPLR §5231), bank levy, property lien — all tools available
+- LLC / Corporation / LLP: bank levy (business accounts only), lien on business real property — wage garnishment NOT applicable; cannot touch personal assets without piercing the veil; post-judgment disclosure (§5224 subpoena) is often needed to locate bank accounts
+- Unknown entity: flag for verification via NYS entity records at apps.dos.ny.gov
+
+STRATEGY SELECTION GUIDE:
+- QUICK_ESCALATION: SOL approaching (under 1 year remaining), debtor appears defunct or unresponsive, strong case with clear docs, or time is clearly of the essence
+- STANDARD_RECOVERY: Typical case — clear claim, some uncertainty about debtor's willingness to engage, no urgency signals
+- GRADUAL_APPROACH: Ongoing business relationship worth preserving, dispute risk is elevated, partial payments suggest good faith, or claim is weak and negotiation is preferable
+
+MISSING INFO IMPACT GUIDE:
+- high: case theory is fundamentally weakened or a required element cannot be proven
+- medium: evidence is weakened but case is still viable; defendant has ammunition to challenge
+- low: minor gap; unlikely to affect outcome significantly
 
 Sort timeline chronologically. Return ONLY valid JSON.`;
 
@@ -199,6 +292,18 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
       caseStrength: 'moderate',
       extractedFacts: {},
       evidenceSummary: {},
+      caseAssessment: {
+        primaryCauseOfAction: {
+          theory: 'breach_of_written_contract',
+          reasoning: 'Unable to determine — re-run analysis.',
+          elements: [],
+        },
+        alternativeCauses: [],
+        counterclaimRisk: { level: 'medium', reasoning: 'Unable to determine — re-run analysis.', signals: [] },
+        debtorEntityNotes: null,
+        recommendedStrategy: 'STANDARD_RECOVERY',
+        strategyReasoning: 'Unable to determine — re-run analysis.',
+      },
     };
   }
 }

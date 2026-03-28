@@ -50,7 +50,7 @@ import {
   STRENGTH_COLORS,
   formatFileSize,
 } from '../lib/utils';
-import type { Case, Strategy, ActionType } from '../types';
+import type { Case, Strategy, ActionType, MissingInfoItem, CaseAssessment } from '../types';
 import UploadZone from '../components/evidence/UploadZone';
 
 // ─── Rotating Facts Loader ─────────────────────────────────────────────────────
@@ -126,6 +126,47 @@ function RotatingFact({ label, sublabel }: { label: string; sublabel?: string })
       </div>
     </div>
   );
+}
+
+// ─── SOL Calculator ────────────────────────────────────────────────────────────
+
+function computeSOL(paymentDueDate: string | null | undefined): {
+  solDate: Date | null;
+  daysRemaining: number | null;
+  status: 'ok' | 'warning' | 'urgent' | 'expired' | 'unknown';
+  label: string;
+  solDateFormatted: string | null;
+} {
+  if (!paymentDueDate) {
+    return { solDate: null, daysRemaining: null, status: 'unknown', label: 'Unknown — payment due date not set', solDateFormatted: null };
+  }
+  const breach = new Date(paymentDueDate);
+  if (isNaN(breach.getTime())) {
+    return { solDate: null, daysRemaining: null, status: 'unknown', label: 'Unknown — invalid date', solDateFormatted: null };
+  }
+  // NY CPLR §213: 6 years from breach date for breach of contract (written or oral) and account stated
+  const solDate = new Date(breach);
+  solDate.setFullYear(solDate.getFullYear() + 6);
+  const today = new Date();
+  const daysRemaining = Math.floor((solDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  const solDateFormatted = solDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  if (daysRemaining < 0) {
+    return { solDate, daysRemaining, status: 'expired', label: `Expired ${Math.abs(daysRemaining)} days ago — consult an attorney immediately`, solDateFormatted };
+  }
+  if (daysRemaining <= 90) {
+    return { solDate, daysRemaining, status: 'urgent', label: `${daysRemaining} days remaining — file immediately (expires ${solDateFormatted})`, solDateFormatted };
+  }
+  if (daysRemaining <= 365) {
+    const months = Math.floor(daysRemaining / 30);
+    return { solDate, daysRemaining, status: 'warning', label: `~${months} months remaining — file within the year (expires ${solDateFormatted})`, solDateFormatted };
+  }
+  const years = Math.floor(daysRemaining / 365);
+  const remainingMonths = Math.floor((daysRemaining % 365) / 30);
+  const label = remainingMonths > 0
+    ? `${years} yr ${remainingMonths} mo remaining (expires ${solDateFormatted})`
+    : `${years} yr remaining (expires ${solDateFormatted})`;
+  return { solDate, daysRemaining, status: 'ok', label, solDateFormatted };
 }
 
 type Tab = 'overview' | 'evidence' | 'strategy' | 'letter' | 'escalation' | 'filing' | 'timeline';
@@ -423,6 +464,32 @@ function OverviewTab({ caseData }: { caseData: Case }) {
             </div>
           ))}
         </div>
+        {/* SOL Status */}
+        {(() => {
+          const sol = computeSOL(caseData.paymentDueDate);
+          const cfg = {
+            ok: { bar: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200' },
+            warning: { bar: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' },
+            urgent: { bar: 'bg-red-500', text: 'text-red-700', bg: 'bg-red-50 border-red-200' },
+            expired: { bar: 'bg-red-600', text: 'text-red-800', bg: 'bg-red-100 border-red-300' },
+            unknown: { bar: 'bg-slate-300', text: 'text-slate-500', bg: 'bg-slate-50 border-slate-200' },
+          }[sol.status];
+          return (
+            <div className={`mt-4 pt-4 border-t border-slate-100 flex items-center gap-3 p-3 rounded-lg border ${cfg.bg}`}>
+              <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.bar}`} />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-2">Statute of Limitations</span>
+                <span className={`text-xs font-medium ${cfg.text}`}>{sol.label}</span>
+              </div>
+              {sol.status === 'expired' && (
+                <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full shrink-0">EXPIRED</span>
+              )}
+              {sol.status === 'urgent' && (
+                <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full shrink-0">URGENT</span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* AI Analysis */}
@@ -471,23 +538,42 @@ function OverviewTab({ caseData }: { caseData: Case }) {
         </div>
       )}
 
-      {/* Missing Info */}
+      {/* Missing Info — with legal consequences */}
       {missingInfo.length > 0 && (
-        <div className="card p-5 border-amber-200 bg-amber-50">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <div className="font-semibold text-amber-800 text-sm mb-2">Missing Information</div>
-              <ul className="space-y-1">
-                {missingInfo.map((item, i) => (
-                  <li key={i} className="text-sm text-amber-700 flex items-start gap-1.5">
-                    <span className="text-amber-400 mt-0.5">•</span>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+        <div className="space-y-2">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Missing Information</div>
+          {missingInfo.map((raw, i) => {
+            // Handle both old string[] format and new MissingInfoItem format
+            if (typeof raw === 'string') {
+              return (
+                <div key={i} className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <span className="text-sm text-amber-800">{raw}</span>
+                </div>
+              );
+            }
+            const item = raw as MissingInfoItem;
+            const impactCfg = {
+              high: { border: 'border-red-200 bg-red-50', badge: 'bg-red-100 text-red-700', icon: 'text-red-500' },
+              medium: { border: 'border-amber-200 bg-amber-50', badge: 'bg-amber-100 text-amber-700', icon: 'text-amber-500' },
+              low: { border: 'border-slate-200 bg-slate-50', badge: 'bg-slate-100 text-slate-600', icon: 'text-slate-400' },
+            }[item.impact];
+            return (
+              <div key={i} className={`p-4 rounded-lg border ${impactCfg.border}`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <AlertCircle className={`w-4 h-4 shrink-0 ${impactCfg.icon}`} />
+                  <span className="text-sm font-semibold text-slate-800">{item.item}</span>
+                  <span className={`ml-auto text-xs font-bold uppercase px-2 py-0.5 rounded-full ${impactCfg.badge}`}>{item.impact}</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">{item.consequence}</p>
+                {item.workaround && (
+                  <p className="text-xs text-emerald-700 mt-1.5 pl-1 border-l-2 border-emerald-300 leading-relaxed">
+                    <strong>Workaround:</strong> {item.workaround}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -701,68 +787,187 @@ function StrategyTab({ caseData }: { caseData: Case }) {
         <RotatingFact label="Analyzing your case..." sublabel="This usually takes 15–30 seconds." />
       )}
 
-      {/* Analysis results — shown here on Strategy tab after analysis completes */}
-      {caseData.caseStrength && (
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">AI Case Assessment</div>
-            <button
-              onClick={() => resetMutation.mutate()}
-              disabled={resetMutation.isPending}
-              className="text-xs text-slate-400 hover:text-red-500 transition-colors"
-            >
-              {resetMutation.isPending ? 'Resetting...' : 'Reset & Re-run'}
-            </button>
-          </div>
-          <div className={`text-lg font-bold capitalize mb-2 ${STRENGTH_COLORS[caseData.caseStrength] || 'text-slate-700'}`}>
-            {caseData.caseStrength} Case
-          </div>
-          {caseData.caseSummary && (
-            <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
-          )}
-          {caseData.missingInfo && caseData.missingInfo.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-slate-100">
-              <div className="text-xs font-semibold text-amber-600 mb-1">Missing info:</div>
-              <ul className="space-y-0.5">
-                {caseData.missingInfo.map((item, i) => (
-                  <li key={i} className="text-xs text-amber-700">• {item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Analysis results */}
+      {caseData.caseStrength && (() => {
+        const a = caseData.caseAssessment as CaseAssessment | null;
+        const theoryLabels: Record<string, string> = {
+          breach_of_written_contract: 'Breach of Written Contract',
+          breach_of_oral_contract: 'Breach of Oral Contract',
+          account_stated: 'Account Stated',
+          quantum_meruit: 'Quantum Meruit',
+        };
+        const riskCfg = {
+          low: { bg: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+          medium: { bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' },
+          high: { bg: 'bg-red-50 border-red-200', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
+        };
+        const sol = computeSOL(caseData.paymentDueDate);
+        const solCfg = {
+          ok: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+          warning: 'text-amber-700 bg-amber-50 border-amber-200',
+          urgent: 'text-red-700 bg-red-50 border-red-200',
+          expired: 'text-red-800 bg-red-100 border-red-300',
+          unknown: 'text-slate-500 bg-slate-50 border-slate-200',
+        }[sol.status];
 
-      <div className="grid grid-cols-3 gap-4">
-        {strategies.map((s) => {
-          const isSelected = caseData.strategy === s.id;
-          return (
-            <button
-              key={s.id}
-              onClick={() => strategyMutation.mutate(s.id)}
-              disabled={strategyMutation.isPending}
-              className={`card p-5 text-left transition-all ${
-                isSelected
-                  ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/50'
-                  : 'hover:border-slate-300'
-              }`}
-            >
-              <div className="text-sm font-semibold text-slate-800 mb-2">{s.title}</div>
-              <p className="text-xs text-slate-500 mb-3 leading-relaxed">{s.description}</p>
-              <div className="space-y-1">
-                {s.traits.map((t) => (
-                  <div key={t} className="text-xs text-slate-400 flex items-center gap-1.5">
-                    <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-slate-300'}`} />
-                    {t}
-                  </div>
-                ))}
+        return (
+          <div className="space-y-4">
+            {/* Header: strength + reset */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className={`text-lg font-bold capitalize ${STRENGTH_COLORS[caseData.caseStrength] || 'text-slate-700'}`}>
+                  {caseData.caseStrength} Case
+                </span>
+                {a?.recommendedStrategy && (
+                  <span className="text-xs text-slate-500">
+                    AI recommends: <span className="font-semibold text-slate-700">{strategies.find(s => s.id === a.recommendedStrategy)?.title}</span>
+                  </span>
+                )}
               </div>
-              {isSelected && (
-                <div className="mt-3 text-xs font-semibold text-blue-600 uppercase tracking-wider">Selected</div>
+              <button
+                onClick={() => resetMutation.mutate()}
+                disabled={resetMutation.isPending}
+                className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+              >
+                {resetMutation.isPending ? 'Resetting...' : 'Reset & Re-run'}
+              </button>
+            </div>
+
+            {caseData.caseSummary && (
+              <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+            )}
+
+            {/* Legal Theory */}
+            {a?.primaryCauseOfAction && (
+              <div className="card p-5">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Legal Theory</div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-slate-800">{theoryLabels[a.primaryCauseOfAction.theory] || a.primaryCauseOfAction.theory}</span>
+                  <span className="text-xs text-slate-400">— primary</span>
+                </div>
+                <p className="text-xs text-slate-500 mb-3 leading-relaxed">{a.primaryCauseOfAction.reasoning}</p>
+                <div className="space-y-1.5">
+                  {a.primaryCauseOfAction.elements.map((el, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      {el.satisfied ? (
+                        <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border-2 border-red-300 shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium text-slate-700">{el.element}</span>
+                        {el.satisfied && el.evidence && (
+                          <span className="text-xs text-slate-400 ml-1">— {el.evidence}</span>
+                        )}
+                        {!el.satisfied && el.gap && (
+                          <span className="text-xs text-red-500 ml-1">— {el.gap}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {a.alternativeCauses.length > 0 && (
+                  <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-100">
+                    Also plead in the alternative: {a.alternativeCauses.join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Counterclaim Risk + Debtor Entity + SOL in a row */}
+            <div className="grid grid-cols-1 gap-3">
+              {a?.counterclaimRisk && (() => {
+                const risk = a.counterclaimRisk;
+                const cfg = riskCfg[risk.level] || riskCfg.medium;
+                return (
+                  <div className={`p-4 rounded-lg border ${cfg.bg}`}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                      <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Counterclaim Risk</span>
+                      <span className={`ml-auto text-xs font-bold uppercase px-2 py-0.5 rounded-full ${cfg.badge}`}>{risk.level}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed mb-2">{risk.reasoning}</p>
+                    {risk.signals.length > 0 && (
+                      <ul className="space-y-0.5">
+                        {risk.signals.map((s, i) => (
+                          <li key={i} className="text-xs text-slate-500 flex items-start gap-1.5">
+                            <span className="text-slate-300 shrink-0">—</span>{s}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {a?.debtorEntityNotes && (
+                <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Enforcement Path</div>
+                  <p className="text-xs text-slate-600 leading-relaxed">{a.debtorEntityNotes}</p>
+                </div>
               )}
-            </button>
-          );
-        })}
+
+              {/* SOL */}
+              <div className={`p-4 rounded-lg border ${solCfg} flex items-start gap-2`}>
+                <div className="flex-1">
+                  <span className="text-xs font-semibold uppercase tracking-wider opacity-70 block mb-0.5">Statute of Limitations (CPLR §213)</span>
+                  <span className="text-xs font-medium leading-relaxed">{sol.label}</span>
+                  {sol.status === 'expired' && (
+                    <p className="text-xs mt-1 opacity-80">The claim may be time-barred. Consult a NY-licensed attorney before taking any action.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Strategy reasoning */}
+              {a?.strategyReasoning && (
+                <div className="p-4 rounded-lg border border-blue-100 bg-blue-50">
+                  <div className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1.5">Strategy Recommendation</div>
+                  <p className="text-xs text-blue-800 leading-relaxed">{a.strategyReasoning}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Strategy Selector */}
+      <div>
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Select Strategy</div>
+        <div className="grid grid-cols-3 gap-4">
+          {strategies.map((s) => {
+            const isSelected = caseData.strategy === s.id;
+            const isRecommended = caseData.caseAssessment?.recommendedStrategy === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => strategyMutation.mutate(s.id)}
+                disabled={strategyMutation.isPending}
+                className={`card p-5 text-left transition-all relative ${
+                  isSelected
+                    ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/50'
+                    : 'hover:border-slate-300'
+                }`}
+              >
+                {isRecommended && !isSelected && (
+                  <span className="absolute top-2 right-2 text-xs font-semibold text-purple-600 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-full">AI pick</span>
+                )}
+                <div className="text-sm font-semibold text-slate-800 mb-2 pr-16">{s.title}</div>
+                <p className="text-xs text-slate-500 mb-3 leading-relaxed">{s.description}</p>
+                <div className="space-y-1">
+                  {s.traits.map((t) => (
+                    <div key={t} className="text-xs text-slate-400 flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-slate-300'}`} />
+                      {t}
+                    </div>
+                  ))}
+                </div>
+                {isSelected && (
+                  <div className="mt-3 text-xs font-semibold text-blue-600 uppercase tracking-wider">Selected</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1351,6 +1556,17 @@ function FilingGuideTab({ caseData }: { caseData: Case }) {
           <div><span className="text-slate-500">Representation:</span> <span className="font-semibold text-slate-800">{courtInfo.rep}</span></div>
           <div><span className="text-slate-500">Claim Range:</span> <span className="font-semibold text-slate-800">{courtInfo.range}</span></div>
         </div>
+        {/* SOL inline */}
+        {(() => {
+          const sol = computeSOL(caseData.paymentDueDate);
+          if (sol.status === 'unknown') return null;
+          const solStyle = { ok: 'text-emerald-800', warning: 'text-amber-800', urgent: 'text-red-800 font-semibold', expired: 'text-red-900 font-bold', unknown: '' }[sol.status];
+          return (
+            <div className={`mt-3 pt-3 border-t border-black/5 text-xs ${solStyle}`}>
+              SOL (CPLR §213): {sol.label}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Court Thresholds Reference */}
@@ -1583,63 +1799,27 @@ function FilingGuideTab({ caseData }: { caseData: Case }) {
       {/* NYC City Marshal Directory */}
       <div className="card p-5">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">NYC City Marshals — Judgment Enforcement</div>
-        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-          Once you have a judgment, a City Marshal can levy bank accounts, seize property, and execute income executions. Marshals are private officers appointed by the Mayor — you hire them directly.
+        <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+          Once you have a judgment, a NYC City Marshal can levy bank accounts, seize business property, and execute income executions on behalf of judgment creditors. Marshals are private officers appointed by the Mayor of New York City — you hire them directly, without court involvement.
         </p>
         <div className="space-y-3">
           {[
-            {
-              name: 'Marshal Vadim Khavinson',
-              borough: 'Manhattan / All Boroughs',
-              address: '26 Court St, Brooklyn, NY 11242',
-              phone: '(718) 855-6066',
-              note: 'Large commercial enforcement practice. Bank levies and property executions.',
-            },
-            {
-              name: 'Marshal Louis Minuto',
-              borough: 'Manhattan',
-              address: '18 E 48th St, Suite 1101, New York, NY 10017',
-              phone: '(212) 486-0600',
-              note: 'Midtown Manhattan — commercial and residential enforcement.',
-            },
-            {
-              name: 'Marshal David Grate',
-              borough: 'Brooklyn / Queens',
-              address: '16 Court St, Suite 1800, Brooklyn, NY 11241',
-              phone: '(718) 422-9222',
-              note: 'Brooklyn and Queens commercial enforcement.',
-            },
-            {
-              name: 'Marshal Richard Browne',
-              borough: 'Bronx',
-              address: '215 E 161st St, Bronx, NY 10451',
-              phone: '(718) 590-3511',
-              note: 'Bronx-based enforcement. Bank levies and income executions.',
-            },
-            {
-              name: 'Marshal Patricia McNulty',
-              borough: 'Staten Island',
-              address: '26 Central Ave, Staten Island, NY 10301',
-              phone: '(718) 273-8000',
-              note: 'Staten Island enforcement.',
-            },
-          ].map((m) => (
-            <div key={m.name} className="p-4 rounded-lg border border-slate-100 bg-slate-50">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">{m.name}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{m.borough}</div>
-                  <div className="text-xs text-slate-500 mt-1">{m.address}</div>
-                  <div className="text-xs text-slate-600 mt-0.5 font-medium">{m.phone}</div>
-                  <div className="text-xs text-slate-400 mt-1 leading-snug">{m.note}</div>
-                </div>
-              </div>
+            { title: 'Fee structure', body: 'Marshals typically charge 5% of the amount collected as their fee. You advance filing and levy costs (usually $50–$200 depending on the action); those costs are recoverable from the debtor as part of the judgment.' },
+            { title: 'What they can do', body: 'Bank levy (freeze and seize funds from debtor\'s bank account); personal property execution (seize business equipment or inventory); income execution / wage garnishment (for individual defendants only — not applicable to LLCs or corporations).' },
+            { title: 'How to find one', body: 'The official NYC Department of Investigation maintains the current marshal directory at nyc.gov — search "NYC City Marshal directory." Each marshal has a borough focus. Call first to confirm they handle commercial enforcement and to discuss the specific levy action you need.' },
+            { title: 'What you\'ll need to provide', body: 'A certified copy of your judgment from the court clerk, the debtor\'s last known address, and — for a bank levy — the name and branch of the debtor\'s bank (which you may need to obtain via a post-judgment disclosure proceeding if unknown).' },
+          ].map(({ title, body }) => (
+            <div key={title} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <div className="text-xs font-semibold text-slate-700 mb-1">{title}</div>
+              <p className="text-xs text-slate-500 leading-relaxed">{body}</p>
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-400 mt-4 leading-relaxed">
-          Full directory: <span className="text-blue-500">nyc.gov/marshals</span> — search by borough. Marshals charge a fee (typically 5% of amount collected) on top of filing fees. You advance costs; they are recoverable from the debtor.
-        </p>
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+          <p className="text-xs text-blue-700 leading-relaxed">
+            <strong>Official directory:</strong> Visit <strong>nyc.gov/site/doi/enforcement/city-marshals.page</strong> for the current list of active marshals with verified contact information and borough assignments. Do not rely on third-party marshal lists — contact information changes and must be confirmed directly.
+          </p>
+        </div>
       </div>
 
       {/* Disclaimer */}

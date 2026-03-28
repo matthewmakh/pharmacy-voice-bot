@@ -199,6 +199,7 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
         caseTimeline: [],
         evidenceSummary: null as never,
         extractedFacts: null as never,
+        caseAssessment: null as never,
         // Preserve: strategy, demandLetter, finalNotice, filingPacket
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
@@ -257,10 +258,11 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
         status: 'STRATEGY_PENDING',
         caseTimeline: synthesis.timeline,
         caseSummary: synthesis.caseSummary,
-        missingInfo: synthesis.missingInfo,
+        missingInfo: synthesis.missingInfo as never,
         caseStrength: synthesis.caseStrength,
         evidenceSummary: synthesis.evidenceSummary as never,
         extractedFacts: synthesis.extractedFacts as never,
+        caseAssessment: synthesis.caseAssessment as never,
         // Auto-fill missing fields from AI extraction
         debtorAddress:
           caseData.debtorAddress ||
