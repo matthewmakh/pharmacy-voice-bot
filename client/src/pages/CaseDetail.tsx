@@ -56,10 +56,10 @@ import UploadZone from '../components/evidence/UploadZone';
 // ─── Rotating Facts Loader ─────────────────────────────────────────────────────
 
 const LOADING_FACTS = [
-  'In New York, Commercial Claims Court caps recovery at $10,000 — but costs you just $25 to file.',
+  'In New York, Commercial Claims Court caps recovery at $10,000 — but costs just $25 to file.',
   'A demand letter sent via certified mail creates a paper trail courts take seriously.',
   'Defendants have 20 days to respond after personal service in NY Civil Court — mark it immediately.',
-  'Account stated is a powerful cause of action: if you sent an invoice and they didn\'t dispute it, they may have accepted the debt.',
+  'Account stated is a powerful cause of action: if you sent an invoice and they didn\'t dispute it, the debt may be legally acknowledged.',
   'NYC City Marshals collect roughly 5% of the judgment amount as their fee — recoverable from the debtor.',
   'Quantum meruit means "as much as deserved" — it lets you collect even without a signed contract.',
   'Filing in the wrong county is one of the most common pro se mistakes. Always file where the defendant does business.',
@@ -71,22 +71,40 @@ const LOADING_FACTS = [
   'Interest runs at 9% per year on NY judgments under CPLR § 5004.',
   'A default judgment can be entered if the defendant fails to appear or answer by the deadline.',
   'The RJI (Request for Judicial Intervention) must be filed within 60 days to get a judge assigned in Supreme Court.',
+  'New York\'s "account stated" doctrine means an unpaid invoice that went undisputed can be treated as an accepted debt.',
+  'For businesses suing in Commercial Claims, you can file up to 5 claims per month per claimant.',
+  'A process server must be licensed in New York State — using an unlicensed server can invalidate service.',
+  'Breach of contract, account stated, and quantum meruit are the three workhorses of B2B collections in New York.',
+  'You can garnish up to 10% of gross wages in New York — but only for individual defendants, not business entities.',
+  'A property lien prevents the debtor from selling or refinancing until your judgment is satisfied.',
+  'Post-judgment discovery (a court-ordered deposition) lets you compel the debtor to disclose their bank accounts and assets.',
+  'New York\'s statute of limitations for breach of written contract is 6 years; for oral contracts, also 6 years.',
+  'If a corporate defendant is a shell or alter ego, you may be able to pierce the corporate veil and pursue personal assets.',
+  'Certified mail with return receipt is the gold standard for proving a demand letter was delivered.',
+  'The NYC Civil Court handles claims up to $50,000 — more than most people realize.',
+  'A well-organized case file — chronological, labeled, with a one-page summary — makes a judge\'s job easier and your case stronger.',
+  'Emails and text messages acknowledging the debt or promising payment are admissible as evidence in NY courts.',
+  'Service by "nail and mail" (leaving at the address and mailing a copy) is allowed after two failed personal attempts.',
+  'A judgment lien on real property in New York lasts 10 years and can be renewed for another 10.',
+  'If the debtor files for bankruptcy, an automatic stay immediately halts all collection efforts — consult an attorney.',
+  'Invoices with clear payment terms and due dates are significantly easier to collect on than vague billing statements.',
+  'The longer you wait to pursue a debt, the harder it becomes — witnesses forget, documents get lost, businesses dissolve.',
+  'Sending a final notice via both email and certified mail doubles your documentation of pre-filing efforts.',
+  'A signed scope of work or proposal can substitute for a formal written contract in many NY court actions.',
 ];
 
 function RotatingFact({ label, sublabel }: { label: string; sublabel?: string }) {
   const [idx, setIdx] = useState(() => Math.floor(Math.random() * LOADING_FACTS.length));
   const [visible, setVisible] = useState(true);
 
-  // Rotate facts every 4 seconds with a fade transition
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => {
     const interval = setInterval(() => {
       setVisible(false);
       setTimeout(() => {
         setIdx(i => (i + 1) % LOADING_FACTS.length);
         setVisible(true);
-      }, 400);
-    }, 4000);
+      }, 500);
+    }, 5500);
     return () => clearInterval(interval);
   }, []);
 
@@ -96,7 +114,7 @@ function RotatingFact({ label, sublabel }: { label: string; sublabel?: string })
       <div className="text-sm font-semibold text-slate-800 mb-1">{label}</div>
       {sublabel && <p className="text-xs text-slate-400 mb-6">{sublabel}</p>}
       <div
-        className="mt-4 mx-auto max-w-sm transition-opacity duration-300"
+        className="mt-4 mx-auto max-w-sm transition-opacity duration-500"
         style={{ opacity: visible ? 1 : 0 }}
       >
         <div className="text-xs font-semibold text-purple-500 uppercase tracking-wider mb-2">Did you know?</div>
@@ -916,7 +934,9 @@ function EscalationTab({ caseData }: { caseData: Case }) {
           <Shield className="w-4 h-4 text-red-500" /> Pre-Filing Notice
         </h3>
         <p className="text-xs text-slate-500 mb-4">Send this before filing to give the debtor a final opportunity to pay and to document your escalation path.</p>
-        {caseData.finalNoticeHtml ? (
+        {finalNoticeMutation.isPending ? (
+          <RotatingFact label="Generating pre-filing notice..." sublabel="This usually takes 15–25 seconds." />
+        ) : caseData.finalNoticeHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <button onClick={handleCopyFN} className="btn-secondary text-sm flex items-center gap-2">
@@ -931,10 +951,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               )}
               <button
                 onClick={() => finalNoticeMutation.mutate()}
-                disabled={finalNoticeMutation.isPending}
                 className="btn-secondary text-sm ml-auto"
               >
-                {finalNoticeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
                 Regenerate
               </button>
             </div>
@@ -952,10 +970,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             </p>
             <button
               onClick={() => finalNoticeMutation.mutate()}
-              disabled={finalNoticeMutation.isPending}
               className="btn-primary"
             >
-              {finalNoticeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
               Generate Pre-Filing Notice
             </button>
           </div>
@@ -977,7 +993,9 @@ function EscalationTab({ caseData }: { caseData: Case }) {
           <span>This form will be pre-filled with your case data. <strong>Review every field carefully before filing.</strong> Use [UNKNOWN — VERIFY BEFORE FILING] placeholders where data is missing.</span>
         </div>
 
-        {caseData.filingPacketHtml ? (
+        {courtFormMutation.isPending ? (
+          <RotatingFact label="Generating court form..." sublabel="Running generate → verify → correct pipeline. This takes 45–90 seconds." />
+        ) : caseData.filingPacketHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3 flex-wrap">
               <button
@@ -988,10 +1006,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               </button>
               <button
                 onClick={() => courtFormMutation.mutate()}
-                disabled={courtFormMutation.isPending}
                 className="btn-secondary text-sm"
               >
-                {courtFormMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
                 Regenerate
               </button>
             </div>
@@ -1085,10 +1101,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             </p>
             <button
               onClick={() => courtFormMutation.mutate()}
-              disabled={courtFormMutation.isPending}
               className="btn-primary"
             >
-              {courtFormMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
               Generate Pre-Filled Court Form
             </button>
           </div>
@@ -1140,7 +1154,9 @@ function EscalationTab({ caseData }: { caseData: Case }) {
         <p className="text-xs text-slate-500 mb-4">
           If the defendant was served but failed to appear or answer within the required deadline (20 days after personal service, 30 days after alternative service), you can move for a default judgment.
         </p>
-        {caseData.defaultJudgmentHtml ? (
+        {defaultJudgmentMutation.isPending ? (
+          <RotatingFact label="Generating default judgment motion..." sublabel="This usually takes 20–40 seconds." />
+        ) : caseData.defaultJudgmentHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <button
@@ -1161,10 +1177,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               </button>
               <button
                 onClick={() => defaultJudgmentMutation.mutate()}
-                disabled={defaultJudgmentMutation.isPending}
                 className="btn-secondary text-sm ml-auto"
               >
-                {defaultJudgmentMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
                 Regenerate
               </button>
             </div>
@@ -1182,10 +1196,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             </p>
             <button
               onClick={() => defaultJudgmentMutation.mutate()}
-              disabled={defaultJudgmentMutation.isPending}
               className="btn-primary"
             >
-              {defaultJudgmentMutation.isPending && <Loader2 className="w-4 h-4 animate-spin inline mr-2" />}
               Generate Default Judgment Motion
             </button>
           </div>
@@ -1756,8 +1768,8 @@ export default function CaseDetail() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      <div className="max-w-3xl mx-auto px-6 py-12">
+        <RotatingFact label="Loading case..." />
       </div>
     );
   }
