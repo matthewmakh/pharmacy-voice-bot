@@ -717,7 +717,7 @@ Return ONLY valid JSON.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
@@ -728,7 +728,20 @@ Return ONLY valid JSON.`;
   try {
     return JSON.parse(extractJson(content.text)) as DemandLetterResult;
   } catch {
-    const text = content.text;
+    // Last-resort: if JSON parse still fails, convert the raw text to readable HTML
+    // Strip any markdown fences first
+    const text = content.text
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+    // If it looks like JSON, try once more after stripping fences
+    if (text.startsWith('{')) {
+      try {
+        return JSON.parse(text) as DemandLetterResult;
+      } catch {
+        // fall through
+      }
+    }
     return {
       text,
       html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
