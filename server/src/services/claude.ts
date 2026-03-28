@@ -585,38 +585,69 @@ export async function retryCourtForm(
   formType: string
 ): Promise<CourtFormResult> {
   const issues = verification.checks.filter(c => c.status !== 'ok');
+  const verified = verification.checks.filter(c => c.status === 'ok');
+
   const issueList = issues
-    .map(c => `- ${c.field}: expected "${c.expected ?? 'not in case data'}", found "${c.found ?? 'missing'}". Note: ${c.note}`)
+    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Verifier note: ${c.note}`)
+    .join('\n\n');
+
+  const verifiedList = verified
+    .map(c => `✓ ${c.field}: "${c.found}"`)
     .join('\n');
 
-  const retryPrompt = `You previously generated a court form that failed verification. You must regenerate it, correcting only the specific issues listed below. Do not change anything that was already correct.
+  const retryPrompt = `You previously generated a court form. An adversarial verification pass found issues. Your job is to regenerate the form with corrections — but read these rules carefully before acting.
 
-ORIGINAL FORM (for reference — your previous output):
-${originalHtml.slice(0, 4000)}
+═══════════════════════════════════════════════════
+VERIFICATION SUMMARY FROM CHECKER:
+${verification.summary}
+═══════════════════════════════════════════════════
 
-VERIFICATION ISSUES TO FIX (${issues.length} problem${issues.length === 1 ? '' : 's'}):
-${issueList}
-
-${verification.blankFields.length > 0 ? `FIELDS STILL BLANK (fill if the data is available in case data, otherwise leave as [UNKNOWN — VERIFY BEFORE FILING]):\n${verification.blankFields.join(', ')}` : ''}
-
-SOURCE CASE DATA (ground truth — use this to correct the issues above):
+SOURCE CASE DATA (absolute ground truth — always wins over the verifier):
 ${JSON.stringify(caseData, null, 2)}
 
-TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+TODAY'S DATE (explicitly provided — not a hallucination): ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
 CURRENT YEAR: ${new Date().getFullYear()}
 
-Rules:
-- Fix every issue listed above using the case data as ground truth
-- Keep everything that was already verified as correct
-- Do not invent any facts not present in the case data
-- Signature date must be today's date — do not leave it blank
-- Use [UNKNOWN — VERIFY BEFORE FILING] only for fields genuinely missing from case data
+═══════════════════════════════════════════════════
+FIELDS VERIFIED AS CORRECT — DO NOT CHANGE THESE:
+${verifiedList || '(none)'}
+═══════════════════════════════════════════════════
 
-Return the corrected form as JSON:
+ISSUES FLAGGED BY VERIFIER (${issues.length}) — evaluate each one carefully before acting:
+${issueList}
+
+═══════════════════════════════════════════════════
+HOW TO HANDLE EACH ISSUE TYPE:
+
+FOR MISMATCH (a field contradicts the case data):
+→ Fix it. The case data is ground truth. No exceptions.
+
+FOR HALLUCINATED (a specific fact not derivable from case data):
+→ Distinguish between two subtypes:
+  a) Party names, amounts, dates, addresses, invoice numbers that contradict or add to case data → Remove or correct using case data.
+  b) Procedural/legal facts derived from your legal knowledge (courthouse addresses from county, statutory boilerplate, service deadlines, filing fees) → These are ACCEPTABLE to keep. Add a note "Verify independently" next to them rather than removing them. Do not replace them with [UNKNOWN].
+
+→ IMPORTANT: Today's date and the year ${new Date().getFullYear()} are NOT hallucinations — they were explicitly provided in the generation prompt. If the verifier flagged them as hallucinated, ignore that finding.
+
+FOR MISSING (field left blank or marked UNKNOWN):
+→ Fill it if the data exists in the case data above.
+→ If the data genuinely does not exist in the case data, leave it as [UNKNOWN — VERIFY BEFORE FILING]. Do not invent it to satisfy the verifier.
+
+FOR VERIFIER FALSE POSITIVES:
+→ If the verifier flagged something as wrong but the case data clearly supports what you wrote, keep your version. You may push back, but only when the case data is on your side.
+→ If the verifier contradicts itself (says "mismatch" but its own note says the value is actually correct), treat it as verified and do not change it.
+
+═══════════════════════════════════════════════════
+ORIGINAL FORM (your previous output, for reference):
+${originalHtml.slice(0, 4000)}
+
+═══════════════════════════════════════════════════
+
+Generate the corrected form. Return JSON:
 {
-  "html": "complete corrected HTML string",
+  "html": "complete corrected HTML string — full document, not just the changed sections",
   "formType": "${formType}",
-  "instructions": ["same 5 steps as before unless corrections require changes"]
+  "instructions": ["same 5 filing steps unless corrections require changes"]
 }
 
 Return ONLY valid JSON.`;
@@ -624,7 +655,7 @@ Return ONLY valid JSON.`;
   const retryResponse = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    system: 'You are a legal document preparation assistant. You have legal knowledge and can derive procedural facts (courthouse addresses, filing fees, service deadlines) from that knowledge. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: retryPrompt }],
   });
 
@@ -728,15 +759,23 @@ export async function verifyCourtForm(
   formHtml: string,
   caseData: Record<string, unknown>
 ): Promise<CourtFormVerification> {
-  const prompt = `You are an adversarial reviewer checking a pre-filled court form for accuracy. Your job is to catch hallucinations, wrong facts, missing fields, and any discrepancy between the generated document and the source case data.
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const currentYear = new Date().getFullYear();
+
+  const prompt = `You are an adversarial reviewer checking a pre-filled court form for accuracy. Your job is to catch genuinely wrong facts, missing required fields, and values that contradict the source case data.
 
 SOURCE CASE DATA (ground truth):
 ${JSON.stringify(caseData, null, 2)}
 
+EXPLICITLY PROVIDED CONTEXT (these were given to the generator — do NOT flag as hallucinated):
+- Today's date: ${today}
+- Current year: ${currentYear}
+- Courthouse addresses derived from county (e.g. Queens Civil Court at 89-17 Sutphin Blvd) are derived from legal knowledge, not case data — mark as "ok" with a note to verify independently, not as hallucinated
+- Statutory boilerplate language (CPLR summons text, certification language, verification oath) is legal knowledge — mark as "ok"
+- Filing fees, service deadlines, and procedural requirements are legal knowledge — mark as "ok"
+
 GENERATED COURT FORM HTML:
 ${formHtml.slice(0, 6000)}
-
-Systematically extract every factual claim from the generated form and verify it against the source case data.
 
 Check each of the following fields if they appear in the document:
 - Plaintiff/claimant name and business name
@@ -748,19 +787,20 @@ Check each of the following fields if they appear in the document:
 - Agreement date / transaction date
 - Payment due date
 - Service description / nature of claim
-- County of filing (must match defendant's address)
-- Courthouse name and address (must match county)
-- Date on the document (must be today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })})
-- Year references (must all be ${new Date().getFullYear()})
-- Signature block city/location (must derive from plaintiff's address, not be generic)
+- County of filing (derived from defendant's address — verify the borough/county mapping is correct)
+- Courthouse name and address (mark "ok" if correct for the county, note to verify independently)
+- Document date (today's date ${today} is correct and expected — mark "ok")
+- Year references (${currentYear} is correct — mark "ok")
+- Signature block city/location (must derive from plaintiff's address)
+- Whether hasWrittenContract: ${caseData.hasWrittenContract} is reflected appropriately in the cause of action
 
 For each check, determine:
-- "ok": the form matches the case data exactly
-- "missing": the field was needed but left blank or marked UNKNOWN
-- "mismatch": the form contains a value that contradicts the case data
-- "hallucinated": the form contains a specific fact (name, number, date, address) that does not appear anywhere in the case data and was not derivable from it
+- "ok": correct — either matches case data, or is a valid legal/procedural derivation
+- "missing": field was needed but left blank or marked UNKNOWN when the data exists in case data
+- "mismatch": the form contains a value that directly contradicts the case data (wrong name, wrong amount, wrong address that's in the data)
+- "hallucinated": a specific party fact (name, amount, invoice number, address) invented and not derivable from case data or legal knowledge — do NOT use this for courthouse addresses, dates, statutory text, or procedural facts
 
-Also identify any fields left blank or marked [UNKNOWN — VERIFY BEFORE FILING].
+If you find yourself saying a field is both wrong AND correct in your note, mark it "ok" — do not report a false positive.
 
 Return a JSON object:
 {
@@ -769,19 +809,19 @@ Return a JSON object:
     {
       "field": "field name",
       "status": "ok" | "missing" | "mismatch" | "hallucinated",
-      "expected": "what the case data says (or null if not in case data)",
-      "found": "what appears in the generated form (or null if absent)",
-      "note": "brief explanation, empty string if ok"
+      "expected": "what the case data says, or null if this is a legal derivation",
+      "found": "what appears in the generated form, or null if absent",
+      "note": "brief explanation — if ok, this can be empty string"
     }
   ],
-  "summary": "1-2 sentence plain-language summary of verification result",
-  "blankFields": ["list of field names that are blank or marked UNKNOWN"]
+  "summary": "1-2 sentence plain-language summary focused on genuine issues only",
+  "blankFields": ["field names that are blank or marked UNKNOWN where data was available"]
 }
 
 Status rules:
-- "verified": all checked fields match, no hallucinations, 0-1 missing fields that are genuinely not available
-- "review_needed": 2-3 missing fields OR minor uncertainty, no clear errors
-- "issues_found": any mismatch, any hallucination, or more than 3 missing required fields
+- "verified": all party/financial facts match case data, no genuine hallucinations, courthouse/procedural facts are reasonable derivations
+- "review_needed": 1-2 missing fields where data wasn't available, or minor uncertainty — no clear errors
+- "issues_found": any genuine mismatch (wrong party name, wrong amount), any invented party facts, or 3+ fields missing where data existed in case data
 
 Return ONLY valid JSON.`;
 
