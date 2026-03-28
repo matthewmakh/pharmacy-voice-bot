@@ -775,7 +775,7 @@ EXPLICITLY PROVIDED CONTEXT (these were given to the generator — do NOT flag a
 - Filing fees, service deadlines, and procedural requirements are legal knowledge — mark as "ok"
 
 GENERATED COURT FORM HTML:
-${formHtml.slice(0, 6000)}
+${formHtml.slice(0, 20000)}
 
 Check each of the following fields if they appear in the document:
 - Plaintiff/claimant name and business name
@@ -827,7 +827,7 @@ Return ONLY valid JSON.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
