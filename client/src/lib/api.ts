@@ -127,6 +127,28 @@ export const lookupCourtHistory = async (caseId: string): Promise<{
   return data;
 };
 
+export const lookupNYSEntity = async (caseId: string): Promise<{
+  found: boolean;
+  totalRecords: number;
+  entities: Array<{
+    dosId: string;
+    entityName: string;
+    entityType: string;
+    status: string;
+    county: string | null;
+    formationDate: string | null;
+    registeredAgent: string | null;
+    registeredAgentAddress: string | null;
+    principalAddress: string | null;
+  }>;
+  searchedName: string;
+  note: string;
+  error?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/nys-entity`);
+  return data;
+};
+
 export const lookupACRIS = async (caseId: string): Promise<{
   found: boolean;
   totalRecords: number;

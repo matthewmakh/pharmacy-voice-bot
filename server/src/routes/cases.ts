@@ -5,6 +5,7 @@ import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCour
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
 import { lookupNYCourtHistory } from '../services/nycourts';
+import { lookupNYSEntity } from '../services/nysEntity';
 
 const router = Router();
 
@@ -532,6 +533,29 @@ router.get('/:id/court-history', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Court history lookup error:', err);
     res.status(500).json({ error: 'Court history lookup failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/nys-entity — NYS DOS entity lookup for debtor
+router.get('/:id/nys-entity', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { debtorBusiness: true, debtorName: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const entityName = caseData.debtorBusiness || caseData.debtorName;
+    if (!entityName) {
+      res.status(400).json({ error: 'No debtor business or name on file — add debtor information first' });
+      return;
+    }
+
+    const result = await lookupNYSEntity(entityName);
+    res.json(result);
+  } catch (err) {
+    console.error('NYS entity lookup error:', err);
+    res.status(500).json({ error: 'NYS entity lookup failed', details: String(err) });
   }
 });
 

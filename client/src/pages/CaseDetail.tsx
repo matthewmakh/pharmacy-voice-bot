@@ -40,6 +40,7 @@ import {
   resetAnalysis,
   lookupACRIS,
   lookupCourtHistory,
+  lookupNYSEntity,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -849,6 +850,31 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     }
   };
 
+  const [nysEntityResult, setNysEntityResult] = useState<{
+    found: boolean;
+    totalRecords: number;
+    entities: Array<{
+      dosId: string; entityName: string; entityType: string; status: string;
+      county: string | null; formationDate: string | null;
+      registeredAgent: string | null; registeredAgentAddress: string | null;
+      principalAddress: string | null;
+    }>;
+    searchedName: string; note: string; error?: string;
+  } | null>(null);
+  const [nysEntityLoading, setNysEntityLoading] = useState(false);
+
+  const handleNysEntityLookup = async () => {
+    setNysEntityLoading(true);
+    try {
+      const result = await lookupNYSEntity(caseData.id);
+      setNysEntityResult(result);
+    } catch {
+      setNysEntityResult({ found: false, totalRecords: 0, entities: [], searchedName: '', note: '', error: 'Lookup failed' });
+    } finally {
+      setNysEntityLoading(false);
+    }
+  };
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -1135,6 +1161,68 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                         )}
                         <p className="text-xs text-slate-400">Verify at: <strong>iapps.courts.state.ny.us/webcivil/FCASMain</strong></p>
                       </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* NYS Entity Search */}
+              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">NYS Entity Status</span>
+                  {!nysEntityResult && (
+                    <button
+                      onClick={handleNysEntityLookup}
+                      disabled={nysEntityLoading}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
+                    >
+                      {nysEntityLoading ? 'Searching…' : 'Search NYS DOS →'}
+                    </button>
+                  )}
+                  {nysEntityResult && (
+                    <button onClick={handleNysEntityLookup} disabled={nysEntityLoading} className="text-xs text-slate-400 hover:text-slate-600">Refresh</button>
+                  )}
+                </div>
+                {!nysEntityResult && !nysEntityLoading && (
+                  <p className="text-xs text-slate-400 leading-relaxed">Look up debtor entity status, registered agent, and formation date in the NYS Department of State database. Registered agent address is legally valid for service of process.</p>
+                )}
+                {nysEntityResult && (
+                  <div className="space-y-2">
+                    {nysEntityResult.error ? (
+                      <p className="text-xs text-slate-500">{nysEntityResult.error}</p>
+                    ) : nysEntityResult.found && nysEntityResult.entities.length > 0 ? (
+                      <>
+                        {nysEntityResult.entities.slice(0, 3).map((e, i) => {
+                          const isActive = e.status.toLowerCase() === 'active';
+                          const isDissolved = /dissolved|inactive|cancelled|revoked/i.test(e.status);
+                          return (
+                            <div key={i} className={`p-3 rounded border text-xs space-y-1 ${isActive ? 'border-emerald-200 bg-emerald-50' : isDissolved ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-slate-800">{e.entityName}</span>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isActive ? 'bg-emerald-100 text-emerald-700' : isDissolved ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{e.status}</span>
+                                {e.entityType && <span className="text-slate-400">{e.entityType}</span>}
+                                {e.dosId && <span className="text-slate-400 font-mono">DOS #{e.dosId}</span>}
+                              </div>
+                              {e.registeredAgent && (
+                                <div className="text-slate-600">
+                                  <span className="font-medium">Registered Agent:</span> {e.registeredAgent}
+                                  {e.registeredAgentAddress && <span className="text-slate-500"> — {e.registeredAgentAddress}</span>}
+                                </div>
+                              )}
+                              {e.principalAddress && (
+                                <div className="text-slate-500"><span className="font-medium text-slate-600">Principal:</span> {e.principalAddress}</div>
+                              )}
+                              {e.formationDate && (
+                                <div className="text-slate-400">Formed: {e.formationDate}{e.county ? ` · ${e.county} County` : ''}</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <p className="text-xs text-slate-600 leading-relaxed">{nysEntityResult.note}</p>
+                        <p className="text-xs text-slate-400">Verify at: <strong>apps.dos.ny.gov/publicInquiry/</strong></p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-600 leading-relaxed">{nysEntityResult.note}</p>
                     )}
                   </div>
                 )}
