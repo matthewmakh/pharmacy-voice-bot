@@ -198,27 +198,33 @@ async function authenticate(jar: CookieJar): Promise<{ ok: boolean; error?: stri
   jar.ingest(loginResp.headers);
   const loginBody = await loginResp.text();
 
-  // Check for successful auth — PACER sets a PacerSession or NextGenCSO cookie
-  if (jar.has('PacerSession') || jar.has('NextGenCSO') || jar.has('JSESSIONID')) {
-    return { ok: true };
-  }
-
-  // Some PACER versions redirect to a landing page on success
-  if (loginResp.redirected || loginBody.includes('logout') || loginBody.includes('Welcome')) {
-    return { ok: true };
-  }
-
-  // Check for common error messages
-  if (loginBody.toLowerCase().includes('invalid') || loginBody.toLowerCase().includes('incorrect')) {
+  // Check for common error messages first — before any success checks
+  const loginLower = loginBody.toLowerCase();
+  if (loginLower.includes('invalid') || loginLower.includes('incorrect') ||
+      loginLower.includes('login failed') || loginLower.includes('authentication failed')) {
     return { ok: false, error: 'PACER credentials rejected. Check PACER_USERNAME and PACER_PASSWORD.' };
   }
 
-  // If we got a session cookie of any kind, assume success
-  if (jar.toString().length > 10) {
+  // PACER NextGen sets PacerSession or NextGenCSO on successful login
+  // NOTE: do NOT check JSESSIONID — it is set on the initial GET (before login)
+  // and will always be present regardless of whether auth succeeded
+  if (jar.has('PacerSession') || jar.has('NextGenCSO')) {
     return { ok: true };
   }
 
-  return { ok: false, error: 'PACER login did not return a session cookie. Credentials may be wrong or PACER is down.' };
+  // PACER sometimes responds to the AJAX POST with a redirect URL in the body
+  // Successful login body typically contains a redirect to the landing page
+  if (loginBody.includes('window.location') || loginBody.includes('redirect') ||
+      loginBody.includes('pacer.gov/login') || loginBody.includes('MyAccount')) {
+    return { ok: true };
+  }
+
+  // Check if login page itself redirected us to a post-login page
+  if (loginResp.url && !loginResp.url.includes('login.jsf') && loginResp.url.includes('uscourts.gov')) {
+    return { ok: true };
+  }
+
+  return { ok: false, error: 'PACER login did not return a recognized session cookie (PacerSession/NextGenCSO). Check credentials or PACER may be requiring MFA/CAPTCHA.' };
 }
 
 // ─── PCL Search ───────────────────────────────────────────────────────────────

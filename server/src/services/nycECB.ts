@@ -107,9 +107,10 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
     }
 
     // ── Step 2: fetch violation records ─────────────────────────────────────
-    // Order by outstanding amount descending so the worst debts come first
+    // No $order clause — field names vary across dataset versions and an
+    // unknown field name causes HTTP 400. Sort client-side after fetch.
     const dataWhere = encodeURIComponent(countWhere);
-    const dataUrl   = `${DATASET_URL}?$where=${dataWhere}&$limit=${DATA_LIMIT}&$order=outstanding_amount DESC`;
+    const dataUrl   = `${DATASET_URL}?$where=${dataWhere}&$limit=${DATA_LIMIT}`;
     const dataResp  = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(15_000) });
     if (!dataResp.ok) {
       return noResult(searchedName, `ECB data fetch returned ${dataResp.status}`);
@@ -119,6 +120,7 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
 
     // ── Step 3: normalise records ────────────────────────────────────────────
     const violations: ECBViolation[] = raw.map(r => {
+      // Field names vary across dataset versions — handle all known names
       // The dataset uses different field names across versions —
       // handle both current and legacy names
       const outstanding = parseAmount(r['outstanding_amount'] ?? r['balance_due'] ?? r['amount_due']);
@@ -139,6 +141,9 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
         borough: boro,
       };
     });
+
+    // Sort by outstanding amount descending (client-side, avoids $order field-name dependency)
+    violations.sort((a, b) => (b.outstandingAmount ?? 0) - (a.outstandingAmount ?? 0));
 
     // ── Step 4: aggregate ────────────────────────────────────────────────────
     const totalImposed      = violations.reduce((s, v) => s + (v.imposedAmount ?? 0), 0);
