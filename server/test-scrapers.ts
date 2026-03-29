@@ -20,14 +20,24 @@ import { lookupNYSUCC } from './src/services/nysUCC';
 import { lookupNYCourtHistory } from './src/services/nycourts';
 import { checkPACERBankruptcy } from './src/services/pacer';
 
+// Force unbuffered stdout so Railway shows lines immediately as they print
+// (Node buffers stdout when piped; this makes it blocking/synchronous)
+const stdoutHandle = (process.stdout as any)._handle;
+if (stdoutHandle?.setBlocking) stdoutHandle.setBlocking(true);
+
+// log() replaces console.log — writes directly to stdout with an explicit flush attempt
+function log(line = '') {
+  process.stdout.write(line + '\n');
+}
+
 // ─── Formatting ───────────────────────────────────────────────────────────────
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', C = '\x1b[36m';
 const RESET = '\x1b[0m', B = '\x1b[1m';
-const ok   = (m: string) => { console.log(`  ${G}✓${RESET} ${m}`); };
-const err  = (m: string) => { console.log(`  ${R}✗${RESET} ${m}`); };
-const warn = (m: string) => { console.log(`  ${Y}⚠${RESET} ${m}`); };
-const info = (m: string) => { console.log(`  ${C}·${RESET} ${m}`); };
-const head = (n: string, q: string) => console.log(`\n${B}━━━ ${n} — "${q}" ━━━${RESET}`);
+const ok   = (m: string) => log(`  ${G}✓${RESET} ${m}`);
+const err  = (m: string) => log(`  ${R}✗${RESET} ${m}`);
+const warn = (m: string) => log(`  ${Y}⚠${RESET} ${m}`);
+const info = (m: string) => log(`  ${C}·${RESET} ${m}`);
+const head = (n: string, q: string) => log(`\n${B}━━━ ${n} — "${q}" ━━━${RESET}`);
 const secs = (t: number) => `${((Date.now() - t) / 1000).toFixed(1)}s`;
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
@@ -72,6 +82,7 @@ async function withTimeout<T>(
 // ─── 1. ACRIS ─────────────────────────────────────────────────────────────────
 async function testACRIS() {
   head('ACRIS', SUBJECTS.acris);
+  info('querying NYC Open Data...');
   const t = Date.now();
   await withTimeout('ACRIS', 30_000, async () => {
     const r = await lookupACRIS(SUBJECTS.acris);
@@ -86,6 +97,7 @@ async function testACRIS() {
 // ─── 2. ECB ───────────────────────────────────────────────────────────────────
 async function testECB() {
   head('ECB / OATH Violations', SUBJECTS.ecb);
+  info('querying NYC Open Data...');
   const t = Date.now();
   await withTimeout('ECB', 30_000, async () => {
     const r = await lookupNYCECB(SUBJECTS.ecb);
@@ -100,6 +112,7 @@ async function testECB() {
 // ─── 3. NYS Entity ────────────────────────────────────────────────────────────
 async function testNYSEntity() {
   head('NYS Entity (DOS)', SUBJECTS.entity);
+  info('querying NYS DOS API...');
   const t = Date.now();
   await withTimeout('NYS Entity', 45_000, async () => {
     const r = await lookupNYSEntity(SUBJECTS.entity);
@@ -120,6 +133,7 @@ async function testNYSEntity() {
 // ─── 4. NYC Civil Courts ──────────────────────────────────────────────────────
 async function testCourts() {
   head('NYC Civil Court History', SUBJECTS.courts);
+  info('loading iApps session and running defendant + plaintiff search...');
   const t = Date.now();
   await withTimeout('NYC Courts', 45_000, async () => {
     const r = await lookupNYCourtHistory(SUBJECTS.courts);
@@ -141,7 +155,7 @@ async function testCourts() {
 // ─── 5. NYS UCC ───────────────────────────────────────────────────────────────
 async function testUCC() {
   head('NYS UCC Filings', SUBJECTS.ucc);
-  console.log(`  ${Y}(CAPTCHA solve — expect 20-50s)${RESET}`);
+  log(`  ${Y}· loading portal and submitting CAPTCHA to 2captcha (expect 20-50s)...${RESET}`);
   const t = Date.now();
   await withTimeout('NYS UCC', 120_000, async () => {
     const r = await lookupNYSUCC(SUBJECTS.ucc);
@@ -163,7 +177,7 @@ async function testUCC() {
 // ─── 6. PACER ─────────────────────────────────────────────────────────────────
 async function testPACER() {
   head('PACER Federal Bankruptcy', SUBJECTS.pacer);
-  console.log(`  ${Y}(PACER auth + PCL search — expect 15-30s)${RESET}`);
+  log(`  ${Y}· authenticating with PACER and searching PCL (expect 15-30s)...${RESET}`);
   const t = Date.now();
   await withTimeout('PACER', 90_000, async () => {
     const r = await checkPACERBankruptcy(SUBJECTS.pacer);
@@ -211,11 +225,11 @@ async function sendAlert(passed: number, failed: number, warned: number) {
   const runStart = Date.now();
   const runTime  = new Date().toISOString();
 
-  console.log(`\n${B}SCRAPER HEALTH CHECK${RESET}  ${runTime}`);
-  console.log(`CAPTCHA_API_KEY      : ${process.env.CAPTCHA_API_KEY ? `✓ (${process.env.CAPTCHA_API_KEY.slice(0, 6)}…)` : `${R}✗ MISSING${RESET}`}`);
-  console.log(`PACER_USERNAME       : ${process.env.PACER_USERNAME  ? `✓ ${process.env.PACER_USERNAME}` : `${R}✗ MISSING${RESET}`}`);
-  console.log(`PACER_PASSWORD       : ${process.env.PACER_PASSWORD  ? '✓ set' : `${R}✗ MISSING${RESET}`}`);
-  console.log(`SCRAPER_ALERT_WEBHOOK: ${process.env.SCRAPER_ALERT_WEBHOOK ? '✓ set' : '· not set (no webhook alert)'}`);
+  log(`\n${B}SCRAPER HEALTH CHECK${RESET}  ${runTime}`);
+  log(`CAPTCHA_API_KEY      : ${process.env.CAPTCHA_API_KEY ? `✓ (${process.env.CAPTCHA_API_KEY.slice(0, 6)}…)` : `${R}✗ MISSING${RESET}`}`);
+  log(`PACER_USERNAME       : ${process.env.PACER_USERNAME  ? `✓ ${process.env.PACER_USERNAME}` : `${R}✗ MISSING${RESET}`}`);
+  log(`PACER_PASSWORD       : ${process.env.PACER_PASSWORD  ? '✓ set' : `${R}✗ MISSING${RESET}`}`);
+  log(`SCRAPER_ALERT_WEBHOOK: ${process.env.SCRAPER_ALERT_WEBHOOK ? '✓ set' : '· not set (no webhook alert)'}`);
 
   await testACRIS();
   await testECB();
@@ -230,21 +244,21 @@ async function sendAlert(passed: number, failed: number, warned: number) {
   const warned  = results.filter(r => r.status === 'warn').length;
   const total   = secs(runStart);
 
-  console.log(`\n${B}━━━ SUMMARY (${total}) ━━━${RESET}`);
+  log(`\n${B}━━━ SUMMARY (${total}) ━━━${RESET}`);
   for (const r of results) {
     const icon = r.status === 'pass' ? `${G}✓${RESET}` : r.status === 'warn' ? `${Y}⚠${RESET}` : `${R}✗${RESET}`;
-    console.log(`  ${icon}  ${r.name.padEnd(20)} ${r.detail.slice(0, 80)}`);
+    log(`  ${icon}  ${r.name.padEnd(20)} ${r.detail.slice(0, 80)}`);
   }
-  console.log(`\n  ${G}${passed} pass${RESET}  ${Y}${warned} warn${RESET}  ${R}${failed} fail${RESET}`);
+  log(`\n  ${G}${passed} pass${RESET}  ${Y}${warned} warn${RESET}  ${R}${failed} fail${RESET}`);
 
   await sendAlert(passed, failed, warned);
 
   // Exit 1 if any hard failures — Railway will mark the cron run as failed
   if (failed > 0) {
-    console.log(`\n${R}${B}FAILED — ${failed} scraper(s) need attention.${RESET}\n`);
+    log(`\n${R}${B}FAILED — ${failed} scraper(s) need attention.${RESET}\n`);
     process.exit(1);
   }
 
-  console.log(`\n${G}${B}All scrapers operational.${RESET}\n`);
+  log(`\n${G}${B}All scrapers operational.${RESET}\n`);
   process.exit(0);
 })();
