@@ -1,28 +1,31 @@
-// NYS UCC Filing Search — appext20.dos.ny.gov
+// NYS UCC Filing Search — appext20.dos.ny.gov/pls/ucc_public/web_search_main
 //
-// The NYS DOS UCC public search portal is an Oracle APEX application protected
-// by reCAPTCHA v2. This scraper:
-//   1. GETs the search page and extracts APEX session tokens + reCAPTCHA site key
-//   2. Solves reCAPTCHA via 2captcha (CAPTCHA_API_KEY env var required)
-//   3. POSTs the search form with the debtor name and solved CAPTCHA token
-//   4. Parses the HTML results table
-//   5. For each filing found, optionally fetches the detail page for collateral info
+// The NYS DOS UCC portal is an Oracle APEX application protected by reCAPTCHA v2.
 //
-// Results show: file number, type, dates, secured party, debtor, status (active/lapsed).
-// Critical for: knowing if a post-judgment levy will be subordinate to existing liens.
+// Flow:
+//   1. GET search page → collect session cookies + APEX tokens + reCAPTCHA site key
+//   2. Solve reCAPTCHA via 2captcha (~20-45s)
+//   3. POST search form with debtor name + CAPTCHA token
+//   4. If portal rejects CAPTCHA → report incorrect, retry once
+//   5. Parse HTML results table (handles pagination, multiple column layouts)
+//   6. For each active filing (up to 5) → GET detail page for collateral description
 //
 // Requires: CAPTCHA_API_KEY in environment.
+// Results help determine whether a post-judgment levy will be subordinate to
+// existing secured creditors (banks, MCA lenders, equipment lenders).
 
-import { solveRecaptchaV2 } from './twoCaptcha';
+import { solveRecaptchaV2, reportIncorrect, CaptchaError } from './twoCaptcha';
 
-const SEARCH_PAGE  = 'https://appext20.dos.ny.gov/pls/ucc_public/web_search_main';
-const DETAIL_BASE  = 'https://appext20.dos.ny.gov/pls/ucc_public/web_detail';
+const PORTAL_BASE  = 'https://appext20.dos.ny.gov';
+const SEARCH_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_search_main`;
+const DETAIL_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_detail`;
 
-const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+const BASE_HEADERS: Record<string, string> = {
+  'User-Agent': UA,
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
   'Connection': 'keep-alive',
   'Upgrade-Insecure-Requests': '1',
 };
@@ -31,7 +34,7 @@ const BROWSER_HEADERS = {
 
 export interface UCCFiling {
   fileNumber: string;
-  fileType: string;           // "ORIGINAL FINANCING STATEMENT", "AMENDMENT", etc.
+  fileType: string;
   filingDate: string | null;
   lapseDate: string | null;
   status: 'Active' | 'Lapsed' | 'Unknown';
@@ -39,7 +42,7 @@ export interface UCCFiling {
   debtorAddress: string | null;
   securedParty: string;
   securedPartyAddress: string | null;
-  collateral: string | null;  // from detail page when available
+  collateral: string | null;
 }
 
 export interface UCCResult {
@@ -53,221 +56,277 @@ export interface UCCResult {
   scraperNote?: string;
 }
 
-// ─── HTML helpers ─────────────────────────────────────────────────────────────
+// ─── Cookie jar ───────────────────────────────────────────────────────────────
+// Node's fetch doesn't merge multiple Set-Cookie headers automatically.
+// We collect them all and send them back as a single Cookie: header.
 
-/** Extract the value of a hidden input by name */
-function extractHiddenInput(html: string, name: string): string | null {
-  // Match both single and double quotes, case-insensitive name
-  const re = new RegExp(
-    `<input[^>]+name=["']${name}["'][^>]*value=["']([^"']*)["']|` +
-    `<input[^>]+value=["']([^"']*)["'][^>]*name=["']${name}["']`,
-    'i'
-  );
-  const m = re.exec(html);
-  return m ? (m[1] ?? m[2] ?? '') : null;
-}
+class CookieJar {
+  private map = new Map<string, string>();
 
-/** Extract ALL hidden inputs as a key-value map */
-function extractAllHiddenInputs(html: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  const re = /<input[^>]+type=["']hidden["'][^>]*>/gi;
-  let match;
-  while ((match = re.exec(html)) !== null) {
-    const tag = match[0];
-    const nameM  = /name=["']([^"']*)["']/i.exec(tag);
-    const valueM = /value=["']([^"']*)["']/i.exec(tag);
-    if (nameM) {
-      result[nameM[1]] = valueM ? valueM[1] : '';
+  ingest(headers: Headers): void {
+    // headers.getSetCookie() is Node 18+; fall back to iterating
+    const raw: string[] = typeof (headers as any).getSetCookie === 'function'
+      ? (headers as any).getSetCookie()
+      : [headers.get('set-cookie') ?? ''].filter(Boolean);
+
+    for (const line of raw) {
+      const pair = line.split(';')[0].trim();
+      const eq   = pair.indexOf('=');
+      if (eq === -1) continue;
+      const name = pair.slice(0, eq).trim();
+      const val  = pair.slice(eq + 1).trim();
+      if (name) this.map.set(name, val);
     }
   }
-  return result;
-}
 
-/** Extract reCAPTCHA v2 site key from page HTML */
-function extractSiteKey(html: string): string | null {
-  // data-sitekey="..."  or  grecaptcha.render('id', { sitekey: '...' })
-  const patterns = [
-    /data-sitekey=["']([^"']{30,})["']/i,
-    /sitekey['":\s]+["']([A-Za-z0-9_\-]{30,})["']/i,
-    /grecaptcha\.render\([^)]+['"](6L[A-Za-z0-9_\-]{30,})["']/i,
-  ];
-  for (const p of patterns) {
-    const m = p.exec(html);
-    if (m) return m[1];
+  toString(): string {
+    return Array.from(this.map.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
   }
-  return null;
+
+  isEmpty(): boolean { return this.map.size === 0; }
 }
 
-/** Extract the form action URL */
-function extractFormAction(html: string, baseUrl: string): string {
-  const m = /<form[^>]+action=["']([^"']*)["']/i.exec(html);
-  if (!m) return baseUrl;
-  const action = m[1];
-  if (action.startsWith('http')) return action;
-  const u = new URL(baseUrl);
-  return action.startsWith('/') ? `${u.origin}${action}` : `${u.origin}/${action}`;
-}
+// ─── HTML utilities ───────────────────────────────────────────────────────────
 
-/** Find the debtor name field in the APEX form.
- *  APEX uses p_t01..p_t09 for text inputs. We look for:
- *  - An input with name/id containing 'debtor' or 'org'
- *  - Or fall back to the first visible text input (p_t01)
- */
-function findDebtorOrgField(html: string): string | null {
-  // Try named fields first
-  const patterns = [
-    /name=["']([^"']*debtor[^"']*)["'][^>]*type=["']text["']/i,
-    /type=["']text["'][^>]*name=["']([^"']*debtor[^"']*)["']/i,
-    /name=["']([^"']*org[^"']*)["'][^>]*type=["']text["']/i,
-    /type=["']text["'][^>]*name=["']([^"']*org[^"']*)["']/i,
-    /name=["']([^"']*name[^"']*)["'][^>]*type=["']text["']/i,
-    /type=["']text["'][^>]*name=["']([^"']*name[^"']*)["']/i,
-    // APEX generic text inputs
-    /name=["'](p_t0[1-9])["']/i,
-  ];
-  for (const p of patterns) {
-    const m = p.exec(html);
-    if (m) return m[1];
-  }
-  return null;
-}
-
-/** Strip HTML tags and decode entities */
 function stripHtml(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#\d+;/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&#\d+;/g, ' ').replace(/\s+/g, ' ')
     .trim();
 }
 
-/** Parse UCC results table from HTML */
+/** Extract all hidden form inputs as a key→value map */
+function extractHiddenInputs(html: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /<input[^>]+type=["']hidden["'][^>]*/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const tag   = m[0];
+    const nameM  = /name=["']([^"']*)["']/i.exec(tag);
+    const valueM = /value=["']([^"']*)["']/i.exec(tag);
+    if (nameM?.[1]) out[nameM[1]] = valueM?.[1] ?? '';
+  }
+  return out;
+}
+
+/** Extract the <form> action URL, resolved against the page URL */
+function extractFormAction(html: string, pageUrl: string): string {
+  const m = /<form[^>]+action=["']([^"']+)["']/i.exec(html);
+  if (!m) return pageUrl;
+  const raw = m[1];
+  if (raw.startsWith('http')) return raw;
+  const u = new URL(pageUrl);
+  return raw.startsWith('/') ? `${u.origin}${raw}` : `${u.origin}/pls/ucc_public/${raw}`;
+}
+
+/** Extract reCAPTCHA v2 site key */
+function extractSiteKey(html: string): string | null {
+  const patterns = [
+    /data-sitekey=["']([A-Za-z0-9_\-]{30,})["']/i,
+    /sitekey['":\s]+["']([A-Za-z0-9_\-]{30,})["']/i,
+    /grecaptcha\.render\([^,]+,\s*\{[^}]*['"]sitekey['"]\s*:\s*['"]([^'"]+)['"]/i,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(html);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Find the APEX input field name for "debtor organization name".
+ * APEX apps use generic names like p_t01..p_t09 for text inputs.
+ * We try to locate the right one by context (label association, id, name).
+ */
+function findDebtorOrgField(html: string): string {
+  // 1. Named field containing 'debtor' or 'org'
+  const named = [
+    /name=["']([^"']*(?:debtor|org|search)[^"']*)["'][^>]*type=["']text["']/i,
+    /type=["']text["'][^>]*name=["']([^"']*(?:debtor|org|search)[^"']*)["']/i,
+    /id=["']([^"']*(?:debtor|org|search)[^"']*)["'][^>]*type=["']text["']/i,
+  ];
+  for (const p of named) {
+    const m = p.exec(html);
+    if (m) return m[1];
+  }
+
+  // 2. Look for a text input near a label that mentions "organization" or "debtor"
+  //    by finding the first <input type="text"> whose preceding label text matches
+  const labelBlock = /(?:organization|debtor)[\s\S]{0,300}?<input[^>]+type=["']text["'][^>]*name=["']([^"']+)["']/i;
+  const lm = labelBlock.exec(html);
+  if (lm) return lm[1];
+
+  // 3. Fall back to first APEX text field (p_t01)
+  const apex = /name=["'](p_t0[1-9])["'][^>]*type=["']text["']|type=["']text["'][^>]*name=["'](p_t0[1-9])["']/i;
+  const am = apex.exec(html);
+  if (am) return am[1] ?? am[2];
+
+  // 4. Last resort — common Oracle APEX debtor field names
+  return 'P_DEBTOR_ORG_NAME';
+}
+
+/**
+ * Determine if a filing is lapsed based on the lapse date string.
+ * NY UCC filings lapse 5 years from filing date unless continued.
+ */
+function deriveStatus(lapseDate: string | null, fileType: string): 'Active' | 'Lapsed' | 'Unknown' {
+  if (!lapseDate) return 'Unknown';
+  try {
+    const lapse = new Date(lapseDate);
+    if (!isNaN(lapse.getTime())) return lapse > new Date() ? 'Active' : 'Lapsed';
+  } catch { /* */ }
+  // Sometimes status is embedded in the filing type text
+  if (/laps|expir|terminat/i.test(fileType)) return 'Lapsed';
+  return 'Unknown';
+}
+
+/**
+ * Parse the UCC results HTML table.
+ * Handles multiple possible column layouts (the portal has slightly different
+ * views depending on search type and APEX version).
+ *
+ * NY UCC standard column order:
+ *   File Number | Type | Filing Date | Lapse Date | Debtor Name | Debtor Addr | Secured Party | SP Addr
+ *
+ * Some views collapse address columns or add a "Status" column.
+ */
 function parseResultsTable(html: string): UCCFiling[] {
   const filings: UCCFiling[] = [];
 
-  // Find the results table — it typically has class "tablesorter" or similar
-  // Try multiple table patterns
-  const tablePatterns = [
-    /<table[^>]*class=["'][^"']*result[^"']*["'][^>]*>([\s\S]*?)<\/table>/i,
-    /<table[^>]*class=["'][^"']*ucc[^"']*["'][^>]*>([\s\S]*?)<\/table>/i,
-    /<table[^>]*id=["'][^"']*result[^"']*["'][^>]*>([\s\S]*?)<\/table>/i,
-    /<table[^>]*>([\s\S]*?)<\/table>/i,  // last resort: first table
-  ];
+  // Find the best table — the one most likely to contain UCC data
+  // Criteria: contains "filing" or "debtor" or "secured" in its content
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let bestTable = '';
+  let bestScore = 0;
+  let m;
 
-  let tableHtml = '';
-  for (const p of tablePatterns) {
-    const m = p.exec(html);
-    if (m && m[1].includes('<tr') && m[1].includes('<td')) {
-      tableHtml = m[1];
-      break;
-    }
+  while ((m = tableRe.exec(html)) !== null) {
+    const t = m[0];
+    let score = 0;
+    if (/filing/i.test(t)) score++;
+    if (/debtor/i.test(t)) score++;
+    if (/secured/i.test(t)) score++;
+    if (/<tr/i.test(t) && /<td/i.test(t)) score++;
+    if (score > bestScore) { bestScore = score; bestTable = t; }
   }
 
-  if (!tableHtml) return filings;
+  if (!bestTable || bestScore < 2) return filings;
 
-  // Parse each data row (skip header)
+  // Extract data rows (skip <th> header rows)
   const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
-  let rowIndex = 0;
+  let rowM;
 
-  while ((rowMatch = rowRe.exec(tableHtml)) !== null) {
-    const rowHtml = rowMatch[1];
-    if (!rowHtml.includes('<td')) continue;  // skip header rows
+  while ((rowM = rowRe.exec(bestTable)) !== null) {
+    const rowContent = rowM[1];
+    if (!rowContent.includes('<td')) continue;
 
-    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
     const cells: string[] = [];
-    let cellMatch;
-    while ((cellMatch = cellRe.exec(rowHtml)) !== null) {
-      cells.push(stripHtml(cellMatch[1]));
+    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cellM;
+    while ((cellM = cellRe.exec(rowContent)) !== null) {
+      cells.push(stripHtml(cellM[1]));
     }
 
-    if (cells.length < 4) { rowIndex++; continue; }
+    if (cells.length < 3) continue;
 
-    // NY UCC table column order (approximate — may vary by site version):
-    // 0: File Number | 1: Type | 2: Filing Date | 3: Lapse Date |
-    // 4: Debtor Name | 5: Debtor Address | 6: Secured Party | 7: SP Address
-    //
-    // Some views show fewer columns (file number + type + dates + parties).
-    // We're flexible here.
+    // Identify file number — 10 to 19 digit string (NY UCC: 15 digits)
+    const fileIdx = cells.findIndex(c => /^\d{10,19}$/.test(c.replace(/\D/g, '').slice(0, 19)));
+    if (fileIdx === -1) continue;
 
-    const fileNumber = cells[0] ?? '';
-    // Basic sanity check: NY file numbers are 15 digits
-    if (fileNumber && !/^\d{10,15}$/.test(fileNumber.replace(/\D/g, ''))) {
-      rowIndex++;
+    const fileNumber   = cells[fileIdx].replace(/\D/g, '');
+    const afterFile    = cells.slice(fileIdx + 1);
+
+    // Layout sniffing based on cell count after file number
+    // 7+ cells: full layout — type, filingDate, lapseDate, debtor, debtorAddr, sp, spAddr
+    // 5-6 cells: compact — type, dates combined or missing addr, debtor, sp
+    // 3-4 cells: minimal
+
+    let fileType = '', filingDate: string|null = null, lapseDate: string|null = null;
+    let debtorName = '', debtorAddress: string|null = null;
+    let securedParty = '', spAddress: string|null = null;
+
+    if (afterFile.length >= 7) {
+      fileType      = afterFile[0];
+      filingDate    = afterFile[1] || null;
+      lapseDate     = afterFile[2] || null;
+      debtorName    = afterFile[3];
+      debtorAddress = afterFile[4] || null;
+      securedParty  = afterFile[5];
+      spAddress     = afterFile[6] || null;
+    } else if (afterFile.length >= 5) {
+      fileType      = afterFile[0];
+      filingDate    = afterFile[1] || null;
+      lapseDate     = afterFile[2] || null;
+      debtorName    = afterFile[3];
+      securedParty  = afterFile[4];
+    } else if (afterFile.length >= 3) {
+      fileType      = afterFile[0];
+      debtorName    = afterFile[1];
+      securedParty  = afterFile[2];
+    } else {
       continue;
     }
 
-    const fileType    = cells[1] ?? '';
-    const filingDate  = cells[2] || null;
-    const lapseDate   = cells[3] || null;
-
-    // Determine if active based on lapse date
-    let status: 'Active' | 'Lapsed' | 'Unknown' = 'Unknown';
-    if (lapseDate) {
-      try {
-        const lapse = new Date(lapseDate);
-        status = lapse > new Date() ? 'Active' : 'Lapsed';
-      } catch { /* ignore */ }
-    }
-
-    // Remaining cells vary — try to extract debtor/secured party
-    const debtorName    = cells[4] ?? '';
-    const debtorAddress = cells[5] || null;
-    const securedParty  = cells[6] ?? '';
-    const spAddress     = cells[7] || null;
-
-    if (!fileNumber && !debtorName && !securedParty) { rowIndex++; continue; }
+    // Skip rows that look like table headers mistakenly parsed as data
+    if (/^(file|number|type|debtor|secured|date)/i.test(fileType)) continue;
+    if (!fileNumber && !debtorName && !securedParty) continue;
 
     filings.push({
-      fileNumber: fileNumber.replace(/\D/g, ''),
-      fileType: fileType.toUpperCase(),
-      filingDate,
-      lapseDate,
-      status,
-      debtorName,
-      debtorAddress,
-      securedParty,
-      securedPartyAddress: spAddress,
+      fileNumber,
+      fileType: fileType.toUpperCase().trim(),
+      filingDate:    filingDate || null,
+      lapseDate:     lapseDate || null,
+      status:        deriveStatus(lapseDate, fileType),
+      debtorName:    debtorName.trim(),
+      debtorAddress: debtorAddress?.trim() || null,
+      securedParty:  securedParty.trim(),
+      securedPartyAddress: spAddress?.trim() || null,
       collateral: null,
     });
-
-    rowIndex++;
   }
 
   return filings;
 }
 
-/** Fetch collateral description from the UCC filing detail page */
-async function fetchCollateral(fileNumber: string, cookies: string): Promise<string | null> {
+/** Fetch collateral description from the filing detail page */
+async function fetchCollateral(fileNumber: string, jar: CookieJar): Promise<string | null> {
   try {
-    const resp = await fetch(`${DETAIL_BASE}?p_file_number=${fileNumber}`, {
-      headers: { ...BROWSER_HEADERS, Cookie: cookies },
-      signal: AbortSignal.timeout(10_000),
+    const resp = await fetch(`${DETAIL_PAGE}?p_file_number=${fileNumber}`, {
+      headers: { ...BASE_HEADERS, Cookie: jar.toString() },
+      signal: AbortSignal.timeout(12_000),
     });
     if (!resp.ok) return null;
     const html = await resp.text();
 
-    // Look for collateral description in common patterns
+    // Try several patterns the collateral section might use
     const patterns = [
-      /collateral[^:]*:\s*<\/td>[^<]*<td[^>]*>([\s\S]*?)<\/td>/i,
-      /collateral description[^<]*<\/[^>]+>([\s\S]*?)<\/td>/i,
-      /<td[^>]*>collateral<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i,
+      /collateral[^<]{0,30}<\/[^>]+>\s*<[^>]+>([\s\S]{5,600}?)<\//i,
+      /<td[^>]*>\s*collateral\s*<\/td>\s*<td[^>]*>([\s\S]{5,600}?)<\/td>/i,
+      /collateral description[^<]*<[^>]+>([\s\S]{5,600}?)<\//i,
     ];
     for (const p of patterns) {
       const m = p.exec(html);
       if (m) {
-        const text = stripHtml(m[1]);
-        if (text && text.length > 3) return text.slice(0, 500);
+        const text = stripHtml(m[1]).slice(0, 500);
+        if (text.length > 5) return text;
       }
     }
-    return null;
-  } catch {
-    return null;
-  }
+  } catch { /* best-effort */ }
+  return null;
+}
+
+/** Detect whether the result page is rejecting the CAPTCHA */
+function isCapRejected(html: string): boolean {
+  return /captcha/i.test(html) && /data-sitekey/i.test(html);
+}
+
+/** Detect "no results" pages */
+function isNoResults(html: string): boolean {
+  const lower = html.toLowerCase();
+  return ['no records', 'no filings', 'no results', '0 record', '0 filing',
+          'not found', 'no match', 'no ucc filings'].some(s => lower.includes(s));
 }
 
 // ─── Main export ─────────────────────────────────────────────────────────────
@@ -279,82 +338,89 @@ export async function lookupNYSUCC(debtorName: string): Promise<UCCResult> {
     return {
       found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
       note: '',
-      error: 'CAPTCHA_API_KEY not configured — cannot query the NYS UCC portal.',
+      error: 'CAPTCHA_API_KEY not configured.',
       scraperNote: 'Add CAPTCHA_API_KEY to your .env file. Get a key at 2captcha.com.',
     };
   }
 
+  const jar = new CookieJar();
+
+  // ── Step 1: Load the search page ──────────────────────────────────────────
+  let pageHtml: string;
   try {
-    // ── Step 1: Load the search page to get APEX session tokens + captcha key ──
     const pageResp = await fetch(SEARCH_PAGE, {
-      headers: BROWSER_HEADERS,
+      headers: BASE_HEADERS,
       signal: AbortSignal.timeout(20_000),
     });
-
     if (!pageResp.ok) {
       return {
         found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
         note: '',
-        error: `NYS UCC search page returned ${pageResp.status}`,
-        scraperNote: `Verify portal is up at ${SEARCH_PAGE}`,
+        error: `NYS UCC portal returned ${pageResp.status} on initial load.`,
+        scraperNote: `Verify portal is up: ${SEARCH_PAGE}`,
       };
     }
+    jar.ingest(pageResp.headers);
+    pageHtml = await pageResp.text();
+  } catch (err) {
+    return {
+      found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
+      note: '',
+      error: `Could not reach NYS UCC portal: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 
-    const pageHtml = await pageResp.text();
-    const cookies  = pageResp.headers.get('set-cookie') ?? '';
+  // ── Step 2: Extract APEX tokens, form action, reCAPTCHA site key ──────────
+  const hiddenInputs   = extractHiddenInputs(pageHtml);
+  const formAction     = extractFormAction(pageHtml, SEARCH_PAGE);
+  const debtorField    = findDebtorOrgField(pageHtml);
+  const siteKey        = extractSiteKey(pageHtml);
 
-    // ── Step 2: Extract APEX tokens and reCAPTCHA site key ───────────────────
-    const hiddenInputs = extractAllHiddenInputs(pageHtml);
-    const formAction   = extractFormAction(pageHtml, SEARCH_PAGE);
-    const debtorField  = findDebtorOrgField(pageHtml);
-    const siteKey      = extractSiteKey(pageHtml);
+  // ── Step 3 + 4: Solve CAPTCHA and submit form (retry once if rejected) ────
+  let resultHtml = '';
+  let captchaTaskId: string | undefined;
 
-    if (!siteKey) {
-      // No reCAPTCHA found — try submitting directly (portal may have changed)
-      console.warn('[nysUCC] No reCAPTCHA site key found — attempting direct submit');
-    }
-
-    // ── Step 3: Solve reCAPTCHA (if present) ─────────────────────────────────
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // Solve CAPTCHA (skip second-attempt re-solve if already solving took too long)
     let captchaToken: string | null = null;
     if (siteKey) {
-      captchaToken = await solveRecaptchaV2(siteKey, SEARCH_PAGE);
+      try {
+        captchaToken = await solveRecaptchaV2(siteKey, SEARCH_PAGE);
+      } catch (err) {
+        if (err instanceof CaptchaError) {
+          return {
+            found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
+            note: '',
+            error: `CAPTCHA solving failed: ${err.message}`,
+            scraperNote: 'Check your CAPTCHA_API_KEY balance at 2captcha.com.',
+          };
+        }
+        throw err;
+      }
     }
 
-    // ── Step 4: Build and POST the search form ────────────────────────────────
-    const formData = new URLSearchParams();
+    // Build form body
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(hiddenInputs)) form.set(k, v);
 
-    // Include all APEX hidden fields
-    for (const [k, v] of Object.entries(hiddenInputs)) {
-      formData.set(k, v);
-    }
+    // Set debtor org name field + common APEX aliases
+    form.set(debtorField, searchedName);
+    form.set('P_DEBTOR_ORG_NAME', searchedName);
+    form.set('p_debtor_org_name', searchedName);
+    form.set('P1_SEARCH_TYPE', 'DEBTOR_ORG');
 
-    // Set debtor org name — use detected field name or fallback to common APEX names
-    const nameField = debtorField ?? 'P_DEBTOR_ORG_NAME';
-    formData.set(nameField, searchedName);
-
-    // Also try alternate field names in case the primary isn't right
-    formData.set('p_debtor_org_name', searchedName);
-    formData.set('P1_SEARCH_TYPE', 'DEBTOR_ORG');
-    formData.set('p_search_type', 'DEBTOR_ORG');
-
-    if (captchaToken) {
-      formData.set('g-recaptcha-response', captchaToken);
-    }
-
-    // APEX submission requires p_request to trigger the search action
-    if (!formData.get('p_request')) {
-      formData.set('p_request', 'SEARCH');
-    }
+    if (captchaToken) form.set('g-recaptcha-response', captchaToken);
+    if (!form.get('p_request')) form.set('p_request', 'SEARCH');
 
     const searchResp = await fetch(formAction, {
       method: 'POST',
       headers: {
-        ...BROWSER_HEADERS,
+        ...BASE_HEADERS,
         'Content-Type': 'application/x-www-form-urlencoded',
         'Referer': SEARCH_PAGE,
-        'Cookie': cookies,
+        'Cookie': jar.toString(),
       },
-      body: formData.toString(),
+      body: form.toString(),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -363,99 +429,122 @@ export async function lookupNYSUCC(debtorName: string): Promise<UCCResult> {
         found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
         note: '',
         error: `Search POST returned ${searchResp.status}`,
-        scraperNote: 'The APEX form parameters may need updating. Check the portal in a browser and update field names.',
+        scraperNote: 'APEX form parameters may need updating. Inspect the portal in a browser and compare POST body field names with nysUCC.ts.',
       };
     }
 
-    const resultHtml = await searchResp.text();
-    const resultCookies = `${cookies}; ${searchResp.headers.get('set-cookie') ?? ''}`.trim();
+    jar.ingest(searchResp.headers);
+    resultHtml = await searchResp.text();
 
-    // ── Step 5: Detect no-results page ───────────────────────────────────────
-    const noResults = [
-      'no records', 'no filings', 'no results', '0 record', '0 filing',
-      'not found', 'no match',
-    ].some(s => resultHtml.toLowerCase().includes(s));
-
-    if (noResults) {
-      return {
-        found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
-        note: `No UCC filings found for "${searchedName}" in the NYS UCC database. This means no creditor has filed a security interest in this debtor's personal property in New York.`,
-      };
-    }
-
-    // Detect CAPTCHA failure / unexpected response
-    if (resultHtml.includes('recaptcha') && resultHtml.includes('data-sitekey')) {
-      return {
-        found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
-        note: '',
-        error: 'CAPTCHA was not accepted by the portal. This may indicate an invalid 2captcha key or the portal changed its CAPTCHA type.',
-        scraperNote: 'Check your CAPTCHA_API_KEY balance and try again.',
-      };
-    }
-
-    // ── Step 6: Parse results ─────────────────────────────────────────────────
-    const filings = parseResultsTable(resultHtml);
-
-    if (filings.length === 0 && resultHtml.includes('<table')) {
-      return {
-        found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
-        note: '',
-        error: 'Results page received but no filings could be parsed from the table.',
-        scraperNote: 'The NYS UCC portal HTML structure may have changed. The table column order may need updating in nysUCC.ts.',
-      };
-    }
-
-    // ── Step 7: Fetch collateral for active filings (max 5 detail requests) ──
-    const activeFilings = filings.filter(f => f.status !== 'Lapsed');
-    const toEnrich = activeFilings.slice(0, 5);
-    await Promise.all(
-      toEnrich.map(async f => {
-        f.collateral = await fetchCollateral(f.fileNumber, resultCookies);
-      })
-    );
-
-    // ── Step 8: Build note ────────────────────────────────────────────────────
-    const totalActive = filings.filter(f => f.status === 'Active').length;
-    const totalLapsed = filings.filter(f => f.status === 'Lapsed').length;
-
-    // Identify if any MCA lenders are present (common ones)
-    const mcaKeywords = ['ondeck', 'kabbage', 'bluevine', 'fundbox', 'credibly', 'greenbox',
-      'yellowstone', 'fora financial', 'pearl capital', 'can capital', 'reliant', 'forward financing',
-      'merchant', 'rapid', 'national funding', 'everest business'];
-    const mcaFilings = filings.filter(f =>
-      mcaKeywords.some(k => f.securedParty.toLowerCase().includes(k))
-    );
-
-    let note = '';
-    if (filings.length === 0) {
-      note = `No UCC filings found for "${searchedName}".`;
-    } else if (totalActive === 0) {
-      note = `${filings.length} lapsed UCC filing(s) found — all have expired. No active security interests on record. A judgment lien should not face subordination issues from prior UCC creditors.`;
-    } else {
-      note = `${totalActive} active UCC filing(s) found (${totalLapsed} lapsed).`;
-      if (mcaFilings.length > 0) {
-        note += ` ${mcaFilings.length} MCA lender(s) detected (${mcaFilings.map(f => f.securedParty).slice(0, 2).join(', ')}${mcaFilings.length > 2 ? ', …' : ''}). MCA agreements typically claim a blanket lien on all business assets — a judgment lien would be subordinate to these.`;
-      } else {
-        note += ` These secured creditors have a prior claim on the debtor's collateral. A post-judgment lien is subordinate to existing UCC filings. Review the collateral descriptions to determine which assets are encumbered.`;
+    // Check if CAPTCHA was rejected by the portal
+    if (isCapRejected(resultHtml)) {
+      if (attempt === 0) {
+        // Report incorrect for the refund, re-solve on next loop iteration
+        if (captchaTaskId) await reportIncorrect(captchaTaskId);
+        console.warn('[nysUCC] CAPTCHA rejected by portal — retrying with fresh solve');
+        await sleep(2_000);
+        continue;
       }
+      return {
+        found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
+        note: '',
+        error: 'CAPTCHA was rejected by the portal twice. The portal may have changed its CAPTCHA type or the site key has changed.',
+        scraperNote: `Check CAPTCHA type at ${SEARCH_PAGE} in a browser.`,
+      };
     }
 
-    return {
-      found: filings.length > 0,
-      totalFilings: filings.length,
-      activeFilings: totalActive,
-      filings,
-      searchedName,
-      note,
-    };
+    break; // Got a real results page
+  }
 
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  // ── Step 5: No-results check ──────────────────────────────────────────────
+  if (isNoResults(resultHtml)) {
+    return {
+      found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
+      note: `No UCC filings found for "${searchedName}" in the NYS UCC database. No secured creditor has filed a security interest against this debtor in New York.`,
+    };
+  }
+
+  // ── Step 6: Parse results ─────────────────────────────────────────────────
+  const filings = parseResultsTable(resultHtml);
+
+  // Handle pagination — NYS UCC returns 25 rows per page by default
+  // Look for a "next page" link and follow it (up to 3 more pages = 100 results max)
+  let nextHtml = resultHtml;
+  for (let page = 1; page < 4; page++) {
+    const nextMatch = /href=["']([^"']*next[^"']*|[^"']*page=\d+[^"']*)["']/i.exec(nextHtml);
+    if (!nextMatch) break;
+    let nextUrl = nextMatch[1];
+    if (!nextUrl.startsWith('http')) nextUrl = `${PORTAL_BASE}${nextUrl.startsWith('/') ? '' : '/pls/ucc_public/'}${nextUrl}`;
+    try {
+      const nextResp = await fetch(nextUrl, {
+        headers: { ...BASE_HEADERS, Referer: SEARCH_PAGE, Cookie: jar.toString() },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!nextResp.ok) break;
+      jar.ingest(nextResp.headers);
+      nextHtml = await nextResp.text();
+      filings.push(...parseResultsTable(nextHtml));
+    } catch { break; }
+  }
+
+  if (filings.length === 0 && resultHtml.includes('<table')) {
     return {
       found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
       note: '',
-      error: `UCC lookup failed: ${msg}`,
-      scraperNote: `Search manually at ${SEARCH_PAGE}`,
+      error: 'Results page received but no filings could be parsed.',
+      scraperNote: 'The NYS UCC portal HTML structure may have changed. Check column order in nysUCC.ts → parseResultsTable.',
     };
   }
+
+  // ── Step 7: Enrich active filings with collateral (max 5 detail pages) ────
+  const activeFilings = filings.filter(f => f.status !== 'Lapsed');
+  await Promise.all(
+    activeFilings.slice(0, 5).map(async f => {
+      f.collateral = await fetchCollateral(f.fileNumber, jar);
+    })
+  );
+
+  // ── Step 8: Build human-readable note ────────────────────────────────────
+  const totalActive = filings.filter(f => f.status === 'Active').length;
+  const totalLapsed = filings.filter(f => f.status === 'Lapsed').length;
+
+  const MCA_KEYWORDS = [
+    'ondeck', 'kabbage', 'bluevine', 'fundbox', 'credibly', 'greenbox',
+    'yellowstone', 'fora financial', 'pearl capital', 'can capital',
+    'reliant', 'forward financing', 'merchant', 'rapid finance',
+    'national funding', 'everest business', 'fox capital', 'libertas',
+    'newtek', 'capify', 'swift capital',
+  ];
+
+  const mcaFilings = filings.filter(f =>
+    MCA_KEYWORDS.some(k => f.securedParty.toLowerCase().includes(k))
+  );
+
+  let note = '';
+  if (filings.length === 0) {
+    note = `No UCC filings found for "${searchedName}".`;
+  } else if (totalActive === 0) {
+    note = `${filings.length} lapsed UCC filing(s) found — all have expired. No active security interests. A judgment lien should not face subordination issues from prior UCC creditors.`;
+  } else {
+    note = `${totalActive} active UCC lien(s) (${totalLapsed} lapsed).`;
+    if (mcaFilings.length > 0) {
+      const mcaNames = [...new Set(mcaFilings.map(f => f.securedParty))].slice(0, 3).join(', ');
+      note += ` MCA lender(s) detected: ${mcaNames}${mcaFilings.length > 3 ? ', …' : ''}. MCA agreements typically claim a blanket lien on all assets and receivables — your judgment lien would be subordinate to these.`;
+    } else {
+      note += ` These secured creditors hold a prior claim on debtor collateral. Review what each lien covers before attempting a levy.`;
+    }
+  }
+
+  return {
+    found: filings.length > 0,
+    totalFilings: filings.length,
+    activeFilings: totalActive,
+    filings,
+    searchedName,
+    note,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

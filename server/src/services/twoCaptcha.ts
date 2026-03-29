@@ -1,24 +1,132 @@
-// 2Captcha service — solves reCAPTCHA v2 and other CAPTCHA types.
+// 2Captcha service — solves reCAPTCHA v2/v3 and image CAPTCHAs.
 // API docs: https://2captcha.com/api-docs
 //
-// CAPTCHA_API_KEY must be set in environment variables.
-// Add it to your .env: CAPTCHA_API_KEY=your_key_here
+// Set CAPTCHA_API_KEY in your environment (.env or Railway/deploy secrets).
 //
-// Typical solve time: 15–45 seconds for reCAPTCHA v2.
-// We wait 20 seconds before first poll, then poll every 5 seconds up to timeout.
+// Typical solve time for reCAPTCHA v2: 20–45s.
+// We wait 18s before first poll, then every 5s up to timeout.
+// On ERROR_CAPTCHA_UNSOLVABLE we auto-retry once before throwing.
 
-const SUBMIT_URL  = 'https://2captcha.com/in.php';
-const RESULT_URL  = 'https://2captcha.com/res.php';
-const POLL_DELAY_INITIAL = 20_000;  // ms — reCAPTCHA typically takes at least this long
-const POLL_INTERVAL      = 5_000;   // ms between polls
-const DEFAULT_TIMEOUT    = 120_000; // ms — 2 minutes max
+const SUBMIT_URL = 'https://2captcha.com/in.php';
+const RESULT_URL = 'https://2captcha.com/res.php';
 
-class CaptchaError extends Error {
-  constructor(msg: string) { super(msg); this.name = 'CaptchaError'; }
+// Timing constants (ms)
+const RECAPTCHA_INITIAL_WAIT = 18_000;
+const POLL_INTERVAL          = 5_000;
+const DEFAULT_TIMEOUT        = 120_000;
+
+// 2captcha error codes that indicate a permanent failure (don't retry billing)
+const PERMANENT_ERRORS = new Set([
+  'ERROR_KEY_DOES_NOT_EXIST',
+  'ERROR_ZERO_BALANCE',
+  'ERROR_IP_NOT_ALLOWED',
+  'ERROR_WRONG_CAPTCHA_ID',
+  'ERROR_BAD_PARAMETERS',
+]);
+
+export class CaptchaError extends Error {
+  constructor(
+    msg: string,
+    public readonly code?: string,
+    public readonly taskId?: string,
+  ) {
+    super(msg);
+    this.name = 'CaptchaError';
+  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getKey(apiKey?: string): string {
+  const key = apiKey ?? process.env.CAPTCHA_API_KEY;
+  if (!key) throw new CaptchaError('CAPTCHA_API_KEY not set');
+  return key;
+}
+
+// ─── Internal: submit a task ─────────────────────────────────────────────────
+
+async function submitTask(
+  params: Record<string, string>,
+  apiKey: string,
+): Promise<string> {
+  const body = new URLSearchParams({ key: apiKey, json: '1', ...params });
+
+  const resp = await fetch(SUBMIT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!resp.ok) throw new CaptchaError(`2captcha submit HTTP ${resp.status}`);
+
+  const result = await resp.json() as { status: number; request: string };
+  if (result.status !== 1) {
+    throw new CaptchaError(`2captcha submit error: ${result.request}`, result.request);
+  }
+
+  return result.request; // task ID
+}
+
+// ─── Internal: poll until solved ─────────────────────────────────────────────
+
+async function pollResult(
+  taskId: string,
+  apiKey: string,
+  initialWaitMs: number,
+  timeoutMs: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  await sleep(initialWaitMs);
+
+  while (Date.now() < deadline) {
+    let resp: Response;
+    try {
+      resp = await fetch(
+        `${RESULT_URL}?key=${apiKey}&action=get&id=${taskId}&json=1`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+    } catch {
+      // Network hiccup — keep polling
+      await sleep(POLL_INTERVAL);
+      continue;
+    }
+
+    if (!resp.ok) { await sleep(POLL_INTERVAL); continue; }
+
+    const result = await resp.json() as { status: number; request: string };
+
+    if (result.status === 1) return result.request; // token!
+
+    if (result.request === 'CAPCHA_NOT_READY') {
+      await sleep(POLL_INTERVAL);
+      continue;
+    }
+
+    // Any other response is a terminal error
+    throw new CaptchaError(
+      `2captcha poll error: ${result.request}`,
+      result.request,
+      taskId,
+    );
+  }
+
+  throw new CaptchaError(`2captcha timed out after ${timeoutMs / 1000}s`, 'TIMEOUT', taskId);
+}
+
+// ─── Report incorrect (trigger refund + allows caller to retry) ──────────────
+
+export async function reportIncorrect(taskId: string, apiKey?: string): Promise<void> {
+  const key = getKey(apiKey);
+  try {
+    await fetch(`${RESULT_URL}?key=${key}&action=reportbad&id=${taskId}&json=1`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    // Best-effort — don't throw if reporting fails
+  }
 }
 
 // ─── reCAPTCHA v2 ─────────────────────────────────────────────────────────────
@@ -29,68 +137,34 @@ export async function solveRecaptchaV2(
   apiKey?: string,
   timeoutMs = DEFAULT_TIMEOUT,
 ): Promise<string> {
-  const key = apiKey ?? process.env.CAPTCHA_API_KEY;
-  if (!key) throw new CaptchaError('CAPTCHA_API_KEY not set — cannot solve reCAPTCHA');
+  const key = getKey(apiKey);
 
-  // Step 1: Submit the CAPTCHA task
-  const submitParams = new URLSearchParams({
-    key,
-    method: 'userrecaptcha',
-    googlekey: siteKey,
-    pageurl: pageUrl,
-    json: '1',
-  });
-
-  const submitResp = await fetch(SUBMIT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: submitParams.toString(),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!submitResp.ok) {
-    throw new CaptchaError(`2captcha submit failed with HTTP ${submitResp.status}`);
+  // Auto-retry once on ERROR_CAPTCHA_UNSOLVABLE (worker couldn't read it)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let taskId: string | undefined;
+    try {
+      taskId = await submitTask(
+        { method: 'userrecaptcha', googlekey: siteKey, pageurl: pageUrl },
+        key,
+      );
+      const token = await pollResult(taskId, key, RECAPTCHA_INITIAL_WAIT, timeoutMs);
+      return token;
+    } catch (err) {
+      if (
+        err instanceof CaptchaError &&
+        err.code === 'ERROR_CAPTCHA_UNSOLVABLE' &&
+        attempt === 0
+      ) {
+        // Report bad so we don't get charged, then retry
+        if (taskId) await reportIncorrect(taskId, key);
+        await sleep(3_000);
+        continue;
+      }
+      throw err;
+    }
   }
 
-  const submitBody = await submitResp.json() as { status: number; request: string };
-  if (submitBody.status !== 1) {
-    throw new CaptchaError(`2captcha submit error: ${submitBody.request}`);
-  }
-
-  const taskId = submitBody.request;
-
-  // Step 2: Poll for solution
-  const deadline = Date.now() + timeoutMs;
-  await sleep(POLL_DELAY_INITIAL);
-
-  while (Date.now() < deadline) {
-    const pollResp = await fetch(
-      `${RESULT_URL}?key=${key}&action=get&id=${taskId}&json=1`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-
-    if (!pollResp.ok) {
-      await sleep(POLL_INTERVAL);
-      continue;
-    }
-
-    const pollBody = await pollResp.json() as { status: number; request: string };
-
-    if (pollBody.status === 1) {
-      // Solution ready
-      return pollBody.request;
-    }
-
-    if (pollBody.request === 'CAPCHA_NOT_READY') {
-      await sleep(POLL_INTERVAL);
-      continue;
-    }
-
-    // Any other response is an error
-    throw new CaptchaError(`2captcha poll error: ${pollBody.request}`);
-  }
-
-  throw new CaptchaError(`2captcha timed out after ${timeoutMs / 1000}s`);
+  throw new CaptchaError('reCAPTCHA v2 unsolvable after 2 attempts');
 }
 
 // ─── reCAPTCHA v3 ─────────────────────────────────────────────────────────────
@@ -102,58 +176,29 @@ export async function solveRecaptchaV3(
   apiKey?: string,
   timeoutMs = DEFAULT_TIMEOUT,
 ): Promise<string> {
-  const key = apiKey ?? process.env.CAPTCHA_API_KEY;
-  if (!key) throw new CaptchaError('CAPTCHA_API_KEY not set');
-
-  const submitParams = new URLSearchParams({
+  const key = getKey(apiKey);
+  const taskId = await submitTask(
+    {
+      method: 'userrecaptcha',
+      version: 'v3',
+      googlekey: siteKey,
+      pageurl: pageUrl,
+      action,
+      min_score: '0.3',
+    },
     key,
-    method: 'userrecaptcha',
-    version: 'v3',
-    googlekey: siteKey,
-    pageurl: pageUrl,
-    action,
-    min_score: '0.3',
-    json: '1',
-  });
-
-  const submitResp = await fetch(SUBMIT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: submitParams.toString(),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!submitResp.ok) throw new CaptchaError(`2captcha v3 submit HTTP ${submitResp.status}`);
-
-  const submitBody = await submitResp.json() as { status: number; request: string };
-  if (submitBody.status !== 1) throw new CaptchaError(`2captcha v3 submit error: ${submitBody.request}`);
-
-  const taskId = submitBody.request;
-  const deadline = Date.now() + timeoutMs;
-  await sleep(POLL_DELAY_INITIAL);
-
-  while (Date.now() < deadline) {
-    const pollResp = await fetch(
-      `${RESULT_URL}?key=${key}&action=get&id=${taskId}&json=1`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-    if (!pollResp.ok) { await sleep(POLL_INTERVAL); continue; }
-
-    const pollBody = await pollResp.json() as { status: number; request: string };
-    if (pollBody.status === 1) return pollBody.request;
-    if (pollBody.request === 'CAPCHA_NOT_READY') { await sleep(POLL_INTERVAL); continue; }
-    throw new CaptchaError(`2captcha v3 poll error: ${pollBody.request}`);
-  }
-
-  throw new CaptchaError(`2captcha v3 timed out`);
+  );
+  return pollResult(taskId, key, RECAPTCHA_INITIAL_WAIT, timeoutMs);
 }
 
-// ─── Utility: check balance ───────────────────────────────────────────────────
+// ─── Balance check ────────────────────────────────────────────────────────────
 
 export async function getCaptchaBalance(apiKey?: string): Promise<number> {
-  const key = apiKey ?? process.env.CAPTCHA_API_KEY;
-  if (!key) throw new CaptchaError('CAPTCHA_API_KEY not set');
-  const resp = await fetch(`${RESULT_URL}?key=${key}&action=getbalance&json=1`);
+  const key = getKey(apiKey);
+  const resp = await fetch(
+    `${RESULT_URL}?key=${key}&action=getbalance&json=1`,
+    { signal: AbortSignal.timeout(8_000) },
+  );
   const body = await resp.json() as { status: number; request: string };
   if (body.status !== 1) throw new CaptchaError(`Balance check failed: ${body.request}`);
   return parseFloat(body.request);

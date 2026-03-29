@@ -22,6 +22,30 @@ const DEFAULT_HEADERS = {
   'Referer': 'https://apps.dos.ny.gov/publicInquiry/',
 };
 
+// Retry helper — retries on network errors and 429/5xx, not on 4xx
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  retries = 3,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const resp = await fetch(url, init);
+      // Retry on rate-limit or server error
+      if ((resp.status === 429 || resp.status >= 500) && i < retries - 1) {
+        await new Promise(r => setTimeout(r, (i + 1) * 1500));
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (i < retries - 1) await new Promise(r => setTimeout(r, (i + 1) * 1500));
+    }
+  }
+  throw lastErr;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface NYSEntityContact {
@@ -82,7 +106,7 @@ function isPersonName(name: string): boolean {
 
 async function fetchEntityDetails(dosId: string, entityName: string): Promise<NYSEntityRecord | null> {
   try {
-    const resp = await fetch(`${BASE_URL}/GetEntityRecordByID`, {
+    const resp = await fetchWithRetry(`${BASE_URL}/GetEntityRecordByID`, {
       method: 'POST',
       headers: DEFAULT_HEADERS,
       body: JSON.stringify({ SearchID: dosId, EntityName: entityName, AssumedNameFlag: 'false' }),
@@ -161,7 +185,7 @@ export async function lookupNYSEntity(entityName: string): Promise<NYSEntityResu
   };
 
   try {
-    const searchResp = await fetch(`${BASE_URL}/GetComplexSearchMatchingEntities`, {
+    const searchResp = await fetchWithRetry(`${BASE_URL}/GetComplexSearchMatchingEntities`, {
       method: 'POST',
       headers: DEFAULT_HEADERS,
       body: JSON.stringify(searchPayload),
