@@ -48,21 +48,44 @@ export interface ECBResult {
 const DATASET_ID_CANDIDATES = [
   process.env.ECB_DATASET_ID,  // env override first
   '6bgk-in4p',  // OATH ECB Violations (original)
-  'nhy8-p4td',  // OATH Summons (alternative)
-  'jz4z-kudi',  // OATH Hearing Dispositions (alternative)
-  'erm5-jryu',  // ECB Violations (another known ID)
+  'nhy8-p4td',  // OATH Summons
+  'jz4z-kudi',  // OATH Hearing Dispositions
+  'erm5-jryu',  // ECB Violations (alt)
+  'twhy-dzjp',  // ECB Violations (alt)
+  'p937-wjvj',  // ECB Violations (alt)
 ].filter(Boolean) as string[];
 
 const DATA_LIMIT = 200;
 
+/** Try each known dataset ID. If all fail, query the Socrata catalog to find the current one. */
 async function resolveDatasetUrl(headers: Record<string, string>): Promise<string | null> {
+  // 1. Try known IDs first (fast — 404 if wrong, 200 if right)
   for (const id of DATASET_ID_CANDIDATES) {
     const url = `https://data.cityofnewyork.us/resource/${id}.json`;
     try {
-      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(8_000) });
+      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
       if (resp.ok) return url;
     } catch { /* try next */ }
   }
+
+  // 2. Fall back to Socrata catalog search — finds current dataset ID dynamically
+  try {
+    const catalogUrl = 'https://data.cityofnewyork.us/api/catalog/v1?q=OATH+ECB+violations&limit=10';
+    const catResp = await fetch(catalogUrl, { headers, signal: AbortSignal.timeout(10_000) });
+    if (catResp.ok) {
+      const cat = await catResp.json() as { results?: Array<{ resource: { id: string; name: string } }> };
+      const match = cat.results?.find(r => {
+        const name = (r.resource?.name ?? '').toLowerCase();
+        return name.includes('ecb') || name.includes('oath') || name.includes('violation');
+      });
+      if (match?.resource?.id) {
+        const url = `https://data.cityofnewyork.us/resource/${match.resource.id}.json`;
+        const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
+        if (checkResp.ok) return url;
+      }
+    }
+  } catch { /* catalog search failed */ }
+
   return null;
 }
 
