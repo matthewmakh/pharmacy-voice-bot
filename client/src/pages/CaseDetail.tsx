@@ -43,6 +43,7 @@ import {
   lookupNYSEntity,
   lookupUCCFilings,
   lookupECBViolations,
+  lookupPACERBankruptcy,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -925,6 +926,31 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     }
   };
 
+  const [pacerResult, setPacerResult] = useState<{
+    found: boolean; totalCases: number; activeCases: number;
+    cases: Array<{
+      caseNumber: string; chapter: string; status: string; court: string; courtCode: string;
+      dateFiled: string | null; dateClosed: string | null; dateDischarge: string | null;
+      debtor: string; trustee: string | null; hasAssets: boolean | null;
+      meetingOfCreditors: string | null; proofOfClaimDeadline: string | null;
+      automaticStayActive: boolean; actionRequired: string;
+    }>;
+    searchedName: string; note: string; error?: string; scraperNote?: string;
+  } | null>(null);
+  const [pacerLoading, setPacerLoading] = useState(false);
+
+  const handlePacerLookup = async () => {
+    setPacerLoading(true);
+    try {
+      const result = await lookupPACERBankruptcy(caseData.id);
+      setPacerResult(result);
+    } catch {
+      setPacerResult({ found: false, totalCases: 0, activeCases: 0, cases: [], searchedName: '', note: '', error: 'PACER lookup failed' });
+    } finally {
+      setPacerLoading(false);
+    }
+  };
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -1399,6 +1425,75 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                       </>
                     ) : (
                       <p className="text-xs text-slate-600 leading-relaxed">{uccResult.note}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* PACER Federal Bankruptcy Check */}
+              <div className={`p-4 rounded-lg border ${pacerResult?.activeCases ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Federal Bankruptcy (PACER)</span>
+                    {pacerResult?.activeCases ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 uppercase tracking-wider">ACTIVE STAY</span>
+                    ) : pacerResult?.found ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Prior filing</span>
+                    ) : null}
+                  </div>
+                  {!pacerResult && (
+                    <button onClick={handlePacerLookup} disabled={pacerLoading} className="text-xs text-red-700 hover:text-red-900 font-medium disabled:opacity-50">
+                      {pacerLoading ? <><span>Checking PACER…</span></> : 'Check Bankruptcy →'}
+                    </button>
+                  )}
+                  {pacerResult && (
+                    <button onClick={handlePacerLookup} disabled={pacerLoading} className="text-xs text-slate-400 hover:text-slate-600">Refresh</button>
+                  )}
+                </div>
+                {!pacerResult && !pacerLoading && (
+                  <p className="text-xs text-slate-400 leading-relaxed">Check PACER for active federal bankruptcy filings. An active automatic stay means <strong>you cannot collect</strong> — attempting to do so is a federal violation. Checks all U.S. bankruptcy courts.</p>
+                )}
+                {pacerLoading && (
+                  <p className="text-xs text-slate-400 italic">Authenticating with PACER and searching all federal courts…</p>
+                )}
+                {pacerResult && (
+                  <div className="space-y-2">
+                    {pacerResult.error ? (
+                      <div className="text-xs space-y-1">
+                        <p className="text-red-600">{pacerResult.error}</p>
+                        {pacerResult.scraperNote && <p className="text-slate-400 italic">{pacerResult.scraperNote}</p>}
+                      </div>
+                    ) : (
+                      <>
+                        <p className={`text-xs font-semibold leading-relaxed ${pacerResult.activeCases > 0 ? 'text-red-700' : pacerResult.found ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {pacerResult.activeCases > 0
+                            ? `⚠ Active bankruptcy — automatic stay in effect`
+                            : pacerResult.found
+                            ? `${pacerResult.totalCases} historical case(s) — no active stay`
+                            : 'No bankruptcy filings found — safe to proceed'}
+                        </p>
+                        <p className="text-xs text-slate-600 leading-relaxed">{pacerResult.note}</p>
+                        {pacerResult.cases.length > 0 && (
+                          <div className="space-y-2 mt-2">
+                            {pacerResult.cases.map((bc, i) => (
+                              <div key={i} className={`p-2.5 rounded border text-xs space-y-1 ${bc.automaticStayActive ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-mono font-semibold text-slate-700">{bc.caseNumber}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${bc.automaticStayActive ? 'bg-red-100 text-red-700' : bc.status === 'Discharged' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{bc.status}</span>
+                                  {bc.chapter !== 'unknown' && <span className="text-slate-500">Ch. {bc.chapter}</span>}
+                                  {bc.dateFiled && <span className="text-slate-400">Filed {bc.dateFiled}</span>}
+                                </div>
+                                {bc.court && <p className="text-slate-500">{bc.court}</p>}
+                                {bc.proofOfClaimDeadline && (
+                                  <p className="text-amber-700 font-medium">Proof of claim deadline: {bc.proofOfClaimDeadline}</p>
+                                )}
+                                <p className="text-slate-600 leading-relaxed border-t border-slate-100 pt-1 mt-1">{bc.actionRequired}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-xs text-slate-400">Source: PACER (pacer.uscourts.gov) — federal courts only. State court insolvency proceedings not included.</p>
+                      </>
                     )}
                   </div>
                 )}

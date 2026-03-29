@@ -8,6 +8,7 @@ import { lookupNYCourtHistory } from '../services/nycourts';
 import { lookupNYSEntity } from '../services/nysEntity';
 import { lookupNYSUCC } from '../services/nysUCC';
 import { lookupNYCECB } from '../services/nycECB';
+import { checkPACERBankruptcy } from '../services/pacer';
 
 const router = Router();
 
@@ -604,6 +605,29 @@ router.get('/:id/ecb-violations', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('ECB lookup error:', err);
     res.status(500).json({ error: 'ECB lookup failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/pacer-bankruptcy — PACER federal bankruptcy check for debtor
+router.get('/:id/pacer-bankruptcy', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { debtorBusiness: true, debtorName: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const partyName = caseData.debtorBusiness || caseData.debtorName;
+    if (!partyName) {
+      res.status(400).json({ error: 'No debtor name on file' });
+      return;
+    }
+
+    const result = await checkPACERBankruptcy(partyName);
+    res.json(result);
+  } catch (err) {
+    console.error('PACER lookup error:', err);
+    res.status(500).json({ error: 'PACER lookup failed', details: String(err) });
   }
 });
 

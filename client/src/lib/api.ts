@@ -189,6 +189,36 @@ export const lookupACRIS = async (caseId: string): Promise<{
   return data;
 };
 
+export const lookupPACERBankruptcy = async (caseId: string): Promise<{
+  found: boolean;
+  totalCases: number;
+  activeCases: number;
+  cases: Array<{
+    caseNumber: string;
+    chapter: string;
+    status: string;
+    court: string;
+    courtCode: string;
+    dateFiled: string | null;
+    dateClosed: string | null;
+    dateDischarge: string | null;
+    debtor: string;
+    trustee: string | null;
+    hasAssets: boolean | null;
+    meetingOfCreditors: string | null;
+    proofOfClaimDeadline: string | null;
+    automaticStayActive: boolean;
+    actionRequired: string;
+  }>;
+  searchedName: string;
+  note: string;
+  error?: string;
+  scraperNote?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/pacer-bankruptcy`);
+  return data;
+};
+
 export const lookupECBViolations = async (caseId: string): Promise<{
   found: boolean;
   totalViolations: number;
