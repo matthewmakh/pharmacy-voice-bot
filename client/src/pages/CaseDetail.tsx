@@ -42,6 +42,7 @@ import {
   lookupCourtHistory,
   lookupNYSEntity,
   lookupUCCFilings,
+  lookupECBViolations,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -900,6 +901,30 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     }
   };
 
+  const [ecbResult, setEcbResult] = useState<{
+    found: boolean; totalViolations: number; totalImposed: number; totalOutstanding: number;
+    unpaidViolations: number;
+    violations: Array<{
+      respondentName: string; issueDate: string | null; violationType: string;
+      hearingStatus: string; imposedAmount: number | null; outstandingAmount: number | null;
+      borough: string | null;
+    }>;
+    searchedName: string; note: string; error?: string;
+  } | null>(null);
+  const [ecbLoading, setEcbLoading] = useState(false);
+
+  const handleEcbLookup = async () => {
+    setEcbLoading(true);
+    try {
+      const result = await lookupECBViolations(caseData.id);
+      setEcbResult(result);
+    } catch {
+      setEcbResult({ found: false, totalViolations: 0, totalImposed: 0, totalOutstanding: 0, unpaidViolations: 0, violations: [], searchedName: '', note: '', error: 'ECB lookup failed' });
+    } finally {
+      setEcbLoading(false);
+    }
+  };
+
   const strategies: { id: Strategy; title: string; description: string; traits: string[] }[] = [
     {
       id: 'QUICK_ESCALATION',
@@ -1135,6 +1160,62 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                     <p className="text-xs mt-1 opacity-80">The claim may be time-barred. Consult a NY-licensed attorney before taking any action.</p>
                   )}
                 </div>
+              </div>
+
+              {/* NYC ECB / OATH Violations */}
+              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">NYC Code Violations (ECB/OATH)</span>
+                  {!ecbResult && (
+                    <button onClick={handleEcbLookup} disabled={ecbLoading} className="text-xs text-orange-600 hover:text-orange-800 font-medium disabled:opacity-50">
+                      {ecbLoading ? 'Searching…' : 'Check Violations →'}
+                    </button>
+                  )}
+                  {ecbResult && (
+                    <button onClick={handleEcbLookup} disabled={ecbLoading} className="text-xs text-slate-400 hover:text-slate-600">Refresh</button>
+                  )}
+                </div>
+                {!ecbResult && !ecbLoading && (
+                  <p className="text-xs text-slate-400 leading-relaxed">Check for unpaid NYC code violation fines (ECB/OATH). Large outstanding balances are a collectability red flag — a debtor who doesn't pay city fines likely has cash flow problems.</p>
+                )}
+                {ecbResult && (
+                  <div className="space-y-2">
+                    {ecbResult.error ? (
+                      <p className="text-xs text-red-600">{ecbResult.error}</p>
+                    ) : ecbResult.found ? (
+                      <>
+                        <div className={`flex items-center gap-3 flex-wrap text-xs font-semibold ${ecbResult.totalOutstanding > 50000 ? 'text-red-700' : ecbResult.totalOutstanding > 5000 ? 'text-amber-700' : 'text-slate-600'}`}>
+                          <span>{ecbResult.totalViolations} violation(s)</span>
+                          {ecbResult.totalOutstanding > 0 && (
+                            <span className={`px-2 py-0.5 rounded ${ecbResult.totalOutstanding > 50000 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                              ${ecbResult.totalOutstanding.toLocaleString()} outstanding
+                            </span>
+                          )}
+                          {ecbResult.totalOutstanding === 0 && <span className="text-emerald-600">All paid/dismissed</span>}
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{ecbResult.note}</p>
+                        {ecbResult.violations.length > 0 && (
+                          <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                            {ecbResult.violations.slice(0, 6).map((v, i) => (
+                              <div key={i} className={`flex gap-2 text-xs p-1.5 rounded border ${(v.outstandingAmount ?? 0) > 0 ? 'border-amber-100 bg-amber-50' : 'border-slate-100 bg-white opacity-60'}`}>
+                                <span className={`shrink-0 font-semibold ${(v.outstandingAmount ?? 0) > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                                  {(v.outstandingAmount ?? 0) > 0 ? `$${v.outstandingAmount!.toLocaleString()} owed` : 'Paid/Dismissed'}
+                                </span>
+                                <span className="text-slate-500 truncate">{v.violationType || v.hearingStatus}</span>
+                                {v.issueDate && <span className="text-slate-400 shrink-0">{v.issueDate.slice(0, 10)}</span>}
+                              </div>
+                            ))}
+                            {ecbResult.violations.length > 6 && (
+                              <p className="text-xs text-slate-400">+{ecbResult.violations.length - 6} more</p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-600 leading-relaxed">{ecbResult.note}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* NYC Civil Court History */}

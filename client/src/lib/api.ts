@@ -188,3 +188,26 @@ export const lookupACRIS = async (caseId: string): Promise<{
   const { data } = await api.get(`/cases/${caseId}/acris`);
   return data;
 };
+
+export const lookupECBViolations = async (caseId: string): Promise<{
+  found: boolean;
+  totalViolations: number;
+  totalImposed: number;
+  totalOutstanding: number;
+  unpaidViolations: number;
+  violations: Array<{
+    respondentName: string;
+    issueDate: string | null;
+    violationType: string;
+    hearingStatus: string;
+    imposedAmount: number | null;
+    outstandingAmount: number | null;
+    borough: string | null;
+  }>;
+  searchedName: string;
+  note: string;
+  error?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/ecb-violations`);
+  return data;
+};

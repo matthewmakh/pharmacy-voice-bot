@@ -14,7 +14,7 @@
 // Results help determine whether a post-judgment levy will be subordinate to
 // existing secured creditors (banks, MCA lenders, equipment lenders).
 
-import { solveRecaptchaV2, reportIncorrect, CaptchaError } from './twoCaptcha';
+import { solveRecaptchaV2WithId, reportIncorrect, CaptchaError } from './twoCaptcha';
 
 const PORTAL_BASE  = 'https://appext20.dos.ny.gov';
 const SEARCH_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_search_main`;
@@ -378,14 +378,16 @@ export async function lookupNYSUCC(debtorName: string): Promise<UCCResult> {
 
   // ── Step 3 + 4: Solve CAPTCHA and submit form (retry once if rejected) ────
   let resultHtml = '';
-  let captchaTaskId: string | undefined;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    // Solve CAPTCHA (skip second-attempt re-solve if already solving took too long)
+    // FIX: use solveRecaptchaV2WithId so we have the taskId for reportIncorrect()
     let captchaToken: string | null = null;
+    let captchaTaskId: string | undefined;
     if (siteKey) {
       try {
-        captchaToken = await solveRecaptchaV2(siteKey, SEARCH_PAGE);
+        const solved = await solveRecaptchaV2WithId(siteKey, SEARCH_PAGE);
+        captchaToken  = solved.token;
+        captchaTaskId = solved.taskId;
       } catch (err) {
         if (err instanceof CaptchaError) {
           return {

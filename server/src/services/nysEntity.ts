@@ -22,17 +22,21 @@ const DEFAULT_HEADERS = {
   'Referer': 'https://apps.dos.ny.gov/publicInquiry/',
 };
 
-// Retry helper — retries on network errors and 429/5xx, not on 4xx
+// Retry helper — retries on network errors and 429/5xx, not on 4xx.
+// FIX: accepts timeoutMs separately so each attempt gets a FRESH AbortSignal.
+// The old pattern of passing AbortSignal.timeout() inside `init` meant an
+// expired signal from attempt 1 would immediately abort all subsequent retries.
 async function fetchWithRetry(
   url: string,
-  init: RequestInit,
+  init: Omit<RequestInit, 'signal'>,
+  timeoutMs: number,
   retries = 3,
 ): Promise<Response> {
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {
-      const resp = await fetch(url, init);
-      // Retry on rate-limit or server error
+      // Fresh signal every attempt
+      const resp = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
       if ((resp.status === 429 || resp.status >= 500) && i < retries - 1) {
         await new Promise(r => setTimeout(r, (i + 1) * 1500));
         continue;
@@ -110,8 +114,7 @@ async function fetchEntityDetails(dosId: string, entityName: string): Promise<NY
       method: 'POST',
       headers: DEFAULT_HEADERS,
       body: JSON.stringify({ SearchID: dosId, EntityName: entityName, AssumedNameFlag: 'false' }),
-      signal: AbortSignal.timeout(12_000),
-    });
+    }, 12_000);
 
     if (!resp.ok) return null;
     const d = await resp.json() as Record<string, unknown>;
@@ -189,8 +192,7 @@ export async function lookupNYSEntity(entityName: string): Promise<NYSEntityResu
       method: 'POST',
       headers: DEFAULT_HEADERS,
       body: JSON.stringify(searchPayload),
-      signal: AbortSignal.timeout(15_000),
-    });
+    }, 15_000);
 
     if (!searchResp.ok) {
       return {
@@ -224,15 +226,17 @@ export async function lookupNYSEntity(entityName: string): Promise<NYSEntityResu
       return aActive - bActive;
     });
 
-    // Step 2: Fetch details for top match (and up to 2 more if they're active)
+    // Step 2: Fetch details for top match (and up to 2 more if they're active).
+    // Staggered: 300ms between each to avoid hitting a rate-limit simultaneously.
     const toFetch = sorted.slice(0, Math.min(3, sorted.length));
-    const detailPromises = toFetch.map(r =>
-      fetchEntityDetails(
-        String(r['dosID'] ?? r['dosId'] ?? ''),
-        String(r['entityName'] ?? ''),
-      )
-    );
-    const details = await Promise.all(detailPromises);
+    const details: Array<Awaited<ReturnType<typeof fetchEntityDetails>>> = [];
+    for (let i = 0; i < toFetch.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 300));
+      details.push(await fetchEntityDetails(
+        String(toFetch[i]['dosID'] ?? toFetch[i]['dosId'] ?? ''),
+        String(toFetch[i]['entityName'] ?? ''),
+      ));
+    }
 
     // Fall back to search-result data for any that failed the detail fetch
     const entities: NYSEntityRecord[] = toFetch.map((r, i) => {

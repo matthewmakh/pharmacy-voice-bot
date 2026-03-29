@@ -131,6 +131,36 @@ export async function reportIncorrect(taskId: string, apiKey?: string): Promise<
 
 // ─── reCAPTCHA v2 ─────────────────────────────────────────────────────────────
 
+/** Returns { token, taskId } so callers can report incorrect if the site rejects it */
+export async function solveRecaptchaV2WithId(
+  siteKey: string,
+  pageUrl: string,
+  apiKey?: string,
+  timeoutMs = DEFAULT_TIMEOUT,
+): Promise<{ token: string; taskId: string }> {
+  const key = getKey(apiKey);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let taskId: string | undefined;
+    try {
+      taskId = await submitTask(
+        { method: 'userrecaptcha', googlekey: siteKey, pageurl: pageUrl },
+        key,
+      );
+      const token = await pollResult(taskId, key, RECAPTCHA_INITIAL_WAIT, timeoutMs);
+      return { token, taskId };
+    } catch (err) {
+      if (err instanceof CaptchaError && err.code === 'ERROR_CAPTCHA_UNSOLVABLE' && attempt === 0) {
+        if (taskId) await reportIncorrect(taskId, key);
+        await sleep(3_000);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new CaptchaError('reCAPTCHA v2 unsolvable after 2 attempts');
+}
+
 export async function solveRecaptchaV2(
   siteKey: string,
   pageUrl: string,
