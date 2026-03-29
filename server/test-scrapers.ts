@@ -1,10 +1,15 @@
 /**
- * Live scraper test — run from Railway console:
+ * Scraper health-check — runs as a Railway cron job (weekly).
  *
- *   npx ts-node test-scrapers.ts
+ * Local one-off:  npx ts-node test-scrapers.ts
+ * Railway cron:   schedule "0 9 * * 1" (Mon 9am UTC), command: npx ts-node test-scrapers.ts
  *
- * Tests all 6 scrapers against live endpoints with real-world names
- * that should return results. Prints a clear pass/fail for each.
+ * Exit codes:
+ *   0 — all scrapers passed
+ *   1 — one or more scrapers failed (Railway marks the run as failed + emails you)
+ *
+ * Optional env var: SCRAPER_ALERT_WEBHOOK=https://hooks.slack.com/... or any POST URL
+ * If set, a JSON summary is POSTed there on completion so you get a Slack/Discord ping.
  */
 
 import 'dotenv/config';
@@ -15,162 +20,202 @@ import { lookupNYSUCC } from './src/services/nysUCC';
 import { lookupNYCourtHistory } from './src/services/nycourts';
 import { checkPACERBankruptcy } from './src/services/pacer';
 
-// ─── Colors ───────────────────────────────────────────────────────────────────
-const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', C = '\x1b[36m', RESET = '\x1b[0m', B = '\x1b[1m';
-const pass = (m: string) => console.log(`  ${G}✓${RESET} ${m}`);
-const fail = (m: string) => console.log(`  ${R}✗${RESET} ${m}`);
-const warn = (m: string) => console.log(`  ${Y}⚠${RESET} ${m}`);
-const info = (m: string) => console.log(`  ${C}·${RESET} ${m}`);
-const sep  = (n: string, q: string) => console.log(`\n${B}━━━ ${n} — "${q}" ━━━${RESET}`);
-const ms   = (t: number) => `${((Date.now() - t) / 1000).toFixed(1)}s`;
+// ─── Formatting ───────────────────────────────────────────────────────────────
+const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', C = '\x1b[36m';
+const RESET = '\x1b[0m', B = '\x1b[1m';
+const ok   = (m: string) => { console.log(`  ${G}✓${RESET} ${m}`); };
+const err  = (m: string) => { console.log(`  ${R}✗${RESET} ${m}`); };
+const warn = (m: string) => { console.log(`  ${Y}⚠${RESET} ${m}`); };
+const info = (m: string) => { console.log(`  ${C}·${RESET} ${m}`); };
+const head = (n: string, q: string) => console.log(`\n${B}━━━ ${n} — "${q}" ━━━${RESET}`);
+const secs = (t: number) => `${((Date.now() - t) / 1000).toFixed(1)}s`;
+
+// ─── Result tracking ──────────────────────────────────────────────────────────
+type Status = 'pass' | 'fail' | 'warn';
+const results: { name: string; status: Status; detail: string }[] = [];
+
+function record(name: string, status: Status, detail: string) {
+  results.push({ name, status, detail });
+  if (status === 'pass') ok(detail);
+  else if (status === 'warn') warn(detail);
+  else err(detail);
+}
 
 // ─── Test subjects ────────────────────────────────────────────────────────────
-// Chosen because each should have real records in its respective database.
 const SUBJECTS = {
-  acris:   'TRUMP',                 // Extensive NYC property history
-  ecb:     'MCDONALD',             // Large chain with ECB violations on record
-  entity:  'GOOGLE LLC',           // Registered in NY as a foreign LLC
-  ucc:     'GOOGLE LLC',           // Has financing/bank UCC filings
-  courts:  'TRUMP',                // Frequently named in NYC civil court
-  pacer:   'SEARS ROEBUCK AND CO', // Filed Ch.11 in SDNY in 2018 — confirmed in PACER
+  acris:  'TRUMP',                  // Extensive NYC property history
+  ecb:    'MCDONALD',              // Chain with ECB violations on record
+  entity: 'GOOGLE LLC',            // Registered in NY as a foreign LLC
+  ucc:    'GOOGLE LLC',            // Has UCC financing filings
+  courts: 'TRUMP',                 // Frequently named in NYC civil court
+  pacer:  'SEARS ROEBUCK AND CO',  // Filed Ch.11 SDNY 2018 — confirmed in PACER
 };
+
+// ─── Per-scraper timeout wrapper ──────────────────────────────────────────────
+// Prevents one hung scraper from blocking the whole cron run.
+async function withTimeout<T>(
+  name: string,
+  timeoutMs: number,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      record(name, 'fail', `Timed out after ${timeoutMs / 1000}s`);
+      resolve(null);
+    }, timeoutMs);
+    fn()
+      .then(v => { clearTimeout(timer); resolve(v); })
+      .catch(e => { clearTimeout(timer); record(name, 'fail', `threw: ${e instanceof Error ? e.message : String(e)}`); resolve(null); });
+  });
+}
 
 // ─── 1. ACRIS ─────────────────────────────────────────────────────────────────
 async function testACRIS() {
-  sep('ACRIS (NYC Property Records)', SUBJECTS.acris);
+  head('ACRIS', SUBJECTS.acris);
   const t = Date.now();
-  try {
+  await withTimeout('ACRIS', 30_000, async () => {
     const r = await lookupACRIS(SUBJECTS.acris);
-    info(`${ms(t)}`);
-    if (r.error)        { fail(r.error); return; }
-    if (!r.found)       { warn(`No records — expected results for "${SUBJECTS.acris}". API may be rate-limiting or name format changed.`); return; }
-    pass(`${r.totalRecords} record(s) · ${r.asGrantee} grantee · ${r.asGrantor} grantor`);
+    info(secs(t));
+    if (r.error) { record('ACRIS', 'fail', r.error); return; }
+    if (!r.found) { record('ACRIS', 'warn', `No records found — expected results for "${SUBJECTS.acris}"`); return; }
+    record('ACRIS', 'pass', `${r.totalRecords} records · ${r.asGrantee} grantee · ${r.asGrantor} grantor`);
     info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+  });
 }
 
-// ─── 2. ECB Violations ────────────────────────────────────────────────────────
+// ─── 2. ECB ───────────────────────────────────────────────────────────────────
 async function testECB() {
-  sep('ECB / OATH Violations', SUBJECTS.ecb);
+  head('ECB / OATH Violations', SUBJECTS.ecb);
   const t = Date.now();
-  try {
+  await withTimeout('ECB', 30_000, async () => {
     const r = await lookupNYCECB(SUBJECTS.ecb);
-    info(`${ms(t)}`);
-    if (r.error)        { fail(r.error); return; }
-    if (!r.found)       { warn(`No violations — try a different name if this seems wrong.`); info(r.note.slice(0, 160)); return; }
-    pass(`${r.totalViolations} violation(s) · $${r.totalOutstanding.toLocaleString()} outstanding · ${r.unpaidViolations} unpaid`);
+    info(secs(t));
+    if (r.error) { record('ECB', 'fail', r.error); return; }
+    if (!r.found) { record('ECB', 'warn', `No violations found for "${SUBJECTS.ecb}"`); return; }
+    record('ECB', 'pass', `${r.totalViolations} violations · $${r.totalOutstanding.toLocaleString()} outstanding · ${r.unpaidViolations} unpaid`);
     info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+  });
 }
 
 // ─── 3. NYS Entity ────────────────────────────────────────────────────────────
 async function testNYSEntity() {
-  sep('NYS Entity (DOS)', SUBJECTS.entity);
+  head('NYS Entity (DOS)', SUBJECTS.entity);
   const t = Date.now();
-  try {
+  await withTimeout('NYS Entity', 45_000, async () => {
     const r = await lookupNYSEntity(SUBJECTS.entity);
-    info(`${ms(t)}`);
-    if (r.error)        { fail(r.error); return; }
+    info(secs(t));
+    if (r.error) { record('NYS Entity', 'fail', r.error); return; }
     if (!r.found || !r.entities.length) {
-      warn(`No entity found. Check entityStatusIndicator value in nysEntity.ts — may need to be '' or 'All' instead of 'AllStatuses'.`);
+      record('NYS Entity', 'warn', `No entity found — check entityStatusIndicator value in nysEntity.ts`);
       return;
     }
     const e = r.entities[0];
-    pass(`${r.totalRecords} match(es) · top: "${e.entityName}" · status: ${e.status}`);
-    if (e.registeredAgent)   info(`Registered agent: ${e.registeredAgent}`);
+    record('NYS Entity', 'pass', `${r.totalRecords} match(es) · "${e.entityName}" · ${e.status}`);
+    if (e.registeredAgent)   info(`Agent: ${e.registeredAgent}`);
     if (e.dosProcessAddress) info(`DOS process: ${e.dosProcessAddress}`);
-    if (!e.registeredAgent && !e.dosProcessAddress) warn(`No agent/address returned — check detail response field names (GetEntityRecordByID)`);
-    info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+    if (!e.registeredAgent && !e.dosProcessAddress) warn(`No agent/address in detail response — check GetEntityRecordByID field names`);
+  });
 }
 
-// ─── 4. NYC Civil Court ───────────────────────────────────────────────────────
+// ─── 4. NYC Civil Courts ──────────────────────────────────────────────────────
 async function testCourts() {
-  sep('NYC Civil Court History', SUBJECTS.courts);
+  head('NYC Civil Court History', SUBJECTS.courts);
   const t = Date.now();
-  try {
+  await withTimeout('NYC Courts', 45_000, async () => {
     const r = await lookupNYCourtHistory(SUBJECTS.courts);
-    info(`${ms(t)}`);
+    info(secs(t));
     if (r.error) {
-      fail(r.error);
+      record('NYC Courts', 'fail', r.error);
       if (r.scraperNote) warn(r.scraperNote);
       return;
     }
     if (!r.found) {
-      warn(`No cases — if unexpected: open iapps.courts.state.ny.us/webcivil/FCASMain in browser dev tools, run a search, copy the POST body field names and compare with nycourts.ts → runSearch()`);
+      record('NYC Courts', 'warn', `No cases — check POST params in nycourts.ts → runSearch() against iApps dev tools`);
       return;
     }
-    pass(`${r.totalCases} case(s) · ${r.asDefendant} defendant · ${r.asPlaintiff} plaintiff`);
-    if (r.cases[0]) {
-      const c = r.cases[0];
-      info(`First: ${c.caseIndex} | ${c.caseType} | filed ${c.filedDate ?? 'n/a'} | ${c.status}`);
-    }
-    info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+    record('NYC Courts', 'pass', `${r.totalCases} cases · ${r.asDefendant} defendant · ${r.asPlaintiff} plaintiff`);
+    if (r.cases[0]) info(`First: ${r.cases[0].caseIndex} | ${r.cases[0].caseType} | ${r.cases[0].status}`);
+  });
 }
 
 // ─── 5. NYS UCC ───────────────────────────────────────────────────────────────
 async function testUCC() {
-  sep('NYS UCC Filings', SUBJECTS.ucc);
+  head('NYS UCC Filings', SUBJECTS.ucc);
   console.log(`  ${Y}(CAPTCHA solve — expect 20-50s)${RESET}`);
   const t = Date.now();
-  try {
+  await withTimeout('NYS UCC', 120_000, async () => {
     const r = await lookupNYSUCC(SUBJECTS.ucc);
-    info(`${ms(t)}`);
+    info(secs(t));
     if (r.error) {
-      fail(r.error);
+      record('NYS UCC', 'fail', r.error);
       if (r.scraperNote) warn(r.scraperNote);
       return;
     }
     if (!r.found) {
-      warn(`No filings — if unexpected: open appext20.dos.ny.gov/pls/ucc_public/web_search_main in browser dev tools, submit a search, copy POST body field names and compare with nysUCC.ts → findDebtorOrgField()`);
+      record('NYS UCC', 'warn', `No filings — check APEX form field names in nysUCC.ts → findDebtorOrgField()`);
       return;
     }
-    pass(`${r.totalFilings} filing(s) · ${r.activeFilings} active`);
-    if (r.filings[0]) info(`First: #${r.filings[0].fileNumber} | ${r.filings[0].fileType} | secured by: ${r.filings[0].securedParty}`);
-    info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+    record('NYS UCC', 'pass', `${r.totalFilings} filings · ${r.activeFilings} active`);
+    if (r.filings[0]) info(`First: #${r.filings[0].fileNumber} · secured by: ${r.filings[0].securedParty}`);
+  });
 }
 
 // ─── 6. PACER ─────────────────────────────────────────────────────────────────
 async function testPACER() {
-  sep('PACER Federal Bankruptcy', SUBJECTS.pacer);
+  head('PACER Federal Bankruptcy', SUBJECTS.pacer);
   console.log(`  ${Y}(PACER auth + PCL search — expect 15-30s)${RESET}`);
   const t = Date.now();
-  try {
+  await withTimeout('PACER', 90_000, async () => {
     const r = await checkPACERBankruptcy(SUBJECTS.pacer);
-    info(`${ms(t)}`);
+    info(secs(t));
     if (r.error) {
-      fail(r.error);
+      record('PACER', 'fail', r.error);
       if (r.scraperNote) warn(r.scraperNote);
-      // Extra hint for auth failures
       if (/auth|credential|login|cookie/i.test(r.error)) {
-        warn(`Auth hint: PACER NextGen may set a different session cookie. Log into pacer.uscourts.gov in a browser, check what cookies are set (DevTools → Application → Cookies), and update the cookie name check in pacer.ts → authenticate()`);
+        warn(`Auth hint: check what cookie PACER sets in a real browser session — NextGen may use a different name than PacerSession`);
       }
       return;
     }
     if (!r.found) {
-      warn(`No cases found — Sears Roebuck should have a Ch.11 in PACER (SDNY 2018). Auth may have succeeded but PCL form field names are wrong. Check PCL search POST params in pacer.ts → searchPCL()`);
+      record('PACER', 'warn', `No cases — Sears Ch.11 SDNY 2018 expected. Check PCL form field names in pacer.ts → searchPCL()`);
       return;
     }
-    pass(`${r.totalCases} case(s) · ${r.activeCases} active stay`);
-    if (r.cases[0]) {
-      const c = r.cases[0];
-      pass(`First: ${c.caseNumber} | Ch. ${c.chapter} | ${c.status} | ${c.court || 'court unknown'}`);
-      if (c.proofOfClaimDeadline) info(`POC deadline: ${c.proofOfClaimDeadline}`);
-      info(`Action: ${c.actionRequired.slice(0, 120)}`);
-    }
-    info(r.note.slice(0, 160));
-  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+    record('PACER', 'pass', `${r.totalCases} cases · ${r.activeCases} active stay`);
+    if (r.cases[0]) info(`First: ${r.cases[0].caseNumber} | Ch.${r.cases[0].chapter} | ${r.cases[0].status} | ${r.cases[0].court}`);
+  });
+}
+
+// ─── Optional webhook alert ───────────────────────────────────────────────────
+async function sendAlert(passed: number, failed: number, warned: number) {
+  const url = process.env.SCRAPER_ALERT_WEBHOOK;
+  if (!url) return;
+  const emoji = failed > 0 ? '🔴' : warned > 0 ? '🟡' : '🟢';
+  const lines = results.map(r =>
+    `${r.status === 'pass' ? '✅' : r.status === 'warn' ? '⚠️' : '❌'} *${r.name}*: ${r.detail}`
+  );
+  const payload = {
+    text: `${emoji} *Scraper Health Check* — ${passed} pass, ${warned} warn, ${failed} fail\n${lines.join('\n')}`,
+  };
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch { /* non-fatal */ }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
-  console.log(`\n${B}SCRAPER LIVE TEST${RESET}`);
-  console.log(`CAPTCHA_API_KEY : ${process.env.CAPTCHA_API_KEY ? `✓ set (${process.env.CAPTCHA_API_KEY.slice(0, 6)}…)` : `${R}✗ MISSING${RESET}`}`);
-  console.log(`PACER_USERNAME  : ${process.env.PACER_USERNAME  ? `✓ ${process.env.PACER_USERNAME}` : `${R}✗ MISSING${RESET}`}`);
-  console.log(`PACER_PASSWORD  : ${process.env.PACER_PASSWORD  ? '✓ set'                          : `${R}✗ MISSING${RESET}`}`);
-  console.log(`NYC_OPEN_DATA_TOKEN: ${process.env.NYC_OPEN_DATA_TOKEN ? '✓ set (higher rate limit)' : '· not set (anonymous limit — fine for testing)'}`);
+  const runStart = Date.now();
+  const runTime  = new Date().toISOString();
+
+  console.log(`\n${B}SCRAPER HEALTH CHECK${RESET}  ${runTime}`);
+  console.log(`CAPTCHA_API_KEY      : ${process.env.CAPTCHA_API_KEY ? `✓ (${process.env.CAPTCHA_API_KEY.slice(0, 6)}…)` : `${R}✗ MISSING${RESET}`}`);
+  console.log(`PACER_USERNAME       : ${process.env.PACER_USERNAME  ? `✓ ${process.env.PACER_USERNAME}` : `${R}✗ MISSING${RESET}`}`);
+  console.log(`PACER_PASSWORD       : ${process.env.PACER_PASSWORD  ? '✓ set' : `${R}✗ MISSING${RESET}`}`);
+  console.log(`SCRAPER_ALERT_WEBHOOK: ${process.env.SCRAPER_ALERT_WEBHOOK ? '✓ set' : '· not set (no webhook alert)'}`);
 
   await testACRIS();
   await testECB();
@@ -179,5 +224,27 @@ async function testPACER() {
   await testUCC();
   await testPACER();
 
-  console.log(`\n${B}━━━ DONE ━━━${RESET}\n`);
+  // ── Summary ────────────────────────────────────────────────────────────────
+  const passed  = results.filter(r => r.status === 'pass').length;
+  const failed  = results.filter(r => r.status === 'fail').length;
+  const warned  = results.filter(r => r.status === 'warn').length;
+  const total   = secs(runStart);
+
+  console.log(`\n${B}━━━ SUMMARY (${total}) ━━━${RESET}`);
+  for (const r of results) {
+    const icon = r.status === 'pass' ? `${G}✓${RESET}` : r.status === 'warn' ? `${Y}⚠${RESET}` : `${R}✗${RESET}`;
+    console.log(`  ${icon}  ${r.name.padEnd(20)} ${r.detail.slice(0, 80)}`);
+  }
+  console.log(`\n  ${G}${passed} pass${RESET}  ${Y}${warned} warn${RESET}  ${R}${failed} fail${RESET}`);
+
+  await sendAlert(passed, failed, warned);
+
+  // Exit 1 if any hard failures — Railway will mark the cron run as failed
+  if (failed > 0) {
+    console.log(`\n${R}${B}FAILED — ${failed} scraper(s) need attention.${RESET}\n`);
+    process.exit(1);
+  }
+
+  console.log(`\n${G}${B}All scrapers operational.${RESET}\n`);
+  process.exit(0);
 })();
