@@ -135,17 +135,44 @@ export const lookupNYSEntity = async (caseId: string): Promise<{
     entityName: string;
     entityType: string;
     status: string;
+    jurisdiction: string | null;
     county: string | null;
     formationDate: string | null;
+    contacts: Array<{ name: string; role: string; address: string | null }>;
     registeredAgent: string | null;
     registeredAgentAddress: string | null;
-    principalAddress: string | null;
+    dosProcessAddress: string | null;
   }>;
   searchedName: string;
   note: string;
   error?: string;
 }> => {
   const { data } = await api.get(`/cases/${caseId}/nys-entity`);
+  return data;
+};
+
+export const lookupUCCFilings = async (caseId: string): Promise<{
+  found: boolean;
+  totalFilings: number;
+  activeFilings: number;
+  filings: Array<{
+    fileNumber: string;
+    fileType: string;
+    filingDate: string | null;
+    lapseDate: string | null;
+    status: 'Active' | 'Lapsed' | 'Unknown';
+    debtorName: string;
+    debtorAddress: string | null;
+    securedParty: string;
+    securedPartyAddress: string | null;
+    collateral: string | null;
+  }>;
+  searchedName: string;
+  note: string;
+  error?: string;
+  scraperNote?: string;
+}> => {
+  const { data } = await api.get(`/cases/${caseId}/ucc-filings`);
   return data;
 };
 

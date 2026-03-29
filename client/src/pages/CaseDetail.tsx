@@ -41,6 +41,7 @@ import {
   lookupACRIS,
   lookupCourtHistory,
   lookupNYSEntity,
+  lookupUCCFilings,
 } from '../lib/api';
 import {
   formatCurrency,
@@ -855,9 +856,10 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     totalRecords: number;
     entities: Array<{
       dosId: string; entityName: string; entityType: string; status: string;
-      county: string | null; formationDate: string | null;
+      jurisdiction: string | null; county: string | null; formationDate: string | null;
+      contacts: Array<{ name: string; role: string; address: string | null }>;
       registeredAgent: string | null; registeredAgentAddress: string | null;
-      principalAddress: string | null;
+      dosProcessAddress: string | null;
     }>;
     searchedName: string; note: string; error?: string;
   } | null>(null);
@@ -872,6 +874,29 @@ function StrategyTab({ caseData }: { caseData: Case }) {
       setNysEntityResult({ found: false, totalRecords: 0, entities: [], searchedName: '', note: '', error: 'Lookup failed' });
     } finally {
       setNysEntityLoading(false);
+    }
+  };
+
+  const [uccResult, setUccResult] = useState<{
+    found: boolean; totalFilings: number; activeFilings: number;
+    filings: Array<{
+      fileNumber: string; fileType: string; filingDate: string | null; lapseDate: string | null;
+      status: 'Active' | 'Lapsed' | 'Unknown'; debtorName: string; debtorAddress: string | null;
+      securedParty: string; securedPartyAddress: string | null; collateral: string | null;
+    }>;
+    searchedName: string; note: string; error?: string; scraperNote?: string;
+  } | null>(null);
+  const [uccLoading, setUccLoading] = useState(false);
+
+  const handleUccLookup = async () => {
+    setUccLoading(true);
+    try {
+      const result = await lookupUCCFilings(caseData.id);
+      setUccResult(result);
+    } catch {
+      setUccResult({ found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName: '', note: '', error: 'UCC lookup failed' });
+    } finally {
+      setUccLoading(false);
     }
   };
 
@@ -1209,9 +1234,14 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                                   {e.registeredAgentAddress && <span className="text-slate-500"> — {e.registeredAgentAddress}</span>}
                                 </div>
                               )}
-                              {e.principalAddress && (
-                                <div className="text-slate-500"><span className="font-medium text-slate-600">Principal:</span> {e.principalAddress}</div>
+                              {e.dosProcessAddress && (
+                                <div className="text-slate-500"><span className="font-medium text-slate-600">DOS Process:</span> {e.dosProcessAddress}</div>
                               )}
+                              {e.contacts?.filter(c => c.role !== 'Registered Agent').map((c, ci) => (
+                                <div key={ci} className="text-slate-500">
+                                  <span className="font-medium text-slate-600">{c.role}:</span> {c.name}{c.address ? ` — ${c.address}` : ''}
+                                </div>
+                              ))}
                               {e.formationDate && (
                                 <div className="text-slate-400">Formed: {e.formationDate}{e.county ? ` · ${e.county} County` : ''}</div>
                               )}
@@ -1223,6 +1253,71 @@ function StrategyTab({ caseData }: { caseData: Case }) {
                       </>
                     ) : (
                       <p className="text-xs text-slate-600 leading-relaxed">{nysEntityResult.note}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* NYS UCC Filings */}
+              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">NYS UCC Filings (Secured Creditors)</span>
+                  {!uccResult && (
+                    <button
+                      onClick={handleUccLookup}
+                      disabled={uccLoading}
+                      className="text-xs text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50"
+                    >
+                      {uccLoading ? 'Searching… (~40s)' : 'Search UCC →'}
+                    </button>
+                  )}
+                  {uccResult && (
+                    <button onClick={handleUccLookup} disabled={uccLoading} className="text-xs text-slate-400 hover:text-slate-600">
+                      {uccLoading ? 'Searching…' : 'Refresh'}
+                    </button>
+                  )}
+                </div>
+                {!uccResult && !uccLoading && (
+                  <p className="text-xs text-slate-400 leading-relaxed">Check if any secured creditors (banks, MCA lenders) have existing UCC liens on debtor assets. A judgment lien is subordinate to prior UCC filings. Requires CAPTCHA solving (~40s).</p>
+                )}
+                {uccLoading && (
+                  <p className="text-xs text-slate-400 italic">Solving CAPTCHA and searching NYS UCC portal…</p>
+                )}
+                {uccResult && (
+                  <div className="space-y-2">
+                    {uccResult.error ? (
+                      <div className="text-xs space-y-1">
+                        <p className="text-red-600">{uccResult.error}</p>
+                        {uccResult.scraperNote && <p className="text-slate-400 italic">{uccResult.scraperNote}</p>}
+                      </div>
+                    ) : uccResult.found && uccResult.filings.length > 0 ? (
+                      <>
+                        <div className={`text-xs font-semibold ${uccResult.activeFilings > 0 ? 'text-amber-700' : 'text-slate-600'}`}>
+                          {uccResult.activeFilings > 0
+                            ? `${uccResult.activeFilings} active lien(s) of ${uccResult.totalFilings} total`
+                            : `${uccResult.totalFilings} lapsed filing(s) — no active liens`}
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{uccResult.note}</p>
+                        <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
+                          {uccResult.filings.slice(0, 8).map((f, i) => (
+                            <div key={i} className={`p-2 rounded border text-xs ${f.status === 'Active' ? 'border-amber-200 bg-amber-50' : f.status === 'Lapsed' ? 'border-slate-100 bg-slate-50 opacity-60' : 'border-slate-200 bg-white'}`}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`px-1 py-0.5 rounded text-[10px] font-semibold ${f.status === 'Active' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>{f.status}</span>
+                                <span className="font-medium text-slate-700 truncate">{f.securedParty || '(secured party not shown)'}</span>
+                                {f.fileNumber && <span className="text-slate-400 font-mono text-[10px]">#{f.fileNumber}</span>}
+                              </div>
+                              {f.fileType && <div className="text-slate-400 mt-0.5">{f.fileType}{f.filingDate ? ` · Filed ${f.filingDate}` : ''}{f.lapseDate ? ` · Lapses ${f.lapseDate}` : ''}</div>}
+                              {f.collateral && <div className="text-slate-500 mt-0.5 line-clamp-2">Collateral: {f.collateral}</div>}
+                            </div>
+                          ))}
+                          {uccResult.filings.length > 8 && (
+                            <p className="text-xs text-slate-400">+{uccResult.filings.length - 8} more — verify at appext20.dos.ny.gov</p>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400">Verify at: <strong>appext20.dos.ny.gov/pls/ucc_public/web_search_main</strong></p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-600 leading-relaxed">{uccResult.note}</p>
                     )}
                   </div>
                 )}

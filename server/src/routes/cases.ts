@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
 import { lookupNYCourtHistory } from '../services/nycourts';
 import { lookupNYSEntity } from '../services/nysEntity';
+import { lookupNYSUCC } from '../services/nysUCC';
 
 const router = Router();
 
@@ -556,6 +557,29 @@ router.get('/:id/nys-entity', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('NYS entity lookup error:', err);
     res.status(500).json({ error: 'NYS entity lookup failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/ucc-filings — NYS UCC secured creditor search for debtor
+router.get('/:id/ucc-filings', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { debtorBusiness: true, debtorName: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const debtorName = caseData.debtorBusiness || caseData.debtorName;
+    if (!debtorName) {
+      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
+      return;
+    }
+
+    const result = await lookupNYSUCC(debtorName);
+    res.json(result);
+  } catch (err) {
+    console.error('UCC lookup error:', err);
+    res.status(500).json({ error: 'UCC lookup failed', details: String(err) });
   }
 });
 
