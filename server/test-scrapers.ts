@@ -1,238 +1,183 @@
 /**
- * Scraper health-check script.
- * Run: npx ts-node test-scrapers.ts
- * Tests each scraper against live endpoints with known-good + edge-case inputs.
+ * Live scraper test — run from Railway console:
+ *
+ *   npx ts-node test-scrapers.ts
+ *
+ * Tests all 6 scrapers against live endpoints with real-world names
+ * that should return results. Prints a clear pass/fail for each.
  */
 
 import 'dotenv/config';
+import { lookupACRIS } from './src/services/acris';
+import { lookupNYCECB } from './src/services/nycECB';
+import { lookupNYSEntity } from './src/services/nysEntity';
+import { lookupNYSUCC } from './src/services/nysUCC';
+import { lookupNYCourtHistory } from './src/services/nycourts';
+import { checkPACERBankruptcy } from './src/services/pacer';
 
-// ─── ACRIS ────────────────────────────────────────────────────────────────────
+// ─── Colors ───────────────────────────────────────────────────────────────────
+const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', C = '\x1b[36m', RESET = '\x1b[0m', B = '\x1b[1m';
+const pass = (m: string) => console.log(`  ${G}✓${RESET} ${m}`);
+const fail = (m: string) => console.log(`  ${R}✗${RESET} ${m}`);
+const warn = (m: string) => console.log(`  ${Y}⚠${RESET} ${m}`);
+const info = (m: string) => console.log(`  ${C}·${RESET} ${m}`);
+const sep  = (n: string, q: string) => console.log(`\n${B}━━━ ${n} — "${q}" ━━━${RESET}`);
+const ms   = (t: number) => `${((Date.now() - t) / 1000).toFixed(1)}s`;
+
+// ─── Test subjects ────────────────────────────────────────────────────────────
+// Chosen because each should have real records in its respective database.
+const SUBJECTS = {
+  acris:   'TRUMP',                 // Extensive NYC property history
+  ecb:     'MCDONALD',             // Large chain with ECB violations on record
+  entity:  'GOOGLE LLC',           // Registered in NY as a foreign LLC
+  ucc:     'GOOGLE LLC',           // Has financing/bank UCC filings
+  courts:  'TRUMP',                // Frequently named in NYC civil court
+  pacer:   'SEARS ROEBUCK AND CO', // Filed Ch.11 in SDNY in 2018 — confirmed in PACER
+};
+
+// ─── 1. ACRIS ─────────────────────────────────────────────────────────────────
 async function testACRIS() {
-  const ACRIS_URL = 'https://data.cityofnewyork.us/resource/636b-3b5g.json';
-
-  const tests = [
-    { name: 'Known company (VERIZON)', query: "upper(name)='VERIZON'" },
-    { name: 'Common name with apostrophe (O\'NEIL)', query: "upper(name)='O''NEIL'" },
-    { name: 'Empty result (unlikely name)', query: "upper(name)='ZZZNOTACOMPANY999'" },
-  ];
-
-  for (const t of tests) {
-    try {
-      const url = `${ACRIS_URL}?$where=${encodeURIComponent(t.query)}&$limit=5`;
-      const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      const data = await r.json() as unknown[];
-      console.log(`ACRIS [${t.name}]: HTTP ${r.status}, ${data.length} record(s)`);
-    } catch (e) {
-      console.log(`ACRIS [${t.name}]: ERROR — ${e}`);
-    }
-  }
+  sep('ACRIS (NYC Property Records)', SUBJECTS.acris);
+  const t = Date.now();
+  try {
+    const r = await lookupACRIS(SUBJECTS.acris);
+    info(`${ms(t)}`);
+    if (r.error)        { fail(r.error); return; }
+    if (!r.found)       { warn(`No records — expected results for "${SUBJECTS.acris}". API may be rate-limiting or name format changed.`); return; }
+    pass(`${r.totalRecords} record(s) · ${r.asGrantee} grantee · ${r.asGrantor} grantor`);
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
 }
 
-// ─── NYS Entity ───────────────────────────────────────────────────────────────
+// ─── 2. ECB Violations ────────────────────────────────────────────────────────
+async function testECB() {
+  sep('ECB / OATH Violations', SUBJECTS.ecb);
+  const t = Date.now();
+  try {
+    const r = await lookupNYCECB(SUBJECTS.ecb);
+    info(`${ms(t)}`);
+    if (r.error)        { fail(r.error); return; }
+    if (!r.found)       { warn(`No violations — try a different name if this seems wrong.`); info(r.note.slice(0, 160)); return; }
+    pass(`${r.totalViolations} violation(s) · $${r.totalOutstanding.toLocaleString()} outstanding · ${r.unpaidViolations} unpaid`);
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+}
+
+// ─── 3. NYS Entity ────────────────────────────────────────────────────────────
 async function testNYSEntity() {
-  const BASE = 'https://apps.dos.ny.gov/PublicInquiryWeb/api/PublicInquiry';
-  const HEADERS = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json, text/plain, */*',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-    'Origin': 'https://apps.dos.ny.gov',
-    'Referer': 'https://apps.dos.ny.gov/publicInquiry/',
-  };
+  sep('NYS Entity (DOS)', SUBJECTS.entity);
+  const t = Date.now();
+  try {
+    const r = await lookupNYSEntity(SUBJECTS.entity);
+    info(`${ms(t)}`);
+    if (r.error)        { fail(r.error); return; }
+    if (!r.found || !r.entities.length) {
+      warn(`No entity found. Check entityStatusIndicator value in nysEntity.ts — may need to be '' or 'All' instead of 'AllStatuses'.`);
+      return;
+    }
+    const e = r.entities[0];
+    pass(`${r.totalRecords} match(es) · top: "${e.entityName}" · status: ${e.status}`);
+    if (e.registeredAgent)   info(`Registered agent: ${e.registeredAgent}`);
+    if (e.dosProcessAddress) info(`DOS process: ${e.dosProcessAddress}`);
+    if (!e.registeredAgent && !e.dosProcessAddress) warn(`No agent/address returned — check detail response field names (GetEntityRecordByID)`);
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+}
 
-  const tests = [
-    { name: 'Search known entity (GOOGLE)', searchValue: 'GOOGLE LLC' },
-    { name: 'Search dissolved entity (test)', searchValue: 'KODAK' },
-    { name: 'Empty result', searchValue: 'ZZZNOENTITY999XYZ' },
-    { name: 'Short/ambiguous name', searchValue: 'ABC' },
-  ];
+// ─── 4. NYC Civil Court ───────────────────────────────────────────────────────
+async function testCourts() {
+  sep('NYC Civil Court History', SUBJECTS.courts);
+  const t = Date.now();
+  try {
+    const r = await lookupNYCourtHistory(SUBJECTS.courts);
+    info(`${ms(t)}`);
+    if (r.error) {
+      fail(r.error);
+      if (r.scraperNote) warn(r.scraperNote);
+      return;
+    }
+    if (!r.found) {
+      warn(`No cases — if unexpected: open iapps.courts.state.ny.us/webcivil/FCASMain in browser dev tools, run a search, copy the POST body field names and compare with nycourts.ts → runSearch()`);
+      return;
+    }
+    pass(`${r.totalCases} case(s) · ${r.asDefendant} defendant · ${r.asPlaintiff} plaintiff`);
+    if (r.cases[0]) {
+      const c = r.cases[0];
+      info(`First: ${c.caseIndex} | ${c.caseType} | filed ${c.filedDate ?? 'n/a'} | ${c.status}`);
+    }
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+}
 
-  for (const t of tests) {
-    try {
-      const payload = {
-        searchValue: t.searchValue,
-        searchByTypeIndicator: 'EntityName',
-        searchExpressionIndicator: 'BeginsWith',
-        entityStatusIndicator: 'AllStatuses',
-        entityTypeIndicator: ['Corporation', 'LimitedLiabilityCompany', 'LimitedPartnership', 'LimitedLiabilityPartnership'],
-        listPaginationInfo: { listStartRecord: 1, listEndRecord: 10 },
-      };
-      const r = await fetch(`${BASE}/GetComplexSearchMatchingEntities`, {
-        method: 'POST', headers: HEADERS,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15_000),
-      });
-      const body = await r.json() as Record<string, unknown>;
-      const list = (body['entitySearchResultList'] ?? body['results'] ?? body) as unknown[];
-      const count = Array.isArray(list) ? list.length : '(unexpected shape)';
-      const firstStatus = Array.isArray(list) && list.length > 0
-        ? (list[0] as Record<string, unknown>)['entityStatus'] : 'N/A';
-      console.log(`NYS Entity [${t.name}]: HTTP ${r.status}, ${count} result(s), first status=${firstStatus}`);
+// ─── 5. NYS UCC ───────────────────────────────────────────────────────────────
+async function testUCC() {
+  sep('NYS UCC Filings', SUBJECTS.ucc);
+  console.log(`  ${Y}(CAPTCHA solve — expect 20-50s)${RESET}`);
+  const t = Date.now();
+  try {
+    const r = await lookupNYSUCC(SUBJECTS.ucc);
+    info(`${ms(t)}`);
+    if (r.error) {
+      fail(r.error);
+      if (r.scraperNote) warn(r.scraperNote);
+      return;
+    }
+    if (!r.found) {
+      warn(`No filings — if unexpected: open appext20.dos.ny.gov/pls/ucc_public/web_search_main in browser dev tools, submit a search, copy POST body field names and compare with nysUCC.ts → findDebtorOrgField()`);
+      return;
+    }
+    pass(`${r.totalFilings} filing(s) · ${r.activeFilings} active`);
+    if (r.filings[0]) info(`First: #${r.filings[0].fileNumber} | ${r.filings[0].fileType} | secured by: ${r.filings[0].securedParty}`);
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
+}
 
-      // If we got results, test the detail endpoint too
-      if (Array.isArray(list) && list.length > 0 && t.name.includes('GOOGLE')) {
-        const first = list[0] as Record<string, unknown>;
-        const dosId = first['dosID'] ?? first['dosId'];
-        const name  = first['entityName'];
-        const dr = await fetch(`${BASE}/GetEntityRecordByID`, {
-          method: 'POST', headers: HEADERS,
-          body: JSON.stringify({ SearchID: String(dosId), EntityName: String(name), AssumedNameFlag: 'false' }),
-          signal: AbortSignal.timeout(12_000),
-        });
-        const detail = await dr.json() as Record<string, unknown>;
-        const agent = (detail['registeredAgent'] as Record<string,unknown> | null)?.['name'] ?? 'none';
-        const ceo   = (detail['ceo'] as Record<string,unknown> | null)?.['name'] ?? 'none';
-        console.log(`  Detail: HTTP ${dr.status}, registeredAgent=${agent}, ceo=${ceo}`);
-        console.log(`  Raw detail keys: ${Object.keys(detail).join(', ')}`);
+// ─── 6. PACER ─────────────────────────────────────────────────────────────────
+async function testPACER() {
+  sep('PACER Federal Bankruptcy', SUBJECTS.pacer);
+  console.log(`  ${Y}(PACER auth + PCL search — expect 15-30s)${RESET}`);
+  const t = Date.now();
+  try {
+    const r = await checkPACERBankruptcy(SUBJECTS.pacer);
+    info(`${ms(t)}`);
+    if (r.error) {
+      fail(r.error);
+      if (r.scraperNote) warn(r.scraperNote);
+      // Extra hint for auth failures
+      if (/auth|credential|login|cookie/i.test(r.error)) {
+        warn(`Auth hint: PACER NextGen may set a different session cookie. Log into pacer.uscourts.gov in a browser, check what cookies are set (DevTools → Application → Cookies), and update the cookie name check in pacer.ts → authenticate()`);
       }
-    } catch (e) {
-      console.log(`NYS Entity [${t.name}]: ERROR — ${e}`);
+      return;
     }
-  }
-}
-
-// ─── NYC Courts ───────────────────────────────────────────────────────────────
-async function testNYCourts() {
-  const MAIN_URL   = 'https://iapps.courts.state.ny.us/webcivil/FCASMain';
-  const SEARCH_URL = 'https://iapps.courts.state.ny.us/webcivil/FCASSearch';
-  const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'text/html,application/xhtml+xml',
-    'Accept-Language': 'en-US,en;q=0.9',
-  };
-
-  // Test 1: Can we load the main page?
-  try {
-    const r = await fetch(MAIN_URL, { headers: HEADERS, signal: AbortSignal.timeout(15_000) });
-    const html = await r.text();
-    const cookies = r.headers.get('set-cookie') ?? '';
-    const hasForm = html.includes('<form');
-    const hasCaptcha = /captcha|recaptcha/i.test(html);
-    console.log(`NYCourts [Load main page]: HTTP ${r.status}, hasForm=${hasForm}, hasCaptcha=${hasCaptcha}, cookies=${cookies.length > 0}`);
-    console.log(`  Page snippet: ${html.slice(0, 200).replace(/\s+/g, ' ')}`);
-
-    // Test 2: What form fields exist?
-    const inputMatches = [...html.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)];
-    const fieldNames = inputMatches.map(m => m[1]);
-    console.log(`  Form fields found: ${fieldNames.join(', ') || 'NONE'}`);
-
-    // Test 3: Try a POST search with our current params
-    const params = new URLSearchParams({
-      court_type: 'NYC',
-      param_type: 'D',
-      param_name: 'SMITH',
-      param_firstName: '',
-      submit: 'Find',
-    });
-    const sr = await fetch(SEARCH_URL, {
-      method: 'POST',
-      headers: { ...HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': cookies, 'Referer': MAIN_URL },
-      body: params.toString(),
-      signal: AbortSignal.timeout(20_000),
-    });
-    const sHtml = await sr.text();
-    const hasTable = sHtml.includes('<table');
-    const hasNoResults = /no cases|no records|0 case/i.test(sHtml);
-    const hasCaptchaResult = /captcha|recaptcha/i.test(sHtml);
-    console.log(`NYCourts [POST search SMITH]: HTTP ${sr.status}, hasTable=${hasTable}, noResults=${hasNoResults}, captcha=${hasCaptchaResult}`);
-    console.log(`  Response snippet: ${sHtml.slice(0, 300).replace(/\s+/g, ' ')}`);
-    if (hasTable) {
-      // Try to find row data
-      const rowCount = (sHtml.match(/<tr/gi) ?? []).length;
-      console.log(`  Table rows found: ${rowCount}`);
+    if (!r.found) {
+      warn(`No cases found — Sears Roebuck should have a Ch.11 in PACER (SDNY 2018). Auth may have succeeded but PCL form field names are wrong. Check PCL search POST params in pacer.ts → searchPCL()`);
+      return;
     }
-  } catch (e) {
-    console.log(`NYCourts: ERROR — ${e}`);
-  }
-}
-
-// ─── NYS UCC portal (no captcha solve — just check if page loads and inspect form) ───
-async function testNYSUCCPortal() {
-  const SEARCH_PAGE = 'https://appext20.dos.ny.gov/pls/ucc_public/web_search_main';
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-  try {
-    const r = await fetch(SEARCH_PAGE, {
-      headers: {
-        'User-Agent': UA,
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(20_000),
-    });
-    const html = await r.text();
-    const hasCaptcha = /captcha|recaptcha/i.test(html);
-    const hasForm    = html.includes('<form');
-
-    // Extract sitekey
-    const siteKeyMatch = /data-sitekey=["']([^"']+)["']/i.exec(html)
-      ?? /sitekey['":\s]+["']([A-Za-z0-9_\-]{30,})["']/i.exec(html);
-    const siteKey = siteKeyMatch?.[1] ?? 'NOT FOUND';
-
-    // Extract form action
-    const actionMatch = /<form[^>]+action=["']([^"']+)["']/i.exec(html);
-    const formAction = actionMatch?.[1] ?? 'NOT FOUND';
-
-    // Extract all input field names
-    const inputMatches = [...html.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)];
-    const allFields = inputMatches.map(m => m[1]);
-    const hiddenFields = [...html.matchAll(/<input[^>]+type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*/gi)].map(m => m[1]);
-    const textFields  = [...html.matchAll(/<input[^>]+type=["']text["'][^>]*name=["']([^"']+)["'][^>]*/gi)].map(m => m[1]);
-    const textFields2 = [...html.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*type=["']text["'][^>]*/gi)].map(m => m[1]);
-
-    // Find select dropdowns too
-    const selectMatches = [...html.matchAll(/<select[^>]+name=["']([^"']+)["'][^>]*/gi)].map(m => m[1]);
-
-    console.log(`NYSUCC [Load portal]: HTTP ${r.status}, hasForm=${hasForm}, hasCaptcha=${hasCaptcha}`);
-    console.log(`  reCAPTCHA siteKey: ${siteKey}`);
-    console.log(`  Form action: ${formAction}`);
-    console.log(`  All input names: ${allFields.join(', ') || 'NONE'}`);
-    console.log(`  Hidden fields: ${hiddenFields.join(', ') || 'NONE'}`);
-    console.log(`  Text fields: ${[...new Set([...textFields, ...textFields2])].join(', ') || 'NONE'}`);
-    console.log(`  Select fields: ${selectMatches.join(', ') || 'NONE'}`);
-    console.log(`  Page snippet: ${html.slice(0, 400).replace(/\s+/g, ' ')}`);
-  } catch (e) {
-    console.log(`NYSUCC [Load portal]: ERROR — ${e}`);
-  }
-}
-
-// ─── 2captcha balance check ───────────────────────────────────────────────────
-async function testCaptchaBalance() {
-  const key = process.env.CAPTCHA_API_KEY;
-  if (!key) { console.log('2captcha: CAPTCHA_API_KEY not set'); return; }
-  try {
-    const r = await fetch(`https://2captcha.com/res.php?key=${key}&action=getbalance&json=1`);
-    const body = await r.json() as { status: number; request: string };
-    if (body.status === 1) {
-      console.log(`2captcha: Balance = $${body.request}`);
-    } else {
-      console.log(`2captcha: Error = ${body.request}`);
+    pass(`${r.totalCases} case(s) · ${r.activeCases} active stay`);
+    if (r.cases[0]) {
+      const c = r.cases[0];
+      pass(`First: ${c.caseNumber} | Ch. ${c.chapter} | ${c.status} | ${c.court || 'court unknown'}`);
+      if (c.proofOfClaimDeadline) info(`POC deadline: ${c.proofOfClaimDeadline}`);
+      info(`Action: ${c.actionRequired.slice(0, 120)}`);
     }
-  } catch (e) {
-    console.log(`2captcha: ERROR — ${e}`);
-  }
+    info(r.note.slice(0, 160));
+  } catch (e) { fail(`threw: ${e instanceof Error ? e.message : e}`); }
 }
 
-// ─── Run all tests ────────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
-  console.log('='.repeat(60));
-  console.log('SCRAPER HEALTH CHECK');
-  console.log('='.repeat(60));
+  console.log(`\n${B}SCRAPER LIVE TEST${RESET}`);
+  console.log(`CAPTCHA_API_KEY : ${process.env.CAPTCHA_API_KEY ? `✓ set (${process.env.CAPTCHA_API_KEY.slice(0, 6)}…)` : `${R}✗ MISSING${RESET}`}`);
+  console.log(`PACER_USERNAME  : ${process.env.PACER_USERNAME  ? `✓ ${process.env.PACER_USERNAME}` : `${R}✗ MISSING${RESET}`}`);
+  console.log(`PACER_PASSWORD  : ${process.env.PACER_PASSWORD  ? '✓ set'                          : `${R}✗ MISSING${RESET}`}`);
+  console.log(`NYC_OPEN_DATA_TOKEN: ${process.env.NYC_OPEN_DATA_TOKEN ? '✓ set (higher rate limit)' : '· not set (anonymous limit — fine for testing)'}`);
 
-  console.log('\n── 2captcha balance ──');
-  await testCaptchaBalance();
-
-  console.log('\n── ACRIS (NYC real property) ──');
   await testACRIS();
-
-  console.log('\n── NYS Entity (DOS API) ──');
+  await testECB();
   await testNYSEntity();
+  await testCourts();
+  await testUCC();
+  await testPACER();
 
-  console.log('\n── NYC Civil Courts (iApps) ──');
-  await testNYCourts();
-
-  console.log('\n── NYS UCC portal (form inspection) ──');
-  await testNYSUCCPortal();
-
-  console.log('\n' + '='.repeat(60));
-  console.log('DONE');
+  console.log(`\n${B}━━━ DONE ━━━${RESET}\n`);
 })();
