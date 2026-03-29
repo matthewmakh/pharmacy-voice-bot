@@ -175,8 +175,16 @@ export async function lookupNYSEntity(entityName: string): Promise<NYSEntityResu
     searchValue: searchedName,
     searchByTypeIndicator: 'EntityName',
     searchExpressionIndicator: 'BeginsWith',
-    entityStatusIndicator: 'All',
-    entityTypeIndicator: [] as string[],  // empty = all types
+    entityStatusIndicator: 'AllStatuses',
+    // Only include entity types that are actually state-registered in NY.
+    // GeneralPartnership and SoleProprietorship are NOT registered at the state
+    // level in NY (county-level only) — including them causes HTTP 400.
+    entityTypeIndicator: [
+      'Corporation',
+      'LimitedLiabilityCompany',
+      'LimitedPartnership',
+      'LimitedLiabilityPartnership',
+    ],
     listPaginationInfo: { listStartRecord: 1, listEndRecord: 50 },
   };
 
