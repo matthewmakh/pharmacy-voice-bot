@@ -74,19 +74,40 @@ async function resolveDatasetUrl(headers: Record<string, string>): Promise<strin
     const catResp = await fetch(catalogUrl, { headers, signal: AbortSignal.timeout(10_000) });
     if (catResp.ok) {
       const cat = await catResp.json() as { results?: Array<{ resource: { id: string; name: string } }> };
-      const match = cat.results?.find(r => {
-        const name = (r.resource?.name ?? '').toLowerCase();
-        return name.includes('ecb') || name.includes('oath') || name.includes('violation');
-      });
-      if (match?.resource?.id) {
-        const url = `https://data.cityofnewyork.us/resource/${match.resource.id}.json`;
-        const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-        if (checkResp.ok) return url;
+      for (const result of cat.results ?? []) {
+        const name = (result.resource?.name ?? '').toLowerCase();
+        if (name.includes('ecb') || name.includes('oath') || name.includes('violation')) {
+          const url = `https://data.cityofnewyork.us/resource/${result.resource.id}.json`;
+          const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
+          if (checkResp.ok) return url;
+        }
       }
     }
   } catch { /* catalog search failed */ }
 
   return null;
+}
+
+/**
+ * Fetch one record from the dataset to detect which field holds the respondent name.
+ * Field name varies: respondent_name, respondent, business_name, name, etc.
+ */
+async function detectRespondentField(datasetUrl: string, headers: Record<string, string>): Promise<string> {
+  const fallback = 'respondent_name';
+  try {
+    const resp = await fetch(`${datasetUrl}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
+    if (!resp.ok) return fallback;
+    const records = await resp.json() as Record<string, unknown>[];
+    if (!records.length) return fallback;
+    const keys = Object.keys(records[0]);
+    const nameKey = keys.find(k =>
+      k === 'respondent_name' || k === 'respondent' ||
+      k.includes('respondent') || k === 'business_name' || k === 'name'
+    );
+    return nameKey ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function parseAmount(raw: unknown): number | null {
@@ -111,8 +132,9 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
       return noResult(searchedName, 'ECB dataset not found — all known NYC Open Data dataset IDs returned errors. Set ECB_DATASET_ID env var with the current ID from data.cityofnewyork.us.');
     }
 
-    // ── Step 1: get real count ───────────────────────────────────────────────
-    const countWhere  = `upper(respondent_name)='${cleanName}'`;
+    // ── Step 1: detect respondent field name + get real count ────────────────
+    const nameField   = await detectRespondentField(DATASET_URL, headers);
+    const countWhere  = `upper(${nameField})='${cleanName}'`;
     const countUrl    = `${DATASET_URL}?$where=${encodeURIComponent(countWhere)}&$select=count(*)`;
     const countResp   = await fetch(countUrl, { headers, signal: AbortSignal.timeout(12_000) });
     if (!countResp.ok) {

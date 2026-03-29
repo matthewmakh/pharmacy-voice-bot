@@ -200,33 +200,36 @@ async function authenticate(jar: CookieJar): Promise<{ ok: boolean; error?: stri
 
   const loginLower = loginBody.toLowerCase();
 
-  // Check for explicit error messages first
+  // 1. Check for explicit credential error messages first
   if (loginLower.includes('invalid') || loginLower.includes('incorrect') ||
       loginLower.includes('login failed') || loginLower.includes('authentication failed') ||
       loginLower.includes('username or password')) {
     return { ok: false, error: 'PACER credentials rejected. Check PACER_USERNAME and PACER_PASSWORD.' };
   }
 
-  // If still on the login page with a form, auth failed silently
-  if (loginResp.url?.includes('login.jsf') || loginBody.includes('loginForm:loginName')) {
-    return { ok: false, error: 'PACER login returned the login page — credentials may be wrong, or PACER is requiring CAPTCHA/MFA. Log in manually at pacer.uscourts.gov to verify.' };
+  // 2. PACER AJAX success: body contains a redirect URL in XML (most definitive signal)
+  //    Format: <redirect url="https://pcl.uscourts.gov/..." />
+  if (loginBody.includes('<redirect url=') || loginBody.includes('redirect url=')) {
+    return { ok: true };
   }
 
-  // PACER NextGen sets PacerSession or NextGenCSO on successful login
-  // NOTE: do NOT check JSESSIONID — it is set on the initial GET (before login)
+  // 3. PACER NextGen sets PacerSession or NextGenCSO on successful login
+  //    NOTE: do NOT check JSESSIONID — it is set on the initial GET before login
   if (jar.has('PacerSession') || jar.has('NextGenCSO')) {
     return { ok: true };
   }
 
-  // PACER AJAX login returns XML with a redirect location in the body on success
+  // 4. Other body signals of a successful auth
   if (loginBody.includes('window.location') || loginBody.includes('MyAccount') ||
       loginBody.includes('pacer-landing') || loginBody.includes('logout')) {
     return { ok: true };
   }
 
-  // If the POST redirected us to somewhere other than the login page, treat as success
-  if (loginResp.url && !loginResp.url.includes('login.jsf') && loginResp.url.includes('uscourts.gov')) {
-    return { ok: true };
+  // 5. Login form still present in body = auth failed silently
+  //    NOTE: do NOT check loginResp.url for 'login.jsf' — AJAX POSTs always
+  //    respond from the login.jsf endpoint URL regardless of auth success/failure.
+  if (loginBody.includes('loginForm:loginName') || loginBody.includes('name="loginForm:password"')) {
+    return { ok: false, error: 'PACER login returned the login page — credentials may be wrong, or PACER is requiring CAPTCHA/MFA. Log in manually at pacer.uscourts.gov to verify.' };
   }
 
   return { ok: false, error: 'PACER login did not return a recognized success indicator. Cookies received: ' + jar.toString().slice(0, 80) + '. Check credentials at pacer.uscourts.gov.' };
