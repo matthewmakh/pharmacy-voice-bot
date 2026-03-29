@@ -17,8 +17,25 @@
 import { solveRecaptchaV2WithId, reportIncorrect, CaptchaError } from './twoCaptcha';
 
 const PORTAL_BASE  = 'https://appext20.dos.ny.gov';
-const SEARCH_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_search_main`;
+// UCC portal path — try known variants in case the path changed
+const SEARCH_PAGE_CANDIDATES = [
+  process.env.UCC_PORTAL_URL,
+  `${PORTAL_BASE}/pls/ucc_public/web_search_main`,
+  `${PORTAL_BASE}/pls/ucc_public/web_uccart`,
+  `${PORTAL_BASE}/ucc_public/web_search_main`,
+].filter(Boolean) as string[];
 const DETAIL_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_detail`;
+
+async function resolveSearchPage(baseHeaders: Record<string, string>): Promise<string | null> {
+  for (const url of SEARCH_PAGE_CANDIDATES) {
+    try {
+      const resp = await fetch(url, { headers: baseHeaders, signal: AbortSignal.timeout(15_000) });
+      // 200 or 302 redirect both mean the portal is there
+      if (resp.status < 400) return url;
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -345,7 +362,17 @@ export async function lookupNYSUCC(debtorName: string): Promise<UCCResult> {
 
   const jar = new CookieJar();
 
-  // ── Step 1: Load the search page ──────────────────────────────────────────
+  // ── Step 1: Resolve working portal URL + load the search page ────────────
+  const SEARCH_PAGE = await resolveSearchPage(BASE_HEADERS);
+  if (!SEARCH_PAGE) {
+    return {
+      found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName,
+      note: '',
+      error: 'NYS UCC portal is unreachable at all known URLs.',
+      scraperNote: `Set UCC_PORTAL_URL env var to override. Known paths tried: ${SEARCH_PAGE_CANDIDATES.join(', ')}`,
+    };
+  }
+
   let pageHtml: string;
   try {
     const pageResp = await fetch(SEARCH_PAGE, {

@@ -175,15 +175,8 @@ export async function lookupNYSEntity(entityName: string): Promise<NYSEntityResu
     searchValue: searchedName,
     searchByTypeIndicator: 'EntityName',
     searchExpressionIndicator: 'BeginsWith',
-    entityStatusIndicator: 'AllStatuses',
-    entityTypeIndicator: [
-      'Corporation',
-      'LimitedLiabilityCompany',
-      'LimitedPartnership',
-      'LimitedLiabilityPartnership',
-      'GeneralPartnership',
-      'SoleProprietorship',
-    ],
+    entityStatusIndicator: 'All',
+    entityTypeIndicator: [] as string[],  // empty = all types
     listPaginationInfo: { listStartRecord: 1, listEndRecord: 50 },
   };
 

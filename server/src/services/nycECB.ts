@@ -43,8 +43,28 @@ export interface ECBResult {
   error?: string;
 }
 
-const DATASET_URL = 'https://data.cityofnewyork.us/resource/6bgk-in4p.json';
-const DATA_LIMIT  = 200;
+// Dataset IDs to try in order — NYC Open Data migrates datasets occasionally.
+// Override with ECB_DATASET_ID env var if the active ID changes again.
+const DATASET_ID_CANDIDATES = [
+  process.env.ECB_DATASET_ID,  // env override first
+  '6bgk-in4p',  // OATH ECB Violations (original)
+  'nhy8-p4td',  // OATH Summons (alternative)
+  'jz4z-kudi',  // OATH Hearing Dispositions (alternative)
+  'erm5-jryu',  // ECB Violations (another known ID)
+].filter(Boolean) as string[];
+
+const DATA_LIMIT = 200;
+
+async function resolveDatasetUrl(headers: Record<string, string>): Promise<string | null> {
+  for (const id of DATASET_ID_CANDIDATES) {
+    const url = `https://data.cityofnewyork.us/resource/${id}.json`;
+    try {
+      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(8_000) });
+      if (resp.ok) return url;
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 function parseAmount(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
@@ -62,6 +82,12 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
   }
 
   try {
+    // ── Step 0: find a working dataset URL ───────────────────────────────────
+    const DATASET_URL = await resolveDatasetUrl(headers);
+    if (!DATASET_URL) {
+      return noResult(searchedName, 'ECB dataset not found — all known NYC Open Data dataset IDs returned errors. Set ECB_DATASET_ID env var with the current ID from data.cityofnewyork.us.');
+    }
+
     // ── Step 1: get real count ───────────────────────────────────────────────
     const countWhere  = `upper(respondent_name)='${cleanName}'`;
     const countUrl    = `${DATASET_URL}?$where=${encodeURIComponent(countWhere)}&$select=count(*)`;

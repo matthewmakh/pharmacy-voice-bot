@@ -53,12 +53,12 @@ function record(name: string, status: Status, detail: string) {
 
 // ─── Test subjects ────────────────────────────────────────────────────────────
 const SUBJECTS = {
-  acris:  'TRUMP',                  // Extensive NYC property history
-  ecb:    'MCDONALD',              // Chain with ECB violations on record
-  entity: 'GOOGLE LLC',            // Registered in NY as a foreign LLC
-  ucc:    'GOOGLE LLC',            // Has UCC financing filings
-  courts: 'TRUMP',                 // Frequently named in NYC civil court
-  pacer:  'SEARS ROEBUCK AND CO',  // Filed Ch.11 SDNY 2018 — confirmed in PACER
+  acris:  'CITIBANK NA',                  // Very common mortgage grantee in ACRIS
+  ecb:    'DUNKIN DONUTS',               // Large chain with many NYC ECB violations
+  entity: 'GOOGLE LLC',                  // Registered in NY as a foreign LLC
+  ucc:    'GOOGLE LLC',                  // Has UCC financing filings in NYS
+  courts: 'CITIBANK NA',                 // Frequently appears in NYC civil court
+  pacer:  'SEARS HOLDINGS CORPORATION',  // Filed Ch.11 SDNY Oct 2018 — confirmed in PACER
 };
 
 // ─── Per-scraper timeout wrapper ──────────────────────────────────────────────
@@ -191,7 +191,8 @@ async function testPACER() {
       return;
     }
     if (!r.found) {
-      record('PACER', 'warn', `No cases — Sears Ch.11 SDNY 2018 expected. Check PCL form field names in pacer.ts → searchPCL()`);
+      record('PACER', 'warn', `No cases found for "${SUBJECTS.pacer}". If auth succeeded, PCL form field names may be wrong. Check pacer.ts → searchPCL() and compare against live PCL form at pcl.uscourts.gov`);
+      info(`Note: ${r.note || '(no note)'}`);
       return;
     }
     record('PACER', 'pass', `${r.totalCases} cases · ${r.activeCases} active stay`);
