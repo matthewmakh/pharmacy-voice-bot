@@ -47,12 +47,17 @@ export interface ECBResult {
 // Override with ECB_DATASET_ID env var if the active ID changes again.
 const DATASET_ID_CANDIDATES = [
   process.env.ECB_DATASET_ID,  // env override first
-  '6bgk-in4p',  // OATH ECB Violations (original)
-  'nhy8-p4td',  // OATH Summons
-  'jz4z-kudi',  // OATH Hearing Dispositions
-  'erm5-jryu',  // ECB Violations (alt)
-  'twhy-dzjp',  // ECB Violations (alt)
-  'p937-wjvj',  // ECB Violations (alt)
+  'jz4z-kudi',  // OATH Hearings Division Case Status (canonical, updated Jan 2026)
+  'rjte-hkhv',  // Oath ECB Hearings (filtered view)
+  'jtm6-3c6z',  // ECB OATH Status (filtered view)
+  'furn-j2xt',  // NYC ECB Violations
+  'a3tu-zh2h',  // ECB general
+  '6bgk-3dad',  // DOB ECB Violations
+  'skr7-cxt3',  // DEP ECB Violations
+  '6bgk-in4p',  // original (now defunct)
+  'nhy8-p4td',
+  'erm5-jryu',
+  'twhy-dzjp',
 ].filter(Boolean) as string[];
 
 const DATA_LIMIT = 200;
@@ -198,12 +203,12 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
       // The dataset uses different field names across versions —
       // handle both current and legacy names
       const outstanding = parseAmount(r['outstanding_amount'] ?? r['balance_due'] ?? r['amount_due']);
-      const imposed     = parseAmount(r['imposed_amount'] ?? r['total_imposed'] ?? r['fine_amount']);
-      const status      = String(r['hearing_status'] ?? r['case_status'] ?? r['status'] ?? '').trim();
-      const vtype       = String(r['violation_type'] ?? r['violation_description'] ?? r['infraction_code'] ?? '').trim();
+      const imposed     = parseAmount(r['imposed_amount'] ?? r['penalty_imposed'] ?? r['total_imposed'] ?? r['fine_amount']);
+      const status      = String(r['hearing_status'] ?? r['decision'] ?? r['case_status'] ?? r['status'] ?? '').trim();
+      const vtype       = String(r['violation_type'] ?? r['violation_details'] ?? r['violation_description'] ?? r['infraction_code'] ?? '').trim();
       const boro        = String(r['boro'] ?? r['borough'] ?? r['borocode'] ?? '').trim() || null;
       const issueDate   = String(r['issue_date'] ?? r['violation_date'] ?? r['hearing_date'] ?? '').trim() || null;
-      const respName    = String(r['respondent_name'] ?? '').trim();
+      const respName    = String(r['respondent_name'] ?? r['respondent'] ?? '').trim();
 
       return {
         respondentName: respName,
