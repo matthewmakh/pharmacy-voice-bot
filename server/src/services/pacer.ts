@@ -93,6 +93,8 @@ class CookieJar {
   }
 
   has(name: string): boolean { return this.map.has(name); }
+  /** Returns the cookie value, or empty string if not set */
+  get(name: string): string { return this.map.get(name) ?? ''; }
 }
 
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
@@ -128,10 +130,12 @@ function extractInput(html: string, nameContains: string): string {
   return valueM?.[1] ?? '';
 }
 
-/** Extract a JSF ViewState token */
+/** Extract a JSF/Jakarta Faces ViewState token */
 function extractViewState(html: string): string {
-  // JSF ViewState can be in various forms
+  // JSF renamed from javax → jakarta in Jakarta EE 9+; handle both
   const patterns = [
+    /name=["']jakarta\.faces\.ViewState["'][^>]*value=["']([^"']+)["']/i,
+    /value=["']([^"']+)["'][^>]*name=["']jakarta\.faces\.ViewState["']/i,
     /name=["']javax\.faces\.ViewState["'][^>]*value=["']([^"']+)["']/i,
     /value=["']([^"']+)["'][^>]*name=["']javax\.faces\.ViewState["']/i,
     /id=["']j_id[^"']*["'][^>]*value=["']([^"']+)["'][^>]*name=["']javax\.faces\.ViewState["']/i,
@@ -165,19 +169,27 @@ async function authenticate(jar: CookieJar): Promise<{ ok: boolean; error?: stri
   const hiddens   = extractHiddenInputs(pageHtml);
 
   // Step 2: POST credentials
+  // PACER uses Jakarta Faces (jakarta.* namespace) — send both for compatibility
   const loginForm = new URLSearchParams({
     ...hiddens,
     'loginForm:loginName': username,
     'loginForm:password':  password,
     'loginForm:fbtnLogin': 'Login',
     'loginForm:clientCode': '',
-    'javax.faces.ViewState': viewState,
-    'javax.faces.source':    'loginForm:fbtnLogin',
-    'javax.faces.partial.event': 'click',
-    'javax.faces.partial.execute': '@all',
-    'javax.faces.partial.render':  '@all',
-    'javax.faces.behavior.event':  'action',
-    'javax.faces.partial.ajax':    'true',
+    'jakarta.faces.ViewState': viewState,
+    'javax.faces.ViewState':   viewState,  // legacy fallback
+    'jakarta.faces.source':    'loginForm:fbtnLogin',
+    'javax.faces.source':      'loginForm:fbtnLogin',
+    'jakarta.faces.partial.event': 'click',
+    'javax.faces.partial.event':   'click',
+    'jakarta.faces.partial.execute': '@all',
+    'javax.faces.partial.execute':   '@all',
+    'jakarta.faces.partial.render':  '@all',
+    'javax.faces.partial.render':    '@all',
+    'jakarta.faces.behavior.event':  'action',
+    'javax.faces.behavior.event':    'action',
+    'jakarta.faces.partial.ajax':    'true',
+    'javax.faces.partial.ajax':      'true',
   });
 
   const loginResp = await fetch(LOGIN_URL, {
@@ -214,8 +226,11 @@ async function authenticate(jar: CookieJar): Promise<{ ok: boolean; error?: stri
   }
 
   // 3. PACER NextGen sets PacerSession or NextGenCSO on successful login
-  //    NOTE: do NOT check JSESSIONID — it is set on the initial GET before login
-  if (jar.has('PacerSession') || jar.has('NextGenCSO')) {
+  //    NOTE: do NOT check JSESSIONID — it is set on the initial GET before login.
+  //    Also do NOT trigger on NextGenCSO='' (empty) — the server sends that as a
+  //    placeholder on the initial GET page load before any authentication occurs.
+  if ((jar.has('PacerSession') && jar.get('PacerSession')) ||
+      (jar.has('NextGenCSO') && jar.get('NextGenCSO'))) {
     return { ok: true };
   }
 

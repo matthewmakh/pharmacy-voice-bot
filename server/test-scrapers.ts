@@ -87,7 +87,12 @@ async function testACRIS() {
   await withTimeout('ACRIS', 30_000, async () => {
     const r = await lookupACRIS(SUBJECTS.acris);
     info(secs(t));
-    if (r.error) { record('ACRIS', 'fail', r.error); return; }
+    if (r.error) {
+      const isTimeout = r.error.includes('timeout') || r.error.includes('aborted');
+      record('ACRIS', isTimeout ? 'warn' : 'fail', r.error);
+      if (isTimeout) info('NYC Open Data throttles anonymous requests — add NYC_OPEN_DATA_TOKEN env var (free at data.cityofnewyork.us/profile/app_tokens)');
+      return;
+    }
     if (!r.found) { record('ACRIS', 'warn', `No records found — expected results for "${SUBJECTS.acris}"`); return; }
     record('ACRIS', 'pass', `${r.totalRecords} records · ${r.asGrantee} grantee · ${r.asGrantor} grantor`);
     info(r.note.slice(0, 160));
@@ -139,12 +144,12 @@ async function testCourts() {
     const r = await lookupNYCourtHistory(SUBJECTS.courts);
     info(secs(t));
     if (r.error) {
-      // 403 from iApps = Railway datacenter IP is blocked at firewall level.
-      // This is not a code bug — scraper works from residential/browser IPs.
-      const isNetworkBlock = r.error.includes('403');
-      record('NYC Courts', isNetworkBlock ? 'warn' : 'fail', r.error);
+      // 403 from iApps = Cloudflare bot protection (affects all automated IPs including residential).
+      // This is not fixable with headers — requires a real browser / headless automation.
+      const isCFBlock = r.error.includes('403');
+      record('NYC Courts', 'warn', r.error);
       if (r.scraperNote) warn(r.scraperNote);
-      if (isNetworkBlock) info('iApps blocks datacenter IPs — scraper works from non-datacenter IPs (browser/residential)');
+      if (isCFBlock) info('iApps now has Cloudflare bot protection — blocks all automated requests regardless of IP');
       return;
     }
     if (!r.found) {

@@ -23,10 +23,12 @@ const SEARCH_PAGE_CANDIDATES = [
   `${PORTAL_BASE}/pls/ucc_public/web_search_main`,
   `${PORTAL_BASE}/pls/ucc_public/web_uccart`,
   `${PORTAL_BASE}/ucc_public/web_search_main`,
-  // apps.dos.ny.gov is reachable from Railway (entity search uses it successfully)
+  // www.dos.ny.gov 301-redirects to dos.ny.gov — follow both http and https
+  'https://dos.ny.gov/corps/ucc_public/web_search_main',
+  'http://dos.ny.gov/corps/ucc_public/web_search_main',
+  'https://www.dos.ny.gov/corps/ucc_public/web_search_main',
   'https://apps.dos.ny.gov/pls/ucc_public/web_search_main',
   'https://apps.dos.ny.gov/uccsearch/web_search_main',
-  'https://www.dos.ny.gov/corps/ucc_public/web_search_main',
 ].filter(Boolean) as string[];
 const DETAIL_PAGE  = `${PORTAL_BASE}/pls/ucc_public/web_detail`;
 

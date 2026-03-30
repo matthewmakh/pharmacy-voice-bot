@@ -57,33 +57,62 @@ const DATASET_ID_CANDIDATES = [
 
 const DATA_LIMIT = 200;
 
+/**
+ * Validate that a dataset URL actually contains ECB/OATH violation data.
+ * Returns false if the dataset looks like a completely different dataset
+ * (e.g. DOB building inspections mistakenly returned by catalog search).
+ */
+async function isECBDataset(url: string, headers: Record<string, string>): Promise<boolean> {
+  try {
+    const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
+    if (!resp.ok) return false;
+    const records = await resp.json() as Record<string, unknown>[];
+    if (!records.length) return true; // can't validate empty dataset, accept it
+    const keys = Object.keys(records[0]).map(k => k.toLowerCase());
+    // Must have BOTH a respondent/name field AND a violation/hearing field
+    const hasName = keys.some(k => k.includes('respondent') || k === 'business_name');
+    const hasViolation = keys.some(k =>
+      k.includes('violation') || k.includes('hearing') || k.includes('imposed') || k.includes('penalty')
+    );
+    return hasName && hasViolation;
+  } catch {
+    return false;
+  }
+}
+
 /** Try each known dataset ID. If all fail, query the Socrata catalog to find the current one. */
 async function resolveDatasetUrl(headers: Record<string, string>): Promise<string | null> {
-  // 1. Try known IDs first (fast — 404 if wrong, 200 if right)
+  // 1. Try known IDs first — validate each is actually ECB data before accepting
   for (const id of DATASET_ID_CANDIDATES) {
     const url = `https://data.cityofnewyork.us/resource/${id}.json`;
     try {
       const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-      if (resp.ok) return url;
+      if (resp.ok && await isECBDataset(url, headers)) return url;
     } catch { /* try next */ }
   }
 
-  // 2. Fall back to Socrata catalog search — finds current dataset ID dynamically
-  try {
-    const catalogUrl = 'https://data.cityofnewyork.us/api/catalog/v1?q=OATH+ECB+violations&limit=10';
-    const catResp = await fetch(catalogUrl, { headers, signal: AbortSignal.timeout(10_000) });
-    if (catResp.ok) {
+  // 2. Fall back to Socrata catalog search — try several query terms
+  const catalogQueries = [
+    'OATH+ECB+violation+respondent',
+    'OATH+hearing+violation+imposed',
+    'ECB+respondent+hearing+status',
+  ];
+  for (const q of catalogQueries) {
+    try {
+      const catalogUrl = `https://data.cityofnewyork.us/api/catalog/v1?q=${q}&limit=10`;
+      const catResp = await fetch(catalogUrl, { headers, signal: AbortSignal.timeout(10_000) });
+      if (!catResp.ok) continue;
       const cat = await catResp.json() as { results?: Array<{ resource: { id: string; name: string } }> };
       for (const result of cat.results ?? []) {
         const name = (result.resource?.name ?? '').toLowerCase();
         if (name.includes('ecb') || name.includes('oath') || name.includes('violation')) {
           const url = `https://data.cityofnewyork.us/resource/${result.resource.id}.json`;
           const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-          if (checkResp.ok) return url;
+          if (checkResp.ok && await isECBDataset(url, headers)) return url;
         }
       }
-    }
-  } catch { /* catalog search failed */ }
+    } catch { /* try next query */ }
+  }
 
   return null;
 }
