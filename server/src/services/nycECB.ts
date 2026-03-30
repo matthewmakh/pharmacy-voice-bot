@@ -62,41 +62,40 @@ const DATASET_ID_CANDIDATES = [
 
 const DATA_LIMIT = 200;
 
-/**
- * Validate that a dataset URL actually contains ECB/OATH violation data.
- * Returns false if the dataset looks like a completely different dataset
- * (e.g. DOB building inspections mistakenly returned by catalog search).
- */
-async function isECBDataset(url: string, headers: Record<string, string>): Promise<boolean> {
-  try {
-    const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-    if (!resp.ok) return false;
-    const records = await resp.json() as Record<string, unknown>[];
-    if (!records.length) return true; // can't validate empty dataset, accept it
-    const keys = Object.keys(records[0]).map(k => k.toLowerCase());
-    // Must have BOTH a respondent/name field AND a violation/hearing field
-    const hasName = keys.some(k => k.includes('respondent') || k === 'business_name');
-    const hasViolation = keys.some(k =>
-      k.includes('violation') || k.includes('hearing') || k.includes('imposed') || k.includes('penalty')
-    );
-    return hasName && hasViolation;
-  } catch {
-    return false;
-  }
+/** Check if field keys look like ECB/OATH violation data; return the respondent name field if valid */
+function detectECBNameField(keys: string[]): string | null {
+  const lower = keys.map(k => k.toLowerCase());
+  const hasViolation = lower.some(k =>
+    k.includes('violation') || k.includes('hearing') || k.includes('imposed') || k.includes('penalty')
+  );
+  if (!hasViolation) return null;
+  // Return the actual respondent field name (preserve original casing)
+  const nameKey = keys.find(k =>
+    k === 'respondent_name' || k === 'respondent' || k.includes('respondent') || k === 'business_name'
+  );
+  return nameKey ?? null;
 }
 
-/** Try each known dataset ID. If all fail, query the Socrata catalog to find the current one. */
-async function resolveDatasetUrl(headers: Record<string, string>): Promise<string | null> {
-  // 1. Try known IDs first — validate each is actually ECB data before accepting
+/**
+ * Try each known dataset ID with a single fetch per candidate (probe + validate in one call).
+ * Returns { url, nameField } so the caller doesn't need an extra round-trip to detect the field name.
+ * Falls back to Socrata catalog search if all known IDs fail.
+ */
+async function resolveDatasetUrl(headers: Record<string, string>): Promise<{ url: string; nameField: string } | null> {
+  // 1. Try known IDs — one fetch per candidate (status check + field validation together)
   for (const id of DATASET_ID_CANDIDATES) {
     const url = `https://data.cityofnewyork.us/resource/${id}.json`;
     try {
-      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-      if (resp.ok && await isECBDataset(url, headers)) return url;
+      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(8_000) });
+      if (!resp.ok) continue;
+      const records = await resp.json() as Record<string, unknown>[];
+      if (!records.length) continue; // empty — skip to avoid false positives
+      const nameField = detectECBNameField(Object.keys(records[0]));
+      if (nameField) return { url, nameField };
     } catch { /* try next */ }
   }
 
-  // 2. Fall back to Socrata catalog search — try several query terms
+  // 2. Fall back to Socrata catalog search
   const catalogQueries = [
     'OATH+ECB+violation+respondent',
     'OATH+hearing+violation+imposed',
@@ -112,8 +111,14 @@ async function resolveDatasetUrl(headers: Record<string, string>): Promise<strin
         const name = (result.resource?.name ?? '').toLowerCase();
         if (name.includes('ecb') || name.includes('oath') || name.includes('violation')) {
           const url = `https://data.cityofnewyork.us/resource/${result.resource.id}.json`;
-          const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-          if (checkResp.ok && await isECBDataset(url, headers)) return url;
+          try {
+            const checkResp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(8_000) });
+            if (!checkResp.ok) continue;
+            const records = await checkResp.json() as Record<string, unknown>[];
+            if (!records.length) continue;
+            const nameField = detectECBNameField(Object.keys(records[0]));
+            if (nameField) return { url, nameField };
+          } catch { continue; }
         }
       }
     } catch { /* try next query */ }
@@ -122,27 +127,6 @@ async function resolveDatasetUrl(headers: Record<string, string>): Promise<strin
   return null;
 }
 
-/**
- * Fetch one record from the dataset to detect which field holds the respondent name.
- * Field name varies: respondent_name, respondent, business_name, name, etc.
- */
-async function detectRespondentField(datasetUrl: string, headers: Record<string, string>): Promise<string> {
-  const fallback = 'respondent_name';
-  try {
-    const resp = await fetch(`${datasetUrl}?$limit=1`, { headers, signal: AbortSignal.timeout(6_000) });
-    if (!resp.ok) return fallback;
-    const records = await resp.json() as Record<string, unknown>[];
-    if (!records.length) return fallback;
-    const keys = Object.keys(records[0]);
-    const nameKey = keys.find(k =>
-      k === 'respondent_name' || k === 'respondent' ||
-      k.includes('respondent') || k === 'business_name' || k === 'name'
-    );
-    return nameKey ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function parseAmount(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
@@ -160,17 +144,17 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
   }
 
   try {
-    // ── Step 0: find a working dataset URL ───────────────────────────────────
-    const DATASET_URL = await resolveDatasetUrl(headers);
-    if (!DATASET_URL) {
+    // ── Step 0: find a working dataset URL + detect respondent field (one fetch) ─
+    const resolved = await resolveDatasetUrl(headers);
+    if (!resolved) {
       return noResult(searchedName, 'ECB dataset not found — all known NYC Open Data dataset IDs returned errors. Set ECB_DATASET_ID env var with the current ID from data.cityofnewyork.us.');
     }
+    const { url: DATASET_URL, nameField } = resolved;
 
-    // ── Step 1: detect respondent field name + get real count ────────────────
-    const nameField   = await detectRespondentField(DATASET_URL, headers);
+    // ── Step 1: get real count ───────────────────────────────────────────────
     const countWhere  = `upper(${nameField})='${cleanName}'`;
     const countUrl    = `${DATASET_URL}?$where=${encodeURIComponent(countWhere)}&$select=count(*)`;
-    const countResp   = await fetch(countUrl, { headers, signal: AbortSignal.timeout(12_000) });
+    const countResp   = await fetch(countUrl, { headers, signal: AbortSignal.timeout(20_000) });
     if (!countResp.ok) {
       return noResult(searchedName, `ECB API returned ${countResp.status}`);
     }

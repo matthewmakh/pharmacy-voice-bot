@@ -32,7 +32,7 @@ export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
   try {
     // ── Step 1: get accurate total count ──────────────────────────────────────
     const countUrl = `${baseUrl}?$where=${encodeURIComponent(whereClause)}&$select=count(*)`;
-    const countResp = await fetch(countUrl, { headers, signal: AbortSignal.timeout(12_000) });
+    const countResp = await fetch(countUrl, { headers, signal: AbortSignal.timeout(25_000) });
     if (!countResp.ok) {
       return noResult(partyName, `ACRIS API returned ${countResp.status}`);
     }
@@ -49,7 +49,7 @@ export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
 
     // ── Step 2: fetch records (capped at DATA_LIMIT, only columns we need) ───
     const dataUrl = `${baseUrl}?$where=${encodeURIComponent(whereClause)}&$select=party_type&$limit=${DATA_LIMIT}`;
-    const dataResp = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(15_000) });
+    const dataResp = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(25_000) });
     if (!dataResp.ok) {
       return noResult(partyName, `ACRIS data fetch returned ${dataResp.status}`);
     }

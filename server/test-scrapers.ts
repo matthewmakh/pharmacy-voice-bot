@@ -104,7 +104,7 @@ async function testECB() {
   head('ECB / OATH Violations', SUBJECTS.ecb);
   info('querying NYC Open Data...');
   const t = Date.now();
-  await withTimeout('ECB', 30_000, async () => {
+  await withTimeout('ECB', 60_000, async () => {
     const r = await lookupNYCECB(SUBJECTS.ecb);
     info(secs(t));
     if (r.error) { record('ECB', 'fail', r.error); return; }
