@@ -187,6 +187,62 @@ function RotatingFact({
   );
 }
 
+// ─── openHtmlInTab ────────────────────────────────────────────────────────────
+// Opens a generated HTML document in a new browser tab, with CPLR print styles.
+// Uses a blob URL — no server roundtrip, no Puppeteer required.
+function openHtmlInTab(html: string, title: string) {
+  const isFullDoc = /<html/i.test(html);
+  const wrapped = isFullDoc
+    ? html.replace(/<\/head>/i, `<style>body{margin:1in;max-width:8.5in;font-family:'Times New Roman',Times,serif;}</style></head>`)
+    : `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>
+        body{font-family:'Times New Roman',Times,serif;font-size:12pt;line-height:2;margin:1in;color:#000;max-width:8.5in;}
+        h1,h2,h3,h4{font-family:'Times New Roman',Times,serif;}
+        p{margin:0 0 0.5em;}a{color:#000;text-decoration:none;}
+        table{border-collapse:collapse;width:100%;}td,th{border:1px solid #000;padding:4px 8px;vertical-align:top;}
+        strong,b{font-weight:bold;}
+      </style></head><body>${html}</body></html>`;
+  const blob = new Blob([wrapped], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// ─── InlineProgress ────────────────────────────────────────────────────────────
+// Compact timed progress bar for use inside small card widgets.
+function InlineProgress({ startedAt, estimatedSeconds, label }: {
+  startedAt: Date;
+  estimatedSeconds: number;
+  label: string;
+}) {
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startedAt.getTime()) / 1000));
+  React.useEffect(() => {
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAt.getTime()) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const progress = Math.min(95, (elapsed / estimatedSeconds) * 100);
+  return (
+    <div className="space-y-1.5 py-1">
+      <div className="flex items-center justify-between text-xs text-slate-500">
+        <span className="flex items-center gap-1.5">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+          {label}
+        </span>
+        <span className="tabular-nums">
+          {elapsed < estimatedSeconds ? `~${Math.max(0, estimatedSeconds - elapsed)}s` : 'almost done…'}
+        </span>
+      </div>
+      <div className="w-full bg-slate-100 rounded-full h-1">
+        <div
+          className="bg-purple-400 h-1 rounded-full transition-all duration-1000"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── SOL Calculator ────────────────────────────────────────────────────────────
 
 function computeSOL(paymentDueDate: string | null | undefined): {
@@ -1752,13 +1808,17 @@ function StrategyTab({ caseData }: { caseData: Case }) {
 function LetterTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const generateStartRef = React.useRef<Date | null>(null);
 
   const generateMutation = useMutation({
-    mutationFn: () => generateLetter(caseData.id),
+    mutationFn: () => { generateStartRef.current = new Date(); return generateLetter(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const isGenerating = caseData.status === 'GENERATING' || generateMutation.isPending;
+  const generateStartedAt: Date | undefined = isGenerating
+    ? caseData.status === 'GENERATING' ? new Date(caseData.updatedAt) : (generateStartRef.current ?? undefined)
+    : undefined;
 
   const handleCopy = () => {
     if (caseData.demandLetter) {
@@ -1801,7 +1861,7 @@ function LetterTab({ caseData }: { caseData: Case }) {
   }
 
   if (isGenerating) {
-    return <RotatingFact label="Generating demand letter..." sublabel="This usually takes 20–40 seconds." />;
+    return <RotatingFact label="Generating demand letter..." startedAt={generateStartedAt} estimatedSeconds={25} />;
   }
 
   return (
@@ -1817,6 +1877,12 @@ function LetterTab({ caseData }: { caseData: Case }) {
         ) : (
           <span className="text-xs text-slate-400">No debtor email on file — add one in Overview to enable email.</span>
         )}
+        <button
+          onClick={() => openHtmlInTab(caseData.demandLetterHtml || '', 'Demand Letter')}
+          className="btn-secondary text-sm flex items-center gap-2"
+        >
+          <Eye className="w-4 h-4" /> View
+        </button>
         <a
           href={getPdfDownloadUrl(caseData.id, 'demand-letter')}
           download="demand-letter.pdf"
@@ -1859,33 +1925,40 @@ function EscalationTab({ caseData }: { caseData: Case }) {
     ? 'NYC Civil Court — Pro Se Summons & Complaint'
     : 'Supreme Court — Summons with Notice';
 
+  const finalNoticeStartRef = React.useRef<Date | null>(null);
+  const courtFormStartRef = React.useRef<Date | null>(null);
+  const defaultJudgmentStartRef = React.useRef<Date | null>(null);
+  const affidavitStartRef = React.useRef<Date | null>(null);
+  const settlementStartRef = React.useRef<Date | null>(null);
+  const paymentPlanStartRef = React.useRef<Date | null>(null);
+
   const finalNoticeMutation = useMutation({
-    mutationFn: () => generateFinalNotice(caseData.id),
+    mutationFn: () => { finalNoticeStartRef.current = new Date(); return generateFinalNotice(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const courtFormMutation = useMutation({
-    mutationFn: () => generateCourtForm(caseData.id),
+    mutationFn: () => { courtFormStartRef.current = new Date(); return generateCourtForm(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const defaultJudgmentMutation = useMutation({
-    mutationFn: () => generateDefaultJudgment(caseData.id),
+    mutationFn: () => { defaultJudgmentStartRef.current = new Date(); return generateDefaultJudgment(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const affidavitMutation = useMutation({
-    mutationFn: () => generateAffidavitOfService(caseData.id),
+    mutationFn: () => { affidavitStartRef.current = new Date(); return generateAffidavitOfService(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const settlementMutation = useMutation({
-    mutationFn: () => generateSettlement(caseData.id),
+    mutationFn: () => { settlementStartRef.current = new Date(); return generateSettlement(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
   const paymentPlanMutation = useMutation({
-    mutationFn: () => generatePaymentPlan(caseData.id),
+    mutationFn: () => { paymentPlanStartRef.current = new Date(); return generatePaymentPlan(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
@@ -1948,7 +2021,7 @@ function EscalationTab({ caseData }: { caseData: Case }) {
         </h3>
         <p className="text-xs text-slate-500 mb-4">Send this before filing to give the debtor a final opportunity to pay and to document your escalation path.</p>
         {finalNoticeMutation.isPending ? (
-          <RotatingFact label="Generating pre-filing notice..." sublabel="This usually takes 15–25 seconds." />
+          <RotatingFact label="Generating pre-filing notice..." startedAt={finalNoticeStartRef.current ?? undefined} estimatedSeconds={20} />
         ) : caseData.finalNoticeHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3 flex-wrap">
@@ -1962,6 +2035,12 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               ) : (
                 <span className="text-xs text-slate-400">No debtor email on file.</span>
               )}
+              <button
+                onClick={() => openHtmlInTab(caseData.finalNoticeHtml || '', 'Pre-Filing Notice')}
+                className="btn-secondary text-sm flex items-center gap-2"
+              >
+                <Eye className="w-4 h-4" /> View
+              </button>
               <a
                 href={getPdfDownloadUrl(caseData.id, 'final-notice')}
                 download="final-notice.pdf"
@@ -2014,15 +2093,15 @@ function EscalationTab({ caseData }: { caseData: Case }) {
         </div>
 
         {courtFormMutation.isPending ? (
-          <RotatingFact label="Generating court form..." sublabel="Running generate → verify → correct pipeline. This takes 45–90 seconds." />
+          <RotatingFact label="Generating court form..." sublabel="Generate → verify → correct pipeline" startedAt={courtFormStartRef.current ?? undefined} estimatedSeconds={70} />
         ) : caseData.filingPacketHtml ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3 flex-wrap">
               <button
-                onClick={handlePrintCourtForm}
+                onClick={() => openHtmlInTab(caseData.filingPacketHtml || '', courtFormName)}
                 className="btn-secondary text-sm flex items-center gap-2"
               >
-                <FileText className="w-4 h-4" /> Print Form
+                <Eye className="w-4 h-4" /> View
               </button>
               <a
                 href={getPdfDownloadUrl(caseData.id, 'court-form')}
@@ -2229,10 +2308,16 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               Service has been initiated. Generate an Affidavit of Service template for your process server to complete and sign after serving the defendant.
             </p>
             {affidavitMutation.isPending ? (
-              <RotatingFact label="Generating affidavit of service..." sublabel="This takes 10–20 seconds." />
+              <RotatingFact label="Generating affidavit of service..." startedAt={affidavitStartRef.current ?? undefined} estimatedSeconds={15} />
             ) : caseData.affidavitOfServiceHtml ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={() => openHtmlInTab(caseData.affidavitOfServiceHtml || '', 'Affidavit of Service')}
+                    className="btn-secondary text-sm flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" /> View
+                  </button>
                   <a
                     href={getPdfDownloadUrl(caseData.id, 'affidavit-of-service')}
                     download="affidavit-of-service.pdf"
@@ -2302,10 +2387,16 @@ function EscalationTab({ caseData }: { caseData: Case }) {
                 The answer deadline has passed. If the defendant has not appeared or answered, you can move for a default judgment. Service was initiated on {fmtDate(svcDate)}; the 30-day answer deadline was {fmtDate(altDeadline)}.
               </p>
               {defaultJudgmentMutation.isPending ? (
-                <RotatingFact label="Generating default judgment motion..." sublabel="This usually takes 20–40 seconds." />
+                <RotatingFact label="Generating default judgment motion..." startedAt={defaultJudgmentStartRef.current ?? undefined} estimatedSeconds={30} />
               ) : caseData.defaultJudgmentHtml ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={() => openHtmlInTab(caseData.defaultJudgmentHtml || '', 'Default Judgment Motion')}
+                      className="btn-secondary text-sm flex items-center gap-2"
+                    >
+                      <Eye className="w-4 h-4" /> View
+                    </button>
                     <a
                       href={getPdfDownloadUrl(caseData.id, 'default-judgment')}
                       download="default-judgment-motion.pdf"
@@ -2349,10 +2440,13 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
               A binding agreement between both parties — includes settlement amount (to be negotiated), payment terms, mutual release, and default provisions.
             </p>
-            {settlementMutation.isPending ? (
-              <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Generating...</div>
+            {settlementMutation.isPending && settlementStartRef.current ? (
+              <InlineProgress startedAt={settlementStartRef.current} estimatedSeconds={15} label="Generating…" />
             ) : caseData.settlementHtml ? (
               <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => openHtmlInTab(caseData.settlementHtml || '', 'Stipulation of Settlement')} className="btn-secondary text-xs flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5" /> View
+                </button>
                 <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5" /> Download PDF
                 </a>
@@ -2369,10 +2463,13 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
               Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments. Resets the statute of limitations.
             </p>
-            {paymentPlanMutation.isPending ? (
-              <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Generating...</div>
+            {paymentPlanMutation.isPending && paymentPlanStartRef.current ? (
+              <InlineProgress startedAt={paymentPlanStartRef.current} estimatedSeconds={15} label="Generating…" />
             ) : caseData.paymentPlanHtml ? (
               <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => openHtmlInTab(caseData.paymentPlanHtml || '', 'Payment Plan Agreement')} className="btn-secondary text-xs flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5" /> View
+                </button>
                 <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5" /> Download PDF
                 </a>
