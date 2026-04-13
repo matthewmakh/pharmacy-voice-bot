@@ -1018,3 +1018,363 @@ Return ONLY valid JSON.`;
     };
   }
 }
+
+// ─── Strategy assessment with debtor research ──────────────────────────────────
+
+export interface StrategyAssessment {
+  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
+  reasoning: string;
+  keyFactors: string[];
+}
+
+/**
+ * Re-assess strategy using persisted debtor research results.
+ * Reasons like a collections attorney: bankruptcy → entity type → assets → history.
+ */
+export async function assessStrategyWithResearch(
+  caseData: Record<string, unknown>,
+  lookupResults: {
+    acris?: Record<string, unknown> | null;
+    courts?: Record<string, unknown> | null;
+    entity?: Record<string, unknown> | null;
+    ucc?: Record<string, unknown> | null;
+    ecb?: Record<string, unknown> | null;
+    pacer?: Record<string, unknown> | null;
+  }
+): Promise<StrategyAssessment> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const prompt = `You are a New York collections attorney advising a client on collection strategy. You have the case facts and the results of public records research on the debtor. Reason through this systematically and recommend the best strategy.
+
+TODAY: ${today}
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+
+DEBTOR RESEARCH RESULTS:
+${JSON.stringify(lookupResults, null, 2)}
+
+Reason through the following factors in this exact order:
+
+1. BANKRUPTCY (highest priority — stops everything)
+   - Check pacer result: if activeCases > 0 and automaticStayActive = true → strategy is irrelevant, flag this immediately in keyFactors
+   - If PACER not yet run, note this as a gap
+
+2. ENTITY TYPE (determines enforcement tools after judgment)
+   - LLC/Corp → no wage garnishment, only bank levy and property lien; getting money requires knowing their bank accounts
+   - Sole prop / individual → wage garnishment available (10% gross), bank levy, property lien — all tools
+   - Check entity result: does it confirm entity type? Does it conflict with what the case says?
+
+3. NYC PROPERTY (ACRIS)
+   - Property owner → judgment lien is a powerful post-judgment tool (prevents sale/refi); if acrisResult shows asGrantee > asGrantor → debtor likely owns NYC property
+   - More property → more aggressive strategy is justified
+   - No property → lien is not available; bank levy requires knowing the bank
+
+4. SENIOR CREDITORS (UCC)
+   - Active UCC filings from MCA (merchant cash advance) lenders or banks with blanket liens → your judgment will be behind them in priority
+   - Multiple active UCCs → debtor may be asset-stripped; be realistic about recovery
+   - No active UCCs → clean priority position after judgment
+
+5. COURT HISTORY
+   - 3+ prior cases as defendant → serial debtor, knows the system, likely to fight or default; escalate fast or cut losses
+   - Prior defaults unpaid → judgment-proof signals
+   - Prior judgments paid → can be collected from
+
+6. ECB VIOLATIONS
+   - High outstanding ECB balance (>$50k) → debtor who doesn't pay the city probably won't pay you either
+   - Zero balance → neutral signal
+
+7. CASE STRENGTH (from case data)
+   - Strong evidence + clear contract → support aggressive stance
+   - Weak evidence + ongoing relationship → support gradual approach
+
+Based on all of the above, recommend one of:
+- QUICK_ESCALATION: SOL pressure, strong evidence, good assets (property/bank), or serial debtor
+- STANDARD_RECOVERY: Typical case, some uncertainty, no urgent signals
+- GRADUAL_APPROACH: Active relationship, weak evidence, judgment-proof signals, or debtor showing some cooperation
+
+Return JSON:
+{
+  "strategy": "QUICK_ESCALATION" | "STANDARD_RECOVERY" | "GRADUAL_APPROACH",
+  "reasoning": "2-3 paragraph explanation of your analysis, written in plain English for a non-lawyer client. Explain what the research shows, what enforcement tools are available after judgment, and why this strategy fits.",
+  "keyFactors": ["bullet 1 — most important factor", "bullet 2", "bullet 3", "bullet 4 (if relevant)", "bullet 5 (if relevant)"]
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are a New York collections attorney. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as StrategyAssessment;
+  } catch {
+    return {
+      strategy: 'STANDARD_RECOVERY',
+      reasoning: 'Could not complete analysis. Please review research results manually and select a strategy.',
+      keyFactors: ['Analysis could not be completed — re-run or select strategy manually'],
+    };
+  }
+}
+
+// ─── New pre-trial documents ──────────────────────────────────────────────────
+
+/**
+ * Generate a blank Affidavit of Service template pre-filled with case parties.
+ * The process server fills in date/time/method blanks by hand.
+ */
+export async function generateAffidavitOfService(
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const prompt = `You are preparing an Affidavit of Service for a New York civil matter. This document is signed by the process server after they serve the summons, NOT by the plaintiff.
+
+TODAY'S DATE: ${today}
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+
+Generate a complete, properly formatted Affidavit of Service. The document must:
+
+1. CAPTION
+   - Full court caption: court name, county, plaintiff name(s), defendant name(s), index number line (leave blank as "Index No.: __________")
+
+2. AFFIDAVIT BODY (sworn statement by the process server — blanks intentional)
+   - "STATE OF NEW YORK )"
+   - "COUNTY OF _________ ) ss.:"
+   - "I, _____________________________, being duly sworn, depose and say:"
+   - "1. I am over 18 years of age, not a party to this action, and am a licensed process server in the State of New York (License No.: _______________)."
+   - "2. On _____________, 20____, at approximately _______ (AM/PM), I served the Summons [and Complaint] in the above-captioned action upon [defendant name from case data] at the following address: [debtorAddress from case data]."
+   - "3. I served the above-named defendant by the following method (check one):"
+     - "☐ Personal Service — I delivered the documents directly to the above-named defendant."
+     - "☐ Substituted Service — I delivered the documents to ___________________________, a person of suitable age and discretion who resides/works at the above address, and also mailed a copy to the defendant's last known address."
+     - "☐ Nail and Mail — After two (2) prior failed attempts on _____________ and _____________, I affixed the documents to the door of the above address and mailed copies to the defendant."
+   - "4. A description of the person served (if applicable): Sex: _______ Approximate Age: _______ Height: _______ Weight: _______ Hair Color: _______"
+   - "5. I declare under penalty of perjury that the foregoing is true and correct."
+
+3. SIGNATURE BLOCK
+   - "___________________________________"
+   - "Process Server's Signature"
+   - "Print Name: ___________________________"
+   - "License No.: __________________________"
+   - "Address: ______________________________"
+   - "Sworn to before me this ____ day of _____________, 20____"
+   - "___________________________________"
+   - "Notary Public"
+   - "My Commission Expires: ________________"
+
+CRITICAL RULES:
+- The blanks are intentional — this is a template for the process server to complete
+- Pre-fill ONLY: defendant name, defendant address, plaintiff name, and the current year where appropriate
+- Do NOT pre-fill: server name, date/time of service, method of service, or description of person served
+- Use the debtorAddress from case data as the service address
+
+Return JSON:
+{
+  "text": "plain text version",
+  "html": "HTML version — serif font, court-document style, max-width 750px, proper caption formatting, checkbox symbols for service method options"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 3072,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
+  } catch {
+    const text = content.text;
+    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
+  }
+}
+
+/**
+ * Generate a Stipulation of Settlement — signed by both parties to document any
+ * payment agreement reached before or after filing.
+ */
+export async function generateStipulationOfSettlement(
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const amountOwed = Number(caseData.amountOwed ?? 0);
+  const amountPaid = Number(caseData.amountPaid ?? 0);
+  const outstanding = amountOwed - amountPaid;
+
+  const prompt = `You are preparing a Stipulation of Settlement for a New York collections matter. This is a binding agreement between the parties to settle the dispute without (or in lieu of) further litigation.
+
+TODAY'S DATE: ${today}
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+Outstanding balance: $${outstanding.toFixed(2)}
+
+Generate a complete Stipulation of Settlement with these sections:
+
+1. CAPTION
+   If a court proceeding has been filed, include the court caption. Otherwise, use:
+   "SETTLEMENT AGREEMENT AND STIPULATION
+   Between: [Claimant/Business] ("Creditor") and [Debtor/Business] ("Debtor")"
+
+2. RECITALS
+   - Brief statement of the dispute: what was agreed, what was done, what is owed
+   - "WHEREAS, Creditor claims that Debtor owes the sum of $[amountOwed] for [serviceDescription]..."
+   - "WHEREAS, Debtor [acknowledges the debt / disputes the full amount (use acknowledgment unless case data indicates otherwise)]..."
+   - "WHEREAS, the parties desire to resolve this matter without further litigation..."
+
+3. SETTLEMENT TERMS
+   - Settlement Amount: $[leave as [SETTLEMENT AMOUNT — TO BE NEGOTIATED AND FILLED IN]] — do NOT use outstanding balance; the settlement amount is negotiated
+   - Payment Structure: provide two options as labeled alternatives:
+     Option A — Lump Sum: Full settlement amount due within 7 days of signing
+     Option B — Installments: [INSTALLMENT AMOUNT] on the [DAY] of each month, beginning [START DATE], until [SETTLEMENT AMOUNT] is paid in full
+   - Payment Method: specify wire transfer, certified check, or Zelle to [claimant's business name]
+   - Time is of the essence clause
+
+4. CONSEQUENCES OF DEFAULT
+   - "If Debtor fails to make any payment when due, Creditor may, upon [5] days written notice, declare the full original amount of $[amountOwed] immediately due and payable, less any amounts actually received."
+   - "Upon default, this Stipulation may be entered as a judgment without further notice or hearing."
+
+5. MUTUAL RELEASE
+   - Upon full payment, Creditor releases all claims arising from the underlying debt
+   - Debtor's acknowledgment of the debt is preserved (statute of limitations resets)
+
+6. GENERAL TERMS
+   - Governing law: State of New York
+   - If any provision is unenforceable, remainder survives
+   - This agreement constitutes the entire agreement between the parties
+
+7. SIGNATURE BLOCKS (both parties)
+   - Creditor: ___________________ (Signature), ___________________ (Print Name), Title: ___________________, Date: _______________
+   - Debtor: ___________________ (Signature), ___________________ (Print Name), Title: ___________________, Date: _______________
+   - "NOTARIZATION (recommended for enforcement):" with standard notary block for each party
+
+Include a header disclaimer: "⚠ DISCLAIMER: This Stipulation of Settlement was prepared from your case data. Have an attorney review before signing. The settlement amount must be negotiated and filled in before execution."
+
+Return JSON:
+{
+  "text": "plain text version",
+  "html": "HTML version — serif font, max-width 750px, professional legal document style, numbered paragraphs, clear section headers"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
+  } catch {
+    const text = content.text;
+    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
+  }
+}
+
+/**
+ * Generate a standalone Payment Plan Agreement — for installment arrangements
+ * made outside a formal settlement, or as an exhibit to one.
+ */
+export async function generatePaymentPlanAgreement(
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const amountOwed = Number(caseData.amountOwed ?? 0);
+  const amountPaid = Number(caseData.amountPaid ?? 0);
+  const outstanding = amountOwed - amountPaid;
+
+  const prompt = `You are preparing a Payment Plan Agreement for a New York B2B collections matter. The debtor has agreed (or is being asked) to pay the outstanding balance in installments.
+
+TODAY'S DATE: ${today}
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+Outstanding balance: $${outstanding.toFixed(2)}
+
+Generate a complete Payment Plan Agreement with these sections:
+
+1. HEADER
+   "PAYMENT PLAN AGREEMENT"
+   Between: [claimantBusiness or claimantName] ("Creditor") and [debtorBusiness or debtorName] ("Debtor")
+   Date: ${today}
+
+2. ACKNOWLEDGMENT OF DEBT
+   - "Debtor hereby acknowledges and confirms that as of ${today}, Debtor owes Creditor the sum of $${outstanding.toFixed(2)} (the 'Debt'), arising from [serviceDescription]."
+   - "This acknowledgment is intended to constitute a written acknowledgment of debt for purposes of the New York statute of limitations."
+
+3. PAYMENT SCHEDULE
+   - Total Amount: $${outstanding.toFixed(2)}
+   - Down Payment (if any): $[AMOUNT] due upon signing — leave this as a blank for the parties to fill in
+   - Installment Amount: $[INSTALLMENT AMOUNT] — leave as blank
+   - Frequency: ☐ Weekly  ☐ Bi-weekly  ☐ Monthly
+   - First Payment Due: [DATE] — leave as blank
+   - Subsequent Payments Due: The [DAY] of each [week/month] thereafter
+   - Final Payment Due: [FINAL DATE] — calculated from installments
+   - Payment Method: Wire transfer / ACH / certified check to [claimantBusiness] — include wire/payment instructions if known
+
+4. INTEREST
+   - No interest if all payments are made on time.
+   - If any payment is more than 5 days late, interest accrues at 9% per annum (New York statutory rate) on the remaining balance from the date of default.
+
+5. ACCELERATION CLAUSE
+   - "If Debtor fails to make any payment within [7] days of its due date, the entire unpaid balance shall immediately become due and payable without further notice."
+   - "Upon acceleration, Creditor may pursue all available legal remedies including judgment, bank levy, and property lien."
+
+6. DEFAULT AND REMEDIES
+   - Written notice of default will be sent to Debtor's address on file
+   - Debtor waives any right to cure after the second missed payment in a 12-month period
+
+7. GENERAL TERMS
+   - Governing law: State of New York
+   - This agreement does not waive Creditor's right to pursue full judgment if Debtor defaults
+   - Partial payments do not modify the total amount owed or constitute settlement unless so stated in writing signed by both parties
+
+8. SIGNATURE BLOCKS
+   Creditor: ___________________ (Signature), ___________________ (Print Name/Title), Date: _______________
+   Debtor: ___________________ (Signature), ___________________ (Print Name/Title), Date: _______________
+
+Include disclaimer: "⚠ DISCLAIMER: This Payment Plan Agreement was prepared from your case data. Fill in all blanks before signing. Have an attorney review if the amount is significant."
+
+Return JSON:
+{
+  "text": "plain text version",
+  "html": "HTML version — serif font, max-width 750px, numbered paragraphs, checkbox symbols for frequency selection"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 3072,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
+  } catch {
+    const text = content.text;
+    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
+  }
+}

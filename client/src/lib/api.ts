@@ -1,6 +1,12 @@
 import axios from 'axios';
 import type { Case, CaseListItem, CreateCaseInput, Strategy } from '../types';
 
+export interface StrategyAssessment {
+  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
+  reasoning: string;
+  keyFactors: string[];
+}
+
 const api = axios.create({
   baseURL: '/api',
   timeout: 120000,
@@ -217,6 +223,34 @@ export const lookupPACERBankruptcy = async (caseId: string): Promise<{
 }> => {
   const { data } = await api.get(`/cases/${caseId}/pacer-bankruptcy`);
   return data;
+};
+
+// ─── New routes ───────────────────────────────────────────────────────────────
+
+export const assessStrategy = async (caseId: string): Promise<StrategyAssessment> => {
+  const { data } = await api.post(`/cases/${caseId}/assess-strategy`);
+  return data;
+};
+
+export const generateAffidavitOfService = async (caseId: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${caseId}/generate-affidavit-of-service`);
+  return data;
+};
+
+export const generateSettlement = async (caseId: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${caseId}/generate-settlement`);
+  return data;
+};
+
+export const generatePaymentPlan = async (caseId: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${caseId}/generate-payment-plan`);
+  return data;
+};
+
+/** Returns the URL for a PDF download (authenticated via token in query string) */
+export const getPdfDownloadUrl = (caseId: string, type: 'demand-letter' | 'final-notice' | 'court-form' | 'default-judgment' | 'affidavit-of-service' | 'settlement' | 'payment-plan'): string => {
+  const token = localStorage.getItem('token');
+  return `/api/cases/${caseId}/${type}-pdf?token=${token}`;
 };
 
 export const lookupECBViolations = async (caseId: string): Promise<{

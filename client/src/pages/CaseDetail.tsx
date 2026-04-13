@@ -44,7 +44,13 @@ import {
   lookupUCCFilings,
   lookupECBViolations,
   lookupPACERBankruptcy,
+  assessStrategy,
+  generateAffidavitOfService,
+  generateSettlement,
+  generatePaymentPlan,
+  getPdfDownloadUrl,
 } from '../lib/api';
+import type { StrategyAssessment } from '../lib/api';
 import {
   formatCurrency,
   formatDate,
@@ -796,6 +802,86 @@ function EvidenceTab({ caseData, onRefresh }: { caseData: Case; onRefresh: () =>
   );
 }
 
+// ─── Refine Strategy Panel ────────────────────────────────────────────────────
+
+const STRATEGY_LABELS_LOCAL: Record<string, string> = {
+  QUICK_ESCALATION: 'Quick Escalation',
+  STANDARD_RECOVERY: 'Standard Recovery',
+  GRADUAL_APPROACH: 'Gradual Approach',
+};
+
+function RefineStrategyPanel({ caseData }: { caseData: Case }) {
+  const [assessment, setAssessment] = useState<StrategyAssessment | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const hasResearch = !!(caseData.acrisResult || caseData.courtHistory || caseData.entityResult ||
+    caseData.uccResult || caseData.ecbResult || caseData.pacerResult);
+
+  if (!hasResearch) return null;
+
+  const handleRefine = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const result = await assessStrategy(caseData.id);
+      setAssessment(result);
+    } catch (e) {
+      setErr('Assessment failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card p-5 border border-violet-200 bg-violet-50">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <div className="text-sm font-semibold text-violet-900">Refine Strategy with Debtor Research</div>
+          <p className="text-xs text-violet-600 mt-0.5">
+            You have debtor research results on file. Let Claude reason through assets, bankruptcy risk, entity type, and litigation history to recommend the best strategy.
+          </p>
+        </div>
+        <button
+          onClick={handleRefine}
+          disabled={loading}
+          className="btn-primary text-sm flex items-center gap-2 ml-4 shrink-0"
+          style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          {loading ? 'Analyzing...' : 'Refine Strategy'}
+        </button>
+      </div>
+
+      {err && <p className="text-xs text-red-600 mt-2">{err}</p>}
+
+      {assessment && (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-violet-700 uppercase tracking-wider">Recommended:</span>
+            <span className="text-sm font-bold text-violet-900">{STRATEGY_LABELS_LOCAL[assessment.strategy] ?? assessment.strategy}</span>
+          </div>
+          <p className="text-sm text-violet-900 leading-relaxed">{assessment.reasoning}</p>
+          {assessment.keyFactors.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-violet-700 uppercase tracking-wider mb-1.5">Key Factors</div>
+              <ul className="space-y-1">
+                {assessment.keyFactors.map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs text-violet-800">
+                    <span className="text-violet-400 font-bold mt-0.5 shrink-0">—</span>
+                    <span>{f}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="text-xs text-violet-500 italic">This is a recommendation only — you still select the final strategy below.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Strategy Tab ──────────────────────────────────────────────────────────────
 
 function StrategyTab({ caseData }: { caseData: Case }) {
@@ -1511,6 +1597,9 @@ function StrategyTab({ caseData }: { caseData: Case }) {
         );
       })()}
 
+      {/* Refine Strategy with Research — shown when at least one lookup result is stored */}
+      <RefineStrategyPanel caseData={caseData} />
+
       {/* Strategy Selector */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -1621,7 +1710,7 @@ function LetterTab({ caseData }: { caseData: Case }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button onClick={handleCopy} className="btn-secondary text-sm flex items-center gap-2">
           <Copy className="w-4 h-4" /> {copied ? 'Copied!' : 'Copy Text'}
         </button>
@@ -1632,6 +1721,13 @@ function LetterTab({ caseData }: { caseData: Case }) {
         ) : (
           <span className="text-xs text-slate-400">No debtor email on file — add one in Overview to enable email.</span>
         )}
+        <a
+          href={getPdfDownloadUrl(caseData.id, 'demand-letter')}
+          download="demand-letter.pdf"
+          className="btn-primary text-sm flex items-center gap-2"
+        >
+          <FileText className="w-4 h-4" /> Download PDF
+        </a>
         <button
           onClick={() => generateMutation.mutate()}
           disabled={generateMutation.isPending}
@@ -1679,6 +1775,21 @@ function EscalationTab({ caseData }: { caseData: Case }) {
 
   const defaultJudgmentMutation = useMutation({
     mutationFn: () => generateDefaultJudgment(caseData.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const affidavitMutation = useMutation({
+    mutationFn: () => generateAffidavitOfService(caseData.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const settlementMutation = useMutation({
+    mutationFn: () => generateSettlement(caseData.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const paymentPlanMutation = useMutation({
+    mutationFn: () => generatePaymentPlan(caseData.id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
@@ -1744,7 +1855,7 @@ function EscalationTab({ caseData }: { caseData: Case }) {
           <RotatingFact label="Generating pre-filing notice..." sublabel="This usually takes 15–25 seconds." />
         ) : caseData.finalNoticeHtml ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button onClick={handleCopyFN} className="btn-secondary text-sm flex items-center gap-2">
                 <Copy className="w-4 h-4" /> {copiedFN ? 'Copied!' : 'Copy Text'}
               </button>
@@ -1755,6 +1866,13 @@ function EscalationTab({ caseData }: { caseData: Case }) {
               ) : (
                 <span className="text-xs text-slate-400">No debtor email on file.</span>
               )}
+              <a
+                href={getPdfDownloadUrl(caseData.id, 'final-notice')}
+                download="final-notice.pdf"
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" /> Download PDF
+              </a>
               <button
                 onClick={() => finalNoticeMutation.mutate()}
                 className="btn-secondary text-sm ml-auto"
@@ -1806,10 +1924,17 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             <div className="flex items-center gap-3 flex-wrap">
               <button
                 onClick={handlePrintCourtForm}
-                className="btn-primary text-sm flex items-center gap-2"
+                className="btn-secondary text-sm flex items-center gap-2"
               >
                 <FileText className="w-4 h-4" /> Print Form
               </button>
+              <a
+                href={getPdfDownloadUrl(caseData.id, 'court-form')}
+                download="court-form.pdf"
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" /> Download PDF
+              </a>
               <button
                 onClick={() => courtFormMutation.mutate()}
                 className="btn-secondary text-sm"
@@ -1993,62 +2118,173 @@ function EscalationTab({ caseData }: { caseData: Case }) {
         </div>
       )}
 
-      {/* Section 4: Default Judgment Motion */}
+      {/* Section 4: Affidavit of Service */}
+      {(() => {
+        const svcAction = caseData.actions.find(a => a.type === 'SERVICE_INITIATED');
+        if (!svcAction) return null;
+        return (
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-600" /> Affidavit of Service
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Service has been initiated. Generate an Affidavit of Service template for your process server to complete and sign after serving the defendant.
+            </p>
+            {affidavitMutation.isPending ? (
+              <RotatingFact label="Generating affidavit of service..." sublabel="This takes 10–20 seconds." />
+            ) : caseData.affidavitOfServiceHtml ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <a
+                    href={getPdfDownloadUrl(caseData.id, 'affidavit-of-service')}
+                    download="affidavit-of-service.pdf"
+                    className="btn-primary text-sm flex items-center gap-2"
+                  >
+                    <FileText className="w-4 h-4" /> Download PDF
+                  </a>
+                  <button onClick={() => affidavitMutation.mutate()} className="btn-secondary text-sm ml-auto">Regenerate</button>
+                </div>
+                <div className="card p-8">
+                  <div className="prose prose-sm max-w-none prose-slate" dangerouslySetInnerHTML={{ __html: caseData.affidavitOfServiceHtml }} />
+                </div>
+              </div>
+            ) : (
+              <div className="card p-6 text-center">
+                <p className="text-sm text-slate-500 mb-4">
+                  Generate a pre-filled Affidavit of Service template. Your process server completes and signs this after service.
+                </p>
+                <button onClick={() => affidavitMutation.mutate()} className="btn-primary">Generate Affidavit of Service</button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Section 5: Default Judgment Motion */}
       <div>
         <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
           <Scale className="w-4 h-4 text-slate-500" /> Default Judgment Motion
         </h3>
+        {(() => {
+          const svcAction = caseData.actions.find(a => a.type === 'SERVICE_INITIATED');
+          if (!svcAction) {
+            return (
+              <div className="card p-5 bg-slate-50 border-slate-200">
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span>Log service initiation in the <strong>Process Server Engagement</strong> section above first. Once service is logged, return here after the answer deadline has passed if the defendant does not respond.</span>
+                </div>
+              </div>
+            );
+          }
+          const svcDate = new Date(svcAction.createdAt);
+          const altDeadline = new Date(svcDate);
+          altDeadline.setDate(altDeadline.getDate() + 30);
+          const today = new Date();
+          const canFileDefault = today > altDeadline;
+          const daysUntil = Math.ceil((altDeadline.getTime() - today.getTime()) / 86400000);
+          const fmtDate = (d: Date) => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+          if (!canFileDefault) {
+            return (
+              <div className="card p-5 bg-amber-50 border-amber-200">
+                <div className="flex items-start gap-2 text-sm text-amber-800">
+                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <span>
+                    The answer deadline has not yet passed. The defendant has until <strong>{fmtDate(altDeadline)}</strong> ({daysUntil} {daysUntil === 1 ? 'day' : 'days'} from now) to respond. Return here after that date if no answer is filed.
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <>
+              <p className="text-xs text-slate-500 mb-4">
+                The answer deadline has passed. If the defendant has not appeared or answered, you can move for a default judgment. Service was initiated on {fmtDate(svcDate)}; the 30-day answer deadline was {fmtDate(altDeadline)}.
+              </p>
+              {defaultJudgmentMutation.isPending ? (
+                <RotatingFact label="Generating default judgment motion..." sublabel="This usually takes 20–40 seconds." />
+              ) : caseData.defaultJudgmentHtml ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <a
+                      href={getPdfDownloadUrl(caseData.id, 'default-judgment')}
+                      download="default-judgment-motion.pdf"
+                      className="btn-primary text-sm flex items-center gap-2"
+                    >
+                      <FileText className="w-4 h-4" /> Download PDF
+                    </a>
+                    <button onClick={() => defaultJudgmentMutation.mutate()} className="btn-secondary text-sm ml-auto">Regenerate</button>
+                  </div>
+                  <div className="card p-8">
+                    <div className="prose prose-sm max-w-none prose-slate" dangerouslySetInnerHTML={{ __html: caseData.defaultJudgmentHtml }} />
+                  </div>
+                </div>
+              ) : (
+                <div className="card p-6 text-center">
+                  <p className="text-sm text-slate-500 mb-4">
+                    Generate a Motion for Default Judgment package — Notice of Motion, Affidavit in Support, Proposed Order, and blank Affidavit of Service template.
+                  </p>
+                  <button onClick={() => defaultJudgmentMutation.mutate()} className="btn-primary">
+                    Generate Default Judgment Motion
+                  </button>
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </div>
+
+      {/* Section 6: Settlement Track */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <CheckCircle className="w-4 h-4 text-teal-500" /> Settlement Track
+        </h3>
         <p className="text-xs text-slate-500 mb-4">
-          If the defendant was served but failed to appear or answer within the required deadline (20 days after personal service, 30 days after alternative service), you can move for a default judgment.
+          Many cases settle after a demand letter or final notice. If the debtor contacts you, use these documents to put any agreement in writing immediately.
         </p>
-        {defaultJudgmentMutation.isPending ? (
-          <RotatingFact label="Generating default judgment motion..." sublabel="This usually takes 20–40 seconds." />
-        ) : caseData.defaultJudgmentHtml ? (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => {
-                  const w = window.open('', '_blank');
-                  if (!w || !caseData.defaultJudgmentHtml) return;
-                  w.document.write(`<!DOCTYPE html><html><head><title>Default Judgment Motion</title><style>
-                    @media print { body { margin: 1in; } }
-                    body { font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem; }
-                  </style></head><body>${caseData.defaultJudgmentHtml}</body></html>`);
-                  w.document.close();
-                  w.focus();
-                  w.print();
-                }}
-                className="btn-primary text-sm flex items-center gap-2"
-              >
-                <FileText className="w-4 h-4" /> Print Motion
-              </button>
-              <button
-                onClick={() => defaultJudgmentMutation.mutate()}
-                className="btn-secondary text-sm ml-auto"
-              >
-                Regenerate
-              </button>
-            </div>
-            <div className="card p-8">
-              <div
-                className="prose prose-sm max-w-none prose-slate"
-                dangerouslySetInnerHTML={{ __html: caseData.defaultJudgmentHtml }}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="card p-6 text-center">
-            <p className="text-sm text-slate-500 mb-4">
-              Generate a Motion for Default Judgment package — Notice of Motion, Affidavit in Support, Proposed Order, and blank Affidavit of Service template.
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* Stipulation of Settlement */}
+          <div className="card p-5">
+            <div className="text-sm font-semibold text-slate-800 mb-1">Stipulation of Settlement</div>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+              A binding agreement between both parties — includes settlement amount (to be negotiated), payment terms, mutual release, and default provisions.
             </p>
-            <button
-              onClick={() => defaultJudgmentMutation.mutate()}
-              className="btn-primary"
-            >
-              Generate Default Judgment Motion
-            </button>
+            {settlementMutation.isPending ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Generating...</div>
+            ) : caseData.settlementHtml ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5" /> Download PDF
+                </a>
+                <button onClick={() => settlementMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+              </div>
+            ) : (
+              <button onClick={() => settlementMutation.mutate()} className="btn-secondary text-sm">Generate Settlement Agreement</button>
+            )}
           </div>
-        )}
+
+          {/* Payment Plan Agreement */}
+          <div className="card p-5">
+            <div className="text-sm font-semibold text-slate-800 mb-1">Payment Plan Agreement</div>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+              Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments. Resets the statute of limitations.
+            </p>
+            {paymentPlanMutation.isPending ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Generating...</div>
+            ) : caseData.paymentPlanHtml ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5" /> Download PDF
+                </a>
+                <button onClick={() => paymentPlanMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+              </div>
+            ) : (
+              <button onClick={() => paymentPlanMutation.mutate()} className="btn-secondary text-sm">Generate Payment Plan</button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Process Server Modal */}
@@ -2328,8 +2564,11 @@ function FilingGuideTab({ caseData }: { caseData: Case }) {
                 {p('Your attorney will prepare either a Summons and Complaint or a Summons with Notice. The complaint should plead: parties, the agreement, your performance, the unpaid amount, the due date, non-payment, and the relief requested.')}
                 {p('Causes of action for B2B unpaid invoices typically include breach of contract, account stated, and quantum meruit / unjust enrichment.')}
               </ExpandableItem>
-              <ExpandableItem num={3} label="Purchase an index number and file">
-                {p('File with the County Clerk in the county where the defendant does business. Pay the $210 index number fee. In New York County and most NYC Supreme Courts, e-filing is mandatory for represented parties (NYSCEF). Unrepresented parties are automatically exempt unless they opt in.')}
+              <ExpandableItem num={3} label="Purchase an index number and e-file via NYSCEF">
+                {p('File with the County Clerk in the county where the defendant does business. Pay the $210 index number fee.')}
+                {warn('⚠ MANDATORY E-FILING: In Manhattan (New York County) and all NYC Supreme Courts, e-filing via NYSCEF is mandatory for represented parties. Pro se (self-represented) filers are exempt unless they opt in.')}
+                {sub('NYSCEF steps: (1) Register at nyscef.ny.gov, (2) Purchase index number ($210), (3) Upload PDF/A-compliant document (text-searchable, not password-protected, not encrypted, max 100MB), (4) Serve via NYSCEF or traditional service, (5) File RJI (Request for Judicial Intervention) within 60 days to get a judge assigned.')}
+                {sub('PDF requirements for NYSCEF: text-searchable, not password-protected, no JavaScript, flattened layers, PDF/A format preferred.')}
               </ExpandableItem>
               <ExpandableItem num={4} label="Serve the defendant within 120 days">
                 {p('A summons with notice or summons and complaint must be served within 120 days of filing. Use a licensed process server. Personal service on the defendant\'s registered agent or an officer of the entity is standard for business defendants.')}

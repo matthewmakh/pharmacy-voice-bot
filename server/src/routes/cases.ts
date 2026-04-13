@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement } from '../services/claude';
+import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
 import { lookupNYCourtHistory } from '../services/nycourts';
@@ -509,6 +510,7 @@ router.get('/:id/acris', async (req: Request, res: Response) => {
     }
 
     const result = await lookupACRIS(partyName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { acrisResult: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('ACRIS lookup error:', err);
@@ -532,6 +534,7 @@ router.get('/:id/court-history', async (req: Request, res: Response) => {
     }
 
     const result = await lookupNYCourtHistory(partyName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { courtHistory: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('Court history lookup error:', err);
@@ -555,6 +558,7 @@ router.get('/:id/nys-entity', async (req: Request, res: Response) => {
     }
 
     const result = await lookupNYSEntity(entityName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { entityResult: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('NYS entity lookup error:', err);
@@ -578,6 +582,7 @@ router.get('/:id/ucc-filings', async (req: Request, res: Response) => {
     }
 
     const result = await lookupNYSUCC(debtorName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { uccResult: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('UCC lookup error:', err);
@@ -601,6 +606,7 @@ router.get('/:id/ecb-violations', async (req: Request, res: Response) => {
     }
 
     const result = await lookupNYCECB(partyName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { ecbResult: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('ECB lookup error:', err);
@@ -624,10 +630,318 @@ router.get('/:id/pacer-bankruptcy', async (req: Request, res: Response) => {
     }
 
     const result = await checkPACERBankruptcy(partyName);
+    await prisma.case.update({ where: { id: req.params.id }, data: { pacerResult: result as never } }).catch(() => {});
     res.json(result);
   } catch (err) {
     console.error('PACER lookup error:', err);
     res.status(500).json({ error: 'PACER lookup failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/assess-strategy — re-assess strategy using persisted debtor research
+router.post('/:id/assess-strategy', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const lookupResults = {
+      acris:  caseData.acrisResult  as Record<string, unknown> | null,
+      courts: caseData.courtHistory as Record<string, unknown> | null,
+      entity: caseData.entityResult as Record<string, unknown> | null,
+      ucc:    caseData.uccResult    as Record<string, unknown> | null,
+      ecb:    caseData.ecbResult    as Record<string, unknown> | null,
+      pacer:  caseData.pacerResult  as Record<string, unknown> | null,
+    };
+
+    const hasAnyResult = Object.values(lookupResults).some(v => v != null);
+    if (!hasAnyResult) {
+      res.status(400).json({ error: 'No debtor research results on file. Run at least one lookup first.' });
+      return;
+    }
+
+    const caseContext = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorEntityType: caseData.debtorEntityType,
+      amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      serviceDescription: caseData.serviceDescription,
+      caseStrength: caseData.caseStrength,
+      paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
+      caseAssessment: caseData.caseAssessment,
+    };
+
+    const assessment = await assessStrategyWithResearch(caseContext as Record<string, unknown>, lookupResults);
+    res.json(assessment);
+  } catch (err) {
+    console.error('Strategy assessment error:', err);
+    res.status(500).json({ error: 'Strategy assessment failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/demand-letter-pdf
+router.get('/:id/demand-letter-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { demandLetterHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.demandLetterHtml) { res.status(400).json({ error: 'Demand letter not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.demandLetterHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="demand-letter.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Demand letter PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/final-notice-pdf
+router.get('/:id/final-notice-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { finalNoticeHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.finalNoticeHtml) { res.status(400).json({ error: 'Final notice not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.finalNoticeHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="final-notice.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Final notice PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/court-form-pdf
+router.get('/:id/court-form-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.filingPacketHtml && !caseData.filingPacket) {
+      res.status(400).json({ error: 'Court form not yet generated' });
+      return;
+    }
+
+    const outstanding = Number(caseData.amountOwed ?? 0) - Number(caseData.amountPaid ?? 0);
+
+    // Commercial claims (≤$10k) → official CIV-SC-70 layout via pdf-lib
+    if (outstanding <= 10000) {
+      const formData = {
+        claimantName: caseData.claimantName ?? undefined,
+        claimantBusiness: caseData.claimantBusiness ?? undefined,
+        claimantAddress: caseData.claimantAddress ?? undefined,
+        claimantPhone: caseData.claimantPhone ?? undefined,
+        debtorName: caseData.debtorName ?? undefined,
+        debtorBusiness: caseData.debtorBusiness ?? undefined,
+        debtorAddress: caseData.debtorAddress ?? undefined,
+        debtorPhone: caseData.debtorPhone ?? undefined,
+        amountClaimed: outstanding.toFixed(2),
+        serviceDescription: caseData.serviceDescription ?? undefined,
+        invoiceNumber: caseData.invoiceNumber ?? undefined,
+        agreementDate: caseData.agreementDate?.toISOString().split('T')[0] ?? undefined,
+        invoiceDate: caseData.invoiceDate?.toISOString().split('T')[0] ?? undefined,
+      };
+      const pdf = await fillCIVSC70(formData);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="court-form-CIV-SC-70.pdf"');
+      res.send(pdf);
+    } else {
+      // Civil/Supreme → convert AI-generated HTML to PDF
+      const html = caseData.filingPacketHtml ?? '';
+      const pdf = await htmlToPDF(html);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="court-form.pdf"');
+      res.send(pdf);
+    }
+  } catch (err) {
+    console.error('Court form PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/default-judgment-pdf
+router.get('/:id/default-judgment-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { defaultJudgmentHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.defaultJudgmentHtml) { res.status(400).json({ error: 'Default judgment not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.defaultJudgmentHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="default-judgment-motion.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Default judgment PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/generate-affidavit-of-service
+router.post('/:id/generate-affidavit-of-service', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      courtFormType: caseData.courtFormType,
+    };
+
+    const result = await generateAffidavitOfService(context as Record<string, unknown>);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: { affidavitOfServiceHtml: result.html },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('Affidavit of service error:', err);
+    res.status(500).json({ error: 'Affidavit generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/affidavit-of-service-pdf
+router.get('/:id/affidavit-of-service-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { affidavitOfServiceHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.affidavitOfServiceHtml) { res.status(400).json({ error: 'Affidavit not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.affidavitOfServiceHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="affidavit-of-service.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Affidavit PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/generate-settlement
+router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      serviceDescription: caseData.serviceDescription,
+      invoiceNumber: caseData.invoiceNumber,
+      courtFormType: caseData.courtFormType,
+    };
+
+    const result = await generateStipulationOfSettlement(context as Record<string, unknown>);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: { settlementHtml: result.html },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('Settlement generation error:', err);
+    res.status(500).json({ error: 'Settlement generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/settlement-pdf
+router.get('/:id/settlement-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { settlementHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.settlementHtml) { res.status(400).json({ error: 'Settlement not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.settlementHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="stipulation-of-settlement.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Settlement PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/generate-payment-plan
+router.post('/:id/generate-payment-plan', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+
+    const context = {
+      claimantName: caseData.claimantName,
+      claimantBusiness: caseData.claimantBusiness,
+      debtorName: caseData.debtorName,
+      debtorBusiness: caseData.debtorBusiness,
+      debtorAddress: caseData.debtorAddress,
+      amountOwed: caseData.amountOwed?.toString(),
+      amountPaid: caseData.amountPaid?.toString(),
+      serviceDescription: caseData.serviceDescription,
+    };
+
+    const result = await generatePaymentPlanAgreement(context as Record<string, unknown>);
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: { paymentPlanHtml: result.html },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('Payment plan generation error:', err);
+    res.status(500).json({ error: 'Payment plan generation failed', details: String(err) });
+  }
+});
+
+// GET /api/cases/:id/payment-plan-pdf
+router.get('/:id/payment-plan-pdf', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { paymentPlanHtml: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (!caseData.paymentPlanHtml) { res.status(400).json({ error: 'Payment plan not yet generated' }); return; }
+
+    const pdf = await htmlToPDF(caseData.paymentPlanHtml);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="payment-plan-agreement.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('Payment plan PDF error:', err);
+    res.status(500).json({ error: 'PDF generation failed', details: String(err) });
   }
 });
 

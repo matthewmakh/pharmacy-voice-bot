@@ -158,6 +158,19 @@ export interface Case {
   defaultJudgment: string | null;
   defaultJudgmentHtml: string | null;
 
+  // Debtor research (persisted to DB so they survive refresh)
+  acrisResult: Record<string, unknown> | null;
+  courtHistory: Record<string, unknown> | null;
+  entityResult: Record<string, unknown> | null;
+  uccResult: Record<string, unknown> | null;
+  ecbResult: Record<string, unknown> | null;
+  pacerResult: Record<string, unknown> | null;
+
+  // Additional pre-trial documents
+  affidavitOfServiceHtml: string | null;
+  settlementHtml: string | null;
+  paymentPlanHtml: string | null;
+
   documents: Document[];
   actions: CaseAction[];
 

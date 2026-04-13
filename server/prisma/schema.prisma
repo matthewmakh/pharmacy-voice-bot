@@ -78,6 +78,19 @@ model Case {
   industry String?
   notes String? @db.Text
 
+  // Debtor research lookup results (persisted so they survive refresh)
+  acrisResult    Json?
+  courtHistory   Json?
+  entityResult   Json?
+  uccResult      Json?
+  ecbResult      Json?
+  pacerResult    Json?
+
+  // Additional pre-trial documents
+  affidavitOfServiceHtml String? @db.Text
+  settlementHtml         String? @db.Text
+  paymentPlanHtml        String? @db.Text
+
   documents Document[]
   actions   CaseAction[]
 
