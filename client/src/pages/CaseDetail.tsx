@@ -2067,6 +2067,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
                   <p className="text-sm text-slate-700 mb-4">{v.summary}</p>
                   <div className="flex gap-4 text-xs text-slate-500 mb-4">
                     <span><span className="font-semibold text-emerald-600">{okCount}</span> verified</span>
+                    <span><span className={`font-semibold ${issues.length > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{issues.length}</span> flagged</span>
+                    <span className="text-slate-300">·</span>
                     <span><span className="font-semibold text-amber-500">{v.checks.filter(c => c.status === 'missing').length}</span> missing</span>
                     <span><span className="font-semibold text-red-600">{v.checks.filter(c => c.status === 'mismatch' || c.status === 'hallucinated').length}</span> errors</span>
                   </div>
