@@ -2871,6 +2871,9 @@ export default function CaseDetail() {
     queryKey: ['case', id],
     queryFn: () => getCase(id!),
     enabled: !!id,
+    // Always fetch fresh on mount so navigating back shows current server status
+    // (catches ANALYZING / GENERATING states the cache may have missed)
+    staleTime: 0,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
