@@ -336,29 +336,21 @@ export async function fillCIVSC70(data: CIVFormData): Promise<Buffer> {
 
 /**
  * Converts Claude-generated HTML to a CPLR-compliant PDF.
- * Uses Puppeteer with @sparticuz/chromium-min for a lightweight Chrome binary.
- * Falls back to the bundled Puppeteer Chromium if the sparticuz binary is unavailable.
+ * Uses Puppeteer's bundled Chromium with container-safe launch flags.
  */
 export async function htmlToPDF(html: string): Promise<Buffer> {
   const wrapped = wrapWithPrintCSS(html);
 
-  let executablePath: string | undefined;
-  let launchArgs: string[] = ['--no-sandbox', '--disable-setuid-sandbox'];
-
-  // Try @sparticuz/chromium-min first (better for cloud/Railway environments)
-  try {
-    const chromium = await import('@sparticuz/chromium-min');
-    executablePath = await (chromium as any).default.executablePath();
-    launchArgs = (chromium as any).default.args ?? launchArgs;
-  } catch {
-    // Fall back to bundled Puppeteer Chromium
-    executablePath = undefined;
-  }
-
   const browser = await puppeteer.launch({
-    args: launchArgs,
-    executablePath,
     headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',   // Critical: prevents Chrome crash in containers with small /dev/shm
+      '--disable-gpu',
+      '--disable-extensions',
+      '--single-process',
+    ],
   });
 
   try {
