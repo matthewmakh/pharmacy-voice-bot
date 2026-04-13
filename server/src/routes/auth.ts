@@ -20,7 +20,8 @@ const loginSchema = z.object({
 // POST /api/auth/register
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { email, password, name } = registerSchema.parse(req.body);
+    const { email: rawEmail, password, name } = registerSchema.parse(req.body);
+    const email = rawEmail.toLowerCase();
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -48,7 +49,8 @@ router.post('/register', async (req: Request, res: Response) => {
 // POST /api/auth/login
 router.post('/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email: rawEmail, password } = loginSchema.parse(req.body);
+    const email = rawEmail.toLowerCase();
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
