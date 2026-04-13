@@ -105,9 +105,22 @@ const LOADING_FACTS = [
   'A signed scope of work or proposal can substitute for a formal written contract in many NY court actions.',
 ];
 
-function RotatingFact({ label, sublabel }: { label: string; sublabel?: string }) {
+function RotatingFact({
+  label,
+  sublabel,
+  startedAt,
+  estimatedSeconds,
+}: {
+  label: string;
+  sublabel?: string;
+  startedAt?: Date;
+  estimatedSeconds?: number;
+}) {
   const [idx, setIdx] = useState(() => Math.floor(Math.random() * LOADING_FACTS.length));
   const [visible, setVisible] = useState(true);
+  const [elapsed, setElapsed] = useState(() =>
+    startedAt ? Math.floor((Date.now() - startedAt.getTime()) / 1000) : 0
+  );
 
   React.useEffect(() => {
     const interval = setInterval(() => {
@@ -124,11 +137,45 @@ function RotatingFact({ label, sublabel }: { label: string; sublabel?: string })
     return () => clearInterval(interval);
   }, []);
 
+  React.useEffect(() => {
+    if (!startedAt) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAt.getTime()) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  const fmtElapsed = (s: number) =>
+    s < 60 ? `${s}s elapsed` : `${Math.floor(s / 60)}m ${s % 60}s elapsed`;
+
+  const progress = estimatedSeconds ? Math.min(95, (elapsed / estimatedSeconds) * 100) : null;
+
   return (
     <div className="card p-8 text-center">
       <Loader2 className="w-10 h-10 text-purple-500 mx-auto mb-4 animate-spin" />
       <div className="text-sm font-semibold text-slate-800 mb-1">{label}</div>
-      {sublabel && <p className="text-xs text-slate-400 mb-6">{sublabel}</p>}
+      {startedAt ? (
+        <div className="mb-6 space-y-2">
+          {progress !== null && (
+            <div className="w-48 mx-auto bg-slate-100 rounded-full h-1.5">
+              <div
+                className="bg-purple-400 h-1.5 rounded-full transition-all duration-1000"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+          <p className="text-xs text-slate-400">
+            {fmtElapsed(elapsed)}
+            {estimatedSeconds && elapsed < estimatedSeconds
+              ? ` · ~${Math.max(0, estimatedSeconds - elapsed)}s remaining`
+              : estimatedSeconds && elapsed >= estimatedSeconds
+              ? ' · almost done…'
+              : ''}
+          </p>
+        </div>
+      ) : (
+        sublabel && <p className="text-xs text-slate-400 mb-6">{sublabel}</p>
+      )}
       <div
         className="mt-4 mx-auto max-w-sm transition-opacity duration-500"
         style={{ opacity: visible ? 1 : 0 }}
@@ -886,9 +933,15 @@ function RefineStrategyPanel({ caseData }: { caseData: Case }) {
 
 function StrategyTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
+  // Track when the user clicked "Run Analysis" so the elapsed timer starts immediately,
+  // before the server sets status to ANALYZING (which takes 1-2 round-trips).
+  const analyzeClickedAt = React.useRef<Date | null>(null);
 
   const analyzeMutation = useMutation({
-    mutationFn: () => analyzeCase(caseData.id),
+    mutationFn: () => {
+      analyzeClickedAt.current = new Date();
+      return analyzeCase(caseData.id);
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
@@ -1067,6 +1120,16 @@ function StrategyTab({ caseData }: { caseData: Case }) {
     !analyzeMutation.isPending &&
     Date.now() - new Date(caseData.updatedAt).getTime() > 2 * 60 * 1000;
 
+  // Elapsed timer: prefer server-stamped updatedAt when status is ANALYZING (survives navigation),
+  // fall back to the moment the user clicked the button (covers the brief pre-status window).
+  const analysisStartedAt: Date | undefined = isAnalyzing
+    ? caseData.status === 'ANALYZING'
+      ? new Date(caseData.updatedAt)
+      : (analyzeClickedAt.current ?? undefined)
+    : undefined;
+  // ~20s base for synthesis + ~12s per document for extraction + analysis
+  const analysisEstimatedSeconds = 20 + caseData.documents.length * 12;
+
   return (
     <div className="space-y-6">
       {needsAnalysis && (
@@ -1096,7 +1159,11 @@ function StrategyTab({ caseData }: { caseData: Case }) {
       )}
 
       {isAnalyzing && !isStuckAnalyzing && (
-        <RotatingFact label="Analyzing your case..." sublabel="This usually takes 15–30 seconds." />
+        <RotatingFact
+          label="Analyzing your case..."
+          startedAt={analysisStartedAt}
+          estimatedSeconds={analysisEstimatedSeconds}
+        />
       )}
 
       {isStuckAnalyzing && (
