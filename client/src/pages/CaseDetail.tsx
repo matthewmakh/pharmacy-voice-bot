@@ -1060,6 +1060,12 @@ function StrategyTab({ caseData }: { caseData: Case }) {
 
   const needsAnalysis = !caseData.caseStrength && !['ANALYZING'].includes(caseData.status);
   const isAnalyzing = caseData.status === 'ANALYZING' || analyzeMutation.isPending;
+  // Show a reset escape hatch if status is ANALYZING but hasn't progressed in >2 minutes
+  // (caused by a server restart killing the in-flight Claude request)
+  const isStuckAnalyzing =
+    caseData.status === 'ANALYZING' &&
+    !analyzeMutation.isPending &&
+    Date.now() - new Date(caseData.updatedAt).getTime() > 2 * 60 * 1000;
 
   return (
     <div className="space-y-6">
@@ -1089,8 +1095,31 @@ function StrategyTab({ caseData }: { caseData: Case }) {
         </div>
       )}
 
-      {isAnalyzing && (
+      {isAnalyzing && !isStuckAnalyzing && (
         <RotatingFact label="Analyzing your case..." sublabel="This usually takes 15–30 seconds." />
+      )}
+
+      {isStuckAnalyzing && (
+        <div className="card p-6 border border-amber-200 bg-amber-50">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-amber-800 mb-1">Analysis appears stuck</div>
+              <p className="text-sm text-amber-700 mb-3">
+                This case has been in &ldquo;Analyzing&rdquo; state for more than 2 minutes. The server may have restarted
+                mid-analysis. Click below to reset and try again.
+              </p>
+              <button
+                onClick={() => resetMutation.mutate()}
+                disabled={resetMutation.isPending}
+                className="btn-secondary text-sm"
+              >
+                {resetMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />}
+                Reset &amp; Try Again
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Analysis results */}

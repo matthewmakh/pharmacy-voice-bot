@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
 import authRouter from './routes/auth';
+import prisma from './lib/prisma';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -71,9 +72,27 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Collections Platform server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+async function start() {
+  // Reset any cases left stuck in ANALYZING/GENERATING from a previous server crash or restart.
+  // These cases will never self-recover because the error handler never ran.
+  try {
+    const stuck = await prisma.case.updateMany({
+      where: { status: { in: ['ANALYZING', 'GENERATING'] } },
+      data: { status: 'ASSEMBLING' },
+    });
+    if (stuck.count > 0) {
+      console.log(`Startup: reset ${stuck.count} stuck case(s) from ANALYZING/GENERATING → ASSEMBLING`);
+    }
+  } catch (err) {
+    console.error('Startup cleanup failed (non-fatal):', err);
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Collections Platform server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
+
+start();
 
 export default app;
