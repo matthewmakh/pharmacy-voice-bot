@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
-import CaseDetail from './pages/CaseDetail';
+import CaseDetail from './pages/case-detail';
 import Login from './pages/Login';
 import Register from './pages/Register';
 

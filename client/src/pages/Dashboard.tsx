@@ -2,7 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ArrowRight, AlertCircle, TrendingUp, Clock, CheckCircle2 } from 'lucide-react';
 import { getCases } from '../lib/api';
-import { formatCurrency, formatDate, STATUS_LABELS, STATUS_COLORS } from '../lib/utils';
+import { formatCurrency, formatDate } from '../lib/utils';
+import StatusPill from '../components/ui/StatusPill';
+import EmptyState from '../components/ui/EmptyState';
+import Alert from '../components/ui/Alert';
 import type { CaseListItem } from '../types';
 
 function StatCard({ label, value, icon: Icon, color }: { label: string; value: string | number; icon: React.ElementType; color: string }) {
@@ -39,9 +42,7 @@ function CaseRow({ caseItem }: { caseItem: CaseListItem }) {
         </div>
       </td>
       <td className="px-6 py-4">
-        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[caseItem.status]}`}>
-          {STATUS_LABELS[caseItem.status]}
-        </span>
+        <StatusPill status={caseItem.status} />
       </td>
       <td className="px-6 py-4 text-sm text-slate-700 font-medium">
         {outstanding > 0 ? formatCurrency(outstanding) : '—'}
@@ -138,25 +139,25 @@ export default function Dashboard() {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-700 text-sm">
-          Failed to load cases. Please refresh.
+        <div className="mb-6">
+          <Alert tone="danger">Failed to load cases. Please refresh.</Alert>
         </div>
       )}
 
       {/* Cases table */}
       {cases.length === 0 ? (
-        <div className="card p-16 text-center">
-          <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <TrendingUp className="w-8 h-8 text-slate-400" />
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">No cases yet</h3>
-          <p className="text-slate-500 text-sm max-w-sm mx-auto mb-6">
-            Create your first collections case to get started. Upload documents and let the platform organize your matter.
-          </p>
-          <button onClick={() => navigate('/cases/new')} className="btn-primary mx-auto">
-            <Plus className="w-4 h-4" />
-            Create First Case
-          </button>
+        <div className="card">
+          <EmptyState
+            icon={<TrendingUp className="w-6 h-6" />}
+            title="No cases yet"
+            description="Create your first collections case to get started. Upload documents and let the platform organize your matter."
+            action={
+              <button onClick={() => navigate('/cases/new')} className="btn-primary">
+                <Plus className="w-4 h-4" />
+                Create First Case
+              </button>
+            }
+          />
         </div>
       ) : (
         <div className="card overflow-hidden">
