@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Case, CaseListItem, CreateCaseInput, Strategy } from '../types';
+import type { Case, CaseListItem, CreateCaseInput, Document, Strategy } from '../types';
 
 export interface StrategyAssessment {
   strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
@@ -102,6 +102,11 @@ export const uploadDocuments = async (caseId: string, files: File[]): Promise<vo
 
 export const deleteDocument = async (caseId: string, docId: string): Promise<void> => {
   await api.delete(`/cases/${caseId}/documents/${docId}`);
+};
+
+export const reanalyzeDocument = async (caseId: string, docId: string): Promise<Document> => {
+  const { data } = await api.post(`/cases/${caseId}/documents/${docId}/reanalyze`);
+  return data;
 };
 
 export const getDocumentViewUrl = (caseId: string, docId: string): string => {

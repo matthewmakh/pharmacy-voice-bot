@@ -86,14 +86,24 @@ Document name: ${filename}
 Document type: ${mimeType}
 Document text:
 ---
-${extractedText.slice(0, 8000)}
+${extractedText.slice(0, 15000)}
 ---
 
 Analyze this document and return a JSON object with exactly these fields:
 {
   "classification": one of ["contract", "invoice", "proof_of_work", "communication", "payment_record", "business_record", "screenshot", "other"],
   "confidence": number 0-1 representing confidence in classification,
-  "supportsTags": array of applicable tags from ["agreement_exists", "work_completed", "amount_owed", "payment_terms", "non_payment", "prior_notice", "partial_payment", "debtor_acknowledgment", "delivery_confirmed", "service_described"],
+  "supportsTags": array of all applicable tags from the list below (include every tag that applies):
+    "agreement_exists"       — a formal or informal agreement was made between the parties
+    "work_completed"         — deliverables, services, or goods were actually provided
+    "amount_owed"            — an explicit dollar amount is stated as due
+    "payment_terms"          — states when payment is due or what the terms are
+    "non_payment"            — evidence the invoice or balance was not paid
+    "prior_notice"           — debtor was previously notified of the debt before this case
+    "partial_payment"        — at least some payment was made (implies debtor acknowledged the deal)
+    "debtor_acknowledgment"  — debtor explicitly acknowledged the debt or agreed to pay
+    "delivery_confirmed"     — proof that goods or services were received by the debtor
+    "service_described"      — the nature of the services or goods is specifically described,
   "extractedFacts": {
     "claimantName": string or null,
     "claimantBusiness": string or null,
@@ -110,10 +120,16 @@ Analyze this document and return a JSON object with exactly these fields:
     "serviceEndDate": string (ISO date) or null,
     "paymentTerms": string or null,
     "serviceDescription": string or null,
+    "isSignedOrExecuted": true if signatures, initials, or explicit acceptance appear in the document — otherwise false or null,
+    "disputedByDebtor": true if the debtor disputes the work, invoice, or amounts in this document — otherwise false or null,
+    "lateFeesMentioned": true if late fees, interest rate, or penalty clause is referenced — otherwise false or null,
+    "partialPaymentEvidence": true if a payment is shown even if not the full amount — otherwise false or null,
     "relevantDates": [{"date": "ISO date string", "event": "description"}],
-    "keyStatements": ["important quote 1", "important quote 2"]
+    "keyStatements": [
+      "3-5 quotes most legally significant for a collections claim: explicit amounts, agreements, delivery confirmations, non-payment references, or debtor admissions. Omit filler text."
+    ]
   },
-  "summary": "1-2 sentence summary of what this document is and what it shows"
+  "summary": "1-2 sentence summary of what this document is and what it shows for a collections claim"
 }
 
 Return ONLY valid JSON. No markdown, no explanation.`;

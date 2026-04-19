@@ -18,7 +18,7 @@ async function verifyOwnership(caseId: string, userId: string): Promise<boolean>
 
 // Run Claude analysis on a document in the background — fire and forget
 async function analyzeDocumentInBackground(docId: string, filePath: string, mimeType: string, originalName: string) {
-  try {
+  const attempt = async () => {
     let extractedText: string;
     if (mimeType.startsWith('image/')) {
       extractedText = await extractTextFromImage(filePath);
@@ -37,11 +37,26 @@ async function analyzeDocumentInBackground(docId: string, filePath: string, mime
         supportsTags: analysis.supportsTags,
         extractedFacts: analysis.extractedFacts as never,
         summary: analysis.summary,
+        analysisError: false,
       },
     });
-  } catch (err) {
-    console.error(`Background analysis failed for doc ${docId}:`, err);
-    // Leave the record as-is with null classification — UI shows it as pending
+  };
+
+  try {
+    await attempt();
+  } catch (firstErr) {
+    console.error(`Background analysis attempt 1 failed for doc ${docId}:`, firstErr);
+    // Wait 10s then retry once — handles transient Claude timeouts
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+    try {
+      await attempt();
+    } catch (secondErr) {
+      console.error(`Background analysis attempt 2 failed for doc ${docId}:`, secondErr);
+      await prisma.document.update({
+        where: { id: docId },
+        data: { analysisError: true },
+      }).catch(() => {});
+    }
   }
 }
 
@@ -215,6 +230,39 @@ router.get('/:docId/download', async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to download file' });
+  }
+});
+
+// POST /api/cases/:caseId/documents/:docId/reanalyze — re-trigger analysis for a failed document
+router.post('/:docId/reanalyze', async (req: Request, res: Response) => {
+  try {
+    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+      res.status(404).json({ error: 'Case not found' });
+      return;
+    }
+
+    const doc = await prisma.document.findFirst({
+      where: { id: req.params.docId, caseId: req.params.caseId },
+    });
+
+    if (!doc) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+
+    // Reset error state so the UI shows "Analyzing..." again
+    const updated = await prisma.document.update({
+      where: { id: doc.id },
+      data: { analysisError: false, classification: null },
+    });
+
+    res.json(updated);
+
+    // Fire off analysis again — same pattern as original upload
+    analyzeDocumentInBackground(doc.id, doc.path, doc.mimeType, doc.originalName);
+  } catch (err) {
+    console.error('Reanalyze error:', err);
+    res.status(500).json({ error: 'Failed to queue reanalysis' });
   }
 });
 

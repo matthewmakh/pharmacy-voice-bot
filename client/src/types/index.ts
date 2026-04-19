@@ -49,6 +49,7 @@ export interface Document {
   supportsTags: string[];
   confidence: number | null;
   summary: string | null;
+  analysisError: boolean;
   uploadedAt: string;
 }
 

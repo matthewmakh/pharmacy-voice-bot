@@ -220,6 +220,113 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
   }
 });
 
+// Background helpers — same fire-and-forget pattern as analyzeDocumentInBackground in documents.ts
+
+type DocInput = {
+  originalName: string;
+  classification: string | null;
+  extractedFacts: Record<string, unknown> | null;
+  supportsTags: string[];
+  summary: string | null;
+};
+
+async function analyzeCaseInBackground(
+  caseId: string,
+  docInputs: DocInput[],
+  userFacts: Record<string, unknown>,
+  originalCase: { debtorAddress: string | null; debtorName: string | null; debtorBusiness: string | null; claimantName: string | null; claimantBusiness: string | null; amountOwed: { toString(): string } | null; invoiceDate: Date | null; agreementDate: Date | null; paymentDueDate: Date | null; invoiceNumber: string | null }
+) {
+  try {
+    const synthesis = await synthesizeCase(docInputs, userFacts);
+    const analysisVerification = await verifyCaseSynthesis(synthesis, docInputs, userFacts);
+
+    const f = synthesis.extractedFacts as Record<string, string | boolean | number | null>;
+    const safeDate = (v: unknown) => { if (!v || typeof v !== 'string') return undefined; const d = new Date(v); return isNaN(d.getTime()) ? undefined : d; };
+
+    await prisma.case.update({
+      where: { id: caseId },
+      data: {
+        status: 'STRATEGY_PENDING',
+        caseTimeline: synthesis.timeline,
+        caseSummary: synthesis.caseSummary,
+        missingInfo: synthesis.missingInfo as never,
+        caseStrength: synthesis.caseStrength,
+        evidenceSummary: synthesis.evidenceSummary as never,
+        extractedFacts: synthesis.extractedFacts as never,
+        caseAssessment: synthesis.caseAssessment as never,
+        caseAnalysisVerification: analysisVerification as never,
+        debtorAddress: originalCase.debtorAddress || (f?.debtorAddress as string) || undefined,
+        debtorName: originalCase.debtorName || (f?.debtorName as string) || undefined,
+        debtorBusiness: originalCase.debtorBusiness || (f?.debtorBusiness as string) || undefined,
+        claimantName: originalCase.claimantName || (f?.claimantName as string) || undefined,
+        claimantBusiness: originalCase.claimantBusiness || (f?.claimantBusiness as string) || undefined,
+        amountOwed: originalCase.amountOwed != null ? Number(originalCase.amountOwed.toString()) : (f?.amountOwed != null ? Number(f.amountOwed) : undefined),
+        invoiceDate: originalCase.invoiceDate ?? safeDate(f?.invoiceDate),
+        agreementDate: originalCase.agreementDate ?? safeDate(f?.agreementDate),
+        paymentDueDate: originalCase.paymentDueDate ?? safeDate(f?.paymentDueDate),
+        invoiceNumber: originalCase.invoiceNumber || (f?.invoiceNumber as string) || undefined,
+        actions: {
+          create: {
+            type: 'AI_ANALYSIS_COMPLETED',
+            status: 'COMPLETED',
+            label: 'AI case analysis completed',
+            metadata: { caseStrength: synthesis.caseStrength, documentCount: docInputs.length },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.error(`Background analysis failed for case ${caseId}:`, err);
+    await prisma.case.update({
+      where: { id: caseId },
+      data: { status: 'ASSEMBLING' },
+    }).catch(() => {});
+  }
+}
+
+async function generateLetterInBackground(
+  caseId: string,
+  caseContext: Record<string, unknown>,
+  strategy: string
+) {
+  try {
+    let result = await generateDemandLetter(
+      caseContext,
+      strategy as 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH'
+    );
+    let dlVerification = await verifyDemandLetter(result.html, caseContext);
+    let dlDidRetry = false;
+    if (dlVerification.overallStatus === 'issues_found') {
+      const retried = await retryDemandLetter(result.html, dlVerification, caseContext, strategy);
+      dlVerification = await verifyDemandLetter(retried.html, caseContext);
+      result = retried;
+      dlDidRetry = true;
+    }
+    await prisma.case.update({
+      where: { id: caseId },
+      data: {
+        status: 'READY',
+        demandLetter: result.text,
+        demandLetterHtml: result.html,
+        demandLetterVerification: { ...dlVerification, didRetry: dlDidRetry } as never,
+        actions: {
+          create: {
+            type: 'DEMAND_LETTER_GENERATED',
+            status: 'COMPLETED',
+            label: 'Demand letter generated',
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.error(`Background letter generation failed for case ${caseId}:`, err);
+    await prisma.case.update({
+      where: { id: caseId },
+      data: { status: 'STRATEGY_SELECTED' },
+    }).catch(() => {});
+  }
+}
+
 // POST /api/cases/:id/analyze  — run AI synthesis across all uploaded docs
 router.post('/:id/analyze', async (req: Request, res: Response) => {
   try {
@@ -232,12 +339,6 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
-
-    // Update status to ANALYZING
-    await prisma.case.update({
-      where: { id: req.params.id },
-      data: { status: 'ANALYZING' },
-    });
 
     const docInputs = caseData.documents.map((d) => ({
       originalName: d.originalName,
@@ -270,63 +371,18 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
       industry: caseData.industry,
     };
 
-    const synthesis = await synthesizeCase(docInputs, userFacts);
-
-    // Verify analysis (flag-only — no retry)
-    const analysisVerification = await verifyCaseSynthesis(synthesis, docInputs, userFacts as Record<string, unknown>);
-
-    const updated = await prisma.case.update({
+    // Set ANALYZING, return immediately — synthesis runs in background
+    const updatedCase = await prisma.case.update({
       where: { id: req.params.id },
-      data: {
-        status: 'STRATEGY_PENDING',
-        caseTimeline: synthesis.timeline,
-        caseSummary: synthesis.caseSummary,
-        missingInfo: synthesis.missingInfo as never,
-        caseStrength: synthesis.caseStrength,
-        evidenceSummary: synthesis.evidenceSummary as never,
-        extractedFacts: synthesis.extractedFacts as never,
-        caseAssessment: synthesis.caseAssessment as never,
-        caseAnalysisVerification: analysisVerification as never,
-        // Auto-fill missing fields from AI extraction
-        debtorAddress:
-          caseData.debtorAddress ||
-          (synthesis.extractedFacts as Record<string, string>)?.debtorAddress ||
-          undefined,
-        // Auto-fill more missing fields from AI extraction
-        ...((() => {
-          const f = synthesis.extractedFacts as Record<string, string | boolean | number | null>;
-          const safeDate = (v: unknown) => { if (!v || typeof v !== 'string') return undefined; const d = new Date(v); return isNaN(d.getTime()) ? undefined : d; };
-          return {
-            debtorName: caseData.debtorName || (f?.debtorName as string) || undefined,
-            debtorBusiness: caseData.debtorBusiness || (f?.debtorBusiness as string) || undefined,
-            claimantName: caseData.claimantName || (f?.claimantName as string) || undefined,
-            claimantBusiness: caseData.claimantBusiness || (f?.claimantBusiness as string) || undefined,
-            amountOwed: caseData.amountOwed ?? (f?.amountOwed != null ? Number(f.amountOwed) : undefined),
-            invoiceDate: caseData.invoiceDate ?? safeDate(f?.invoiceDate),
-            agreementDate: caseData.agreementDate ?? safeDate(f?.agreementDate),
-            paymentDueDate: caseData.paymentDueDate ?? safeDate(f?.paymentDueDate),
-            invoiceNumber: caseData.invoiceNumber || (f?.invoiceNumber as string) || undefined,
-          };
-        })()),
-        actions: {
-          create: {
-            type: 'AI_ANALYSIS_COMPLETED',
-            status: 'COMPLETED',
-            label: 'AI case analysis completed',
-            metadata: { caseStrength: synthesis.caseStrength, documentCount: docInputs.length },
-          },
-        },
-      },
+      data: { status: 'ANALYZING' },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
 
-    res.json(updated);
+    res.json(updatedCase);
+
+    analyzeCaseInBackground(caseData.id, docInputs, userFacts as Record<string, unknown>, caseData);
   } catch (err) {
     console.error('Analysis error:', err);
-    await prisma.case.update({
-      where: { id: req.params.id },
-      data: { status: 'ASSEMBLING' },
-    }).catch(() => {});
     res.status(500).json({ error: 'Analysis failed', details: String(err) });
   }
 });
@@ -408,47 +464,18 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       strategy: caseData.strategy,
     };
 
-    let result = await generateDemandLetter(
-      caseContext as Record<string, unknown>,
-      caseData.strategy as 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH'
-    );
-
-    // Verify → retry if issues found → verify again
-    let dlVerification = await verifyDemandLetter(result.html, caseContext as Record<string, unknown>);
-    let dlDidRetry = false;
-    if (dlVerification.overallStatus === 'issues_found') {
-      const retried = await retryDemandLetter(result.html, dlVerification, caseContext as Record<string, unknown>, caseData.strategy);
-      const retryVerification = await verifyDemandLetter(retried.html, caseContext as Record<string, unknown>);
-      result = retried;
-      dlVerification = retryVerification;
-      dlDidRetry = true;
-    }
-
-    const updated = await prisma.case.update({
+    // Set GENERATING, return immediately — letter generation runs in background
+    const updatedCase = await prisma.case.update({
       where: { id: req.params.id },
-      data: {
-        status: 'READY',
-        demandLetter: result.text,
-        demandLetterHtml: result.html,
-        demandLetterVerification: { ...dlVerification, didRetry: dlDidRetry } as never,
-        actions: {
-          create: {
-            type: 'DEMAND_LETTER_GENERATED',
-            status: 'COMPLETED',
-            label: 'Demand letter generated',
-          },
-        },
-      },
+      data: { status: 'GENERATING' },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
 
-    res.json(updated);
+    res.json(updatedCase);
+
+    generateLetterInBackground(caseData.id, caseContext as Record<string, unknown>, caseData.strategy!);
   } catch (err) {
     console.error('Letter generation error:', err);
-    await prisma.case.update({
-      where: { id: req.params.id },
-      data: { status: 'STRATEGY_SELECTED' },
-    }).catch(() => {});
     res.status(500).json({ error: 'Letter generation failed', details: String(err) });
   }
 });

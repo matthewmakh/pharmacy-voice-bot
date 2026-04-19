@@ -124,6 +124,7 @@ model Document {
   supportsTags   String[]
   confidence     Float?
   summary        String? @db.Text
+  analysisError  Boolean @default(false)
 
   uploadedAt DateTime @default(now())
 

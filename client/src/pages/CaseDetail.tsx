@@ -34,6 +34,7 @@ import {
   generateDefaultJudgment,
   uploadDocuments,
   deleteDocument,
+  reanalyzeDocument,
   logAction,
   updateCase,
   getDocumentViewUrl,
@@ -868,6 +869,11 @@ function EvidenceTab({ caseData, onRefresh }: { caseData: Case; onRefresh: () =>
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
+  const reanalyzeMutation = useMutation({
+    mutationFn: (docId: string) => reanalyzeDocument(caseData.id, docId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
   return (
     <div className="space-y-6">
       <UploadZone onUpload={handleUpload} uploading={uploading} />
@@ -883,7 +889,20 @@ function EvidenceTab({ caseData, onRefresh }: { caseData: Case; onRefresh: () =>
                   {formatFileSize(doc.size)} · {formatDate(doc.uploadedAt)}
                 </div>
               </div>
-              {doc.classification === null ? (
+              {doc.analysisError ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-red-50 text-red-600 rounded-full">
+                    <AlertCircle className="w-3 h-3" /> Analysis failed
+                  </span>
+                  <button
+                    onClick={() => reanalyzeMutation.mutate(doc.id)}
+                    disabled={reanalyzeMutation.isPending}
+                    className="text-xs text-blue-600 hover:text-blue-700 underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : doc.classification === null ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-500 rounded-full">
                   <Loader2 className="w-3 h-3 animate-spin" /> Analyzing...
                 </span>
@@ -3101,7 +3120,7 @@ export default function CaseDetail() {
       const data = query.state.data;
       if (!data) return false;
       const analyzing = ['ANALYZING', 'GENERATING'].includes(data.status);
-      const docsAnalyzing = data.documents.some((d) => d.classification === null);
+      const docsAnalyzing = data.documents.some((d) => d.classification === null && !d.analysisError);
       return analyzing || docsAnalyzing ? 3000 : false;
     },
   });
