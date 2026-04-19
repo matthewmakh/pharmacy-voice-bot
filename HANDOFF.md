@@ -361,9 +361,7 @@ Reusable pieces (all in `case-detail/shared/`):
 
 - **UCC lookup**: Requires 2captcha API key for NYS UCC scraper
 
-- **Frontend refresh not visually QA'd**: The April 19 2026 refactor (commit `f65f1ef`) passed `tsc --noEmit` and `npm run build`, and was audited for 1:1 functional parity against the pre-change commit (`d18f3d9`). However it was **not** clicked through in a live browser. Before merging, run `cd client && npm run dev` and walk through: Dashboard → open a case → every tab (Overview, Evidence, Strategy, Letter, Escalation, Filing, Timeline) in each status (DRAFT, STRATEGY_PENDING, READY, ESCALATING). Confirm `RotatingFact` appears during analyze/generate waits and `VerificationPanel` appears below each generated document.
-
-- **Minor residual emoji**: `client/src/pages/NewCase.tsx:38` still renders a literal `'✓'` character in the step checklist. Pre-existing from before the refresh, but if you want full Lucide parity, swap for `<CheckCircle2 className="w-3.5 h-3.5" />`.
+- **Frontend refresh — browser QA pending**: The April 19 2026 refactor (commits `f65f1ef` + `18f6547` + follow-ups) passed `tsc --noEmit`, `npm run build`, and a smoke test against the Vite dev server (every key file served with HTTP 200, no transform errors). It was also audited for 1:1 functional parity against the pre-change commit `d18f3d9`. Still advisable to click through the live UI once before merging: Dashboard → open a case → every tab (Overview, Evidence, Strategy, Letter, Escalation, Filing, Timeline) in each status (DRAFT, STRATEGY_PENDING, READY, ESCALATING). Confirm `RotatingFact` appears during analyze/generate waits and `VerificationPanel` appears below each generated document.
 
 ---
 
