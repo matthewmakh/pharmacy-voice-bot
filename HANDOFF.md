@@ -3,7 +3,7 @@
 **Branch:** `claude/collections-platform-mvp-J862j`  
 **Deployed at:** `https://getmoney.up.railway.app`  
 **Repo:** `matthewmakh/pharmacy-voice-bot`  
-**DB:** Railway PostgreSQL — `shortline.proxy.rlwy.net:57411/railway`
+**DB:** Railway PostgreSQL (get connection string from Railway dashboard)
 
 ---
 
@@ -325,6 +325,8 @@ NODE_ENV              — production
 
 ## DB Access (Direct)
 
+Get the connection string from Railway dashboard → PostgreSQL service → Connect tab.
+
 ```bash
-psql postgresql://postgres:JCHIzHSSraaQfGlSYkSIXUVOFgLIkARX@shortline.proxy.rlwy.net:57411/railway
+psql YOUR_RAILWAY_DATABASE_URL
 ```
