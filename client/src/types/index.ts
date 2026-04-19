@@ -70,6 +70,22 @@ export interface MissingInfoItem {
   workaround?: string;
 }
 
+export interface DocumentVerification {
+  overallStatus: 'verified' | 'review_needed' | 'issues_found';
+  checks: Array<{
+    field: string;
+    status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
+    expected: string | null;
+    found: string | null;
+    note: string;
+  }>;
+  summary: string;
+  blankFields: string[];
+  verifiedAt: string;
+  didRetry?: boolean;
+  generationFailed?: boolean;
+}
+
 export interface CaseAssessment {
   primaryCauseOfAction: {
     theory: 'breach_of_written_contract' | 'breach_of_oral_contract' | 'account_stated' | 'quantum_meruit';
@@ -140,21 +156,12 @@ export interface Case {
   filingPacketHtml: string | null;
   courtFormType: string | null;
   courtFormInstructions: string[] | null;
-  courtFormVerification: {
-    overallStatus: 'verified' | 'review_needed' | 'issues_found';
-    checks: Array<{
-      field: string;
-      status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
-      expected: string | null;
-      found: string | null;
-      note: string;
-    }>;
-    summary: string;
-    blankFields: string[];
-    verifiedAt: string;
-    didRetry?: boolean;
-    generationFailed?: boolean;
-  } | null;
+  courtFormVerification:       DocumentVerification | null;
+  demandLetterVerification:    DocumentVerification | null;
+  caseAnalysisVerification:    DocumentVerification | null;
+  defaultJudgmentVerification: DocumentVerification | null;
+  settlementVerification:      DocumentVerification | null;
+  paymentPlanVerification:     DocumentVerification | null;
   defaultJudgment: string | null;
   defaultJudgmentHtml: string | null;
 

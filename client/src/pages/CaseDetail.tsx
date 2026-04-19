@@ -62,7 +62,7 @@ import {
   STRENGTH_COLORS,
   formatFileSize,
 } from '../lib/utils';
-import type { Case, Strategy, ActionType, MissingInfoItem, CaseAssessment } from '../types';
+import type { Case, Strategy, ActionType, MissingInfoItem, CaseAssessment, DocumentVerification } from '../types';
 import UploadZone from '../components/evidence/UploadZone';
 
 // ─── Rotating Facts Loader ─────────────────────────────────────────────────────
@@ -239,6 +239,69 @@ function InlineProgress({ startedAt, estimatedSeconds, label }: {
           style={{ width: `${progress}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+// ─── VerificationPanel ────────────────────────────────────────────────────────
+function VerificationPanel({ verification: v, title = 'AI Verification Report' }: {
+  verification: DocumentVerification;
+  title?: string;
+}) {
+  const statusConfig = {
+    verified: { bg: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-800', icon: '✓', label: 'Verified' },
+    review_needed: { bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-800', icon: '⚠', label: 'Review Needed' },
+    issues_found: { bg: 'bg-red-50 border-red-200', badge: 'bg-red-100 text-red-800', icon: '✗', label: 'Issues Found' },
+  }[v.overallStatus];
+  const checkIcon = { ok: '✓', missing: '○', mismatch: '✗', hallucinated: '!' };
+  const checkColor = { ok: 'text-emerald-600', missing: 'text-amber-500', mismatch: 'text-red-600', hallucinated: 'text-red-700 font-bold' };
+  const issues = v.checks.filter(c => c.status !== 'ok');
+  const okCount = v.checks.filter(c => c.status === 'ok').length;
+  return (
+    <div className={`card p-5 border ${statusConfig.bg}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{title}</div>
+          {v.didRetry && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">Auto-corrected</span>
+          )}
+        </div>
+        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${statusConfig.badge}`}>
+          {statusConfig.icon} {statusConfig.label}
+        </span>
+      </div>
+      <p className="text-sm text-slate-700 mb-4">{v.summary}</p>
+      <div className="flex gap-4 text-xs text-slate-500 mb-4">
+        <span><span className="font-semibold text-emerald-600">{okCount}</span> verified</span>
+        <span><span className={`font-semibold ${issues.length > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{issues.length}</span> flagged</span>
+        <span className="text-slate-300">·</span>
+        <span><span className="font-semibold text-amber-500">{v.checks.filter(c => c.status === 'missing').length}</span> missing</span>
+        <span><span className="font-semibold text-red-600">{v.checks.filter(c => c.status === 'mismatch' || c.status === 'hallucinated').length}</span> errors</span>
+      </div>
+      {issues.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {issues.map((check, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm">
+              <span className={`shrink-0 font-bold w-4 text-center ${checkColor[check.status as keyof typeof checkColor]}`}>{checkIcon[check.status as keyof typeof checkIcon]}</span>
+              <div className="flex-1 min-w-0">
+                <span className="font-medium text-slate-700">{check.field}</span>
+                {check.note && <span className="text-slate-500"> — {check.note}</span>}
+                {(check.expected || check.found) && (
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    {check.expected && <span>Expected: <span className="text-slate-600">{check.expected}</span></span>}
+                    {check.found && check.status !== 'ok' && <span className="ml-3">Found: <span className="text-slate-600">{check.found}</span></span>}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {v.blankFields.length > 0 && (
+        <div className="text-xs text-slate-500 border-t border-black/5 pt-3">
+          <span className="font-semibold">Blank / UNKNOWN fields:</span> {v.blankFields.join(', ')}
+        </div>
+      )}
     </div>
   );
 }
@@ -1749,6 +1812,11 @@ function StrategyTab({ caseData }: { caseData: Case }) {
         );
       })()}
 
+      {/* Analysis Verification — flags conclusions not grounded in evidence */}
+      {caseData.caseAnalysisVerification && (
+        <VerificationPanel verification={caseData.caseAnalysisVerification} title="Analysis Verification" />
+      )}
+
       {/* Refine Strategy with Research — shown when at least one lookup result is stored */}
       <RefineStrategyPanel caseData={caseData} />
 
@@ -1898,6 +1966,9 @@ function LetterTab({ caseData }: { caseData: Case }) {
           Regenerate
         </button>
       </div>
+      {caseData.demandLetterVerification && (
+        <VerificationPanel verification={caseData.demandLetterVerification} />
+      )}
       <div className="card p-8">
         <div
           className="prose prose-sm max-w-none prose-slate"
@@ -2119,65 +2190,9 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             </div>
 
             {/* Verification panel */}
-            {caseData.courtFormVerification && (() => {
-              const v = caseData.courtFormVerification!;
-              const statusConfig = {
-                verified: { bg: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-800', icon: '✓', label: 'Verified' },
-                review_needed: { bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-800', icon: '⚠', label: 'Review Needed' },
-                issues_found: { bg: 'bg-red-50 border-red-200', badge: 'bg-red-100 text-red-800', icon: '✗', label: 'Issues Found' },
-              }[v.overallStatus];
-              const checkIcon = { ok: '✓', missing: '○', mismatch: '✗', hallucinated: '!' };
-              const checkColor = { ok: 'text-emerald-600', missing: 'text-amber-500', mismatch: 'text-red-600', hallucinated: 'text-red-700 font-bold' };
-              const issues = v.checks.filter(c => c.status !== 'ok');
-              const okCount = v.checks.filter(c => c.status === 'ok').length;
-              return (
-                <div className={`card p-5 border ${statusConfig.bg}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Verification Report</div>
-                      {v.didRetry && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">Auto-corrected</span>
-                      )}
-                    </div>
-                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${statusConfig.badge}`}>
-                      {statusConfig.icon} {statusConfig.label}
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-700 mb-4">{v.summary}</p>
-                  <div className="flex gap-4 text-xs text-slate-500 mb-4">
-                    <span><span className="font-semibold text-emerald-600">{okCount}</span> verified</span>
-                    <span><span className={`font-semibold ${issues.length > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{issues.length}</span> flagged</span>
-                    <span className="text-slate-300">·</span>
-                    <span><span className="font-semibold text-amber-500">{v.checks.filter(c => c.status === 'missing').length}</span> missing</span>
-                    <span><span className="font-semibold text-red-600">{v.checks.filter(c => c.status === 'mismatch' || c.status === 'hallucinated').length}</span> errors</span>
-                  </div>
-                  {issues.length > 0 && (
-                    <div className="space-y-2 mb-3">
-                      {issues.map((check, i) => (
-                        <div key={i} className="flex items-start gap-2 text-sm">
-                          <span className={`shrink-0 font-bold w-4 text-center ${checkColor[check.status]}`}>{checkIcon[check.status]}</span>
-                          <div className="flex-1 min-w-0">
-                            <span className="font-medium text-slate-700">{check.field}</span>
-                            {check.note && <span className="text-slate-500"> — {check.note}</span>}
-                            {(check.expected || check.found) && (
-                              <div className="text-xs text-slate-400 mt-0.5">
-                                {check.expected && <span>Expected: <span className="text-slate-600">{check.expected}</span></span>}
-                                {check.found && check.status !== 'ok' && <span className="ml-3">Found: <span className="text-slate-600">{check.found}</span></span>}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {v.blankFields.length > 0 && (
-                    <div className="text-xs text-slate-500 border-t border-black/5 pt-3">
-                      <span className="font-semibold">Blank / UNKNOWN fields:</span> {v.blankFields.join(', ')}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            {caseData.courtFormVerification && (
+              <VerificationPanel verification={caseData.courtFormVerification} />
+            )}
 
             {/* Instructions list */}
             {caseData.courtFormInstructions && caseData.courtFormInstructions.length > 0 && (
@@ -2406,6 +2421,9 @@ function EscalationTab({ caseData }: { caseData: Case }) {
                     </a>
                     <button onClick={() => defaultJudgmentMutation.mutate()} className="btn-secondary text-sm ml-auto">Regenerate</button>
                   </div>
+                  {caseData.defaultJudgmentVerification && (
+                    <VerificationPanel verification={caseData.defaultJudgmentVerification} />
+                  )}
                   <div className="card p-8">
                     <div className="prose prose-sm max-w-none prose-slate" dangerouslySetInnerHTML={{ __html: caseData.defaultJudgmentHtml }} />
                   </div>
@@ -2443,14 +2461,19 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             {settlementMutation.isPending && settlementStartRef.current ? (
               <InlineProgress startedAt={settlementStartRef.current} estimatedSeconds={15} label="Generating…" />
             ) : caseData.settlementHtml ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => openHtmlInTab(caseData.settlementHtml || '', 'Stipulation of Settlement')} className="btn-secondary text-xs flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5" /> View
-                </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
-                <button onClick={() => settlementMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => openHtmlInTab(caseData.settlementHtml || '', 'Stipulation of Settlement')} className="btn-secondary text-xs flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5" /> View
+                  </button>
+                  <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Download PDF
+                  </a>
+                  <button onClick={() => settlementMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+                </div>
+                {caseData.settlementVerification && (
+                  <VerificationPanel verification={caseData.settlementVerification} />
+                )}
               </div>
             ) : (
               <button onClick={() => settlementMutation.mutate()} className="btn-secondary text-sm">Generate Settlement Agreement</button>
@@ -2466,14 +2489,19 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             {paymentPlanMutation.isPending && paymentPlanStartRef.current ? (
               <InlineProgress startedAt={paymentPlanStartRef.current} estimatedSeconds={15} label="Generating…" />
             ) : caseData.paymentPlanHtml ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => openHtmlInTab(caseData.paymentPlanHtml || '', 'Payment Plan Agreement')} className="btn-secondary text-xs flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5" /> View
-                </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
-                <button onClick={() => paymentPlanMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => openHtmlInTab(caseData.paymentPlanHtml || '', 'Payment Plan Agreement')} className="btn-secondary text-xs flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5" /> View
+                  </button>
+                  <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Download PDF
+                  </a>
+                  <button onClick={() => paymentPlanMutation.mutate()} className="btn-secondary text-xs">Regenerate</button>
+                </div>
+                {caseData.paymentPlanVerification && (
+                  <VerificationPanel verification={caseData.paymentPlanVerification} />
+                )}
               </div>
             ) : (
               <button onClick={() => paymentPlanMutation.mutate()} className="btn-secondary text-sm">Generate Payment Plan</button>

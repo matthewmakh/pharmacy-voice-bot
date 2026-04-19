@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyDemandLetter, retryDemandLetter, verifyCaseSynthesis, verifyDefaultJudgment, retryDefaultJudgment, verifySettlement, retrySettlement, verifyPaymentPlan, retryPaymentPlan } from '../services/claude';
 import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
@@ -209,6 +209,7 @@ router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
         extractedFacts: null as never,
         caseAssessment: null as never,
         // Preserve: strategy, demandLetter, finalNotice, filingPacket
+        caseAnalysisVerification: null as never,
       },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
@@ -271,6 +272,9 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
 
     const synthesis = await synthesizeCase(docInputs, userFacts);
 
+    // Verify analysis (flag-only — no retry)
+    const analysisVerification = await verifyCaseSynthesis(synthesis, docInputs, userFacts as Record<string, unknown>);
+
     const updated = await prisma.case.update({
       where: { id: req.params.id },
       data: {
@@ -282,6 +286,7 @@ router.post('/:id/analyze', async (req: Request, res: Response) => {
         evidenceSummary: synthesis.evidenceSummary as never,
         extractedFacts: synthesis.extractedFacts as never,
         caseAssessment: synthesis.caseAssessment as never,
+        caseAnalysisVerification: analysisVerification as never,
         // Auto-fill missing fields from AI extraction
         debtorAddress:
           caseData.debtorAddress ||
@@ -400,12 +405,24 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       evidenceSummary: caseData.evidenceSummary,
       timeline: caseData.caseTimeline,
       documentTypes: caseData.documents.map((d) => d.classification).filter(Boolean),
+      strategy: caseData.strategy,
     };
 
-    const result = await generateDemandLetter(
+    let result = await generateDemandLetter(
       caseContext as Record<string, unknown>,
       caseData.strategy as 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH'
     );
+
+    // Verify → retry if issues found → verify again
+    let dlVerification = await verifyDemandLetter(result.html, caseContext as Record<string, unknown>);
+    let dlDidRetry = false;
+    if (dlVerification.overallStatus === 'issues_found') {
+      const retried = await retryDemandLetter(result.html, dlVerification, caseContext as Record<string, unknown>, caseData.strategy);
+      const retryVerification = await verifyDemandLetter(retried.html, caseContext as Record<string, unknown>);
+      result = retried;
+      dlVerification = retryVerification;
+      dlDidRetry = true;
+    }
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
@@ -413,6 +430,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         status: 'READY',
         demandLetter: result.text,
         demandLetterHtml: result.html,
+        demandLetterVerification: { ...dlVerification, didRetry: dlDidRetry } as never,
         actions: {
           create: {
             type: 'DEMAND_LETTER_GENERATED',
@@ -860,11 +878,25 @@ router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
       courtFormType: caseData.courtFormType,
     };
 
-    const result = await generateStipulationOfSettlement(context as Record<string, unknown>);
+    let result = await generateStipulationOfSettlement(context as Record<string, unknown>);
+
+    // Verify → retry if issues found → verify again
+    let stlVerification = await verifySettlement(result.html, context as Record<string, unknown>);
+    let stlDidRetry = false;
+    if (stlVerification.overallStatus === 'issues_found') {
+      const retried = await retrySettlement(result.html, stlVerification, context as Record<string, unknown>);
+      const retryV = await verifySettlement(retried.html, context as Record<string, unknown>);
+      result = retried;
+      stlVerification = retryV;
+      stlDidRetry = true;
+    }
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
-      data: { settlementHtml: result.html },
+      data: {
+        settlementHtml: result.html,
+        settlementVerification: { ...stlVerification, didRetry: stlDidRetry } as never,
+      },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
     res.json(updated);
@@ -911,11 +943,25 @@ router.post('/:id/generate-payment-plan', async (req: Request, res: Response) =>
       serviceDescription: caseData.serviceDescription,
     };
 
-    const result = await generatePaymentPlanAgreement(context as Record<string, unknown>);
+    let result = await generatePaymentPlanAgreement(context as Record<string, unknown>);
+
+    // Verify → retry if issues found → verify again
+    let ppVerification = await verifyPaymentPlan(result.html, context as Record<string, unknown>);
+    let ppDidRetry = false;
+    if (ppVerification.overallStatus === 'issues_found') {
+      const retried = await retryPaymentPlan(result.html, ppVerification, context as Record<string, unknown>);
+      const retryV = await verifyPaymentPlan(retried.html, context as Record<string, unknown>);
+      result = retried;
+      ppVerification = retryV;
+      ppDidRetry = true;
+    }
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
-      data: { paymentPlanHtml: result.html },
+      data: {
+        paymentPlanHtml: result.html,
+        paymentPlanVerification: { ...ppVerification, didRetry: ppDidRetry } as never,
+      },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
     res.json(updated);
@@ -1187,13 +1233,25 @@ router.post('/:id/default-judgment', async (req: Request, res: Response) => {
       finalNoticeSent: !!caseData.finalNotice,
     };
 
-    const result = await generateDefaultJudgment(context as Record<string, unknown>);
+    let result = await generateDefaultJudgment(context as Record<string, unknown>);
+
+    // Verify → retry if issues found → verify again
+    let djVerification = await verifyDefaultJudgment(result.html, context as Record<string, unknown>);
+    let djDidRetry = false;
+    if (djVerification.overallStatus === 'issues_found') {
+      const retried = await retryDefaultJudgment(result.html, djVerification, context as Record<string, unknown>);
+      const retryVerification = await verifyDefaultJudgment(retried.html, context as Record<string, unknown>);
+      result = retried;
+      djVerification = retryVerification;
+      djDidRetry = true;
+    }
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },
       data: {
         defaultJudgment: result.text,
         defaultJudgmentHtml: result.html,
+        defaultJudgmentVerification: { ...djVerification, didRetry: djDidRetry } as never,
         actions: {
           create: { type: 'DEFAULT_JUDGMENT_GENERATED', status: 'COMPLETED', label: 'Default judgment motion generated' },
         },

@@ -1427,3 +1427,570 @@ Return ONLY valid JSON.`;
     return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
   }
 }
+
+// ─── Demand Letter Verification ──────────────────────────────────────────────
+
+export async function verifyDemandLetter(
+  html: string,
+  caseData: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const outstandingBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+
+  const strategyDeadlines: Record<string, number> = {
+    QUICK_ESCALATION: 7,
+    STANDARD_RECOVERY: 14,
+    GRADUAL_APPROACH: 21,
+  };
+  const expectedDays = strategyDeadlines[String(caseData.strategy ?? '')] ?? null;
+
+  const dlPrompt = `You are an adversarial reviewer checking a pre-filled demand letter for factual accuracy. Your job is to catch genuinely wrong facts, missing required fields, and values that contradict the source case data.
+
+SOURCE CASE DATA (ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+COMPUTED VALUES (treat as ground truth):
+- outstandingBalance: $${outstandingBalance} (= amountOwed minus amountPaid)
+- Strategy: ${caseData.strategy ?? 'unknown'}
+- Expected response deadline: ${expectedDays !== null ? `${expectedDays} days` : 'unknown (strategy not set)'}
+
+GENERATED DEMAND LETTER HTML:
+${html.slice(0, 20000)}
+
+Check each of the following:
+- Plaintiff/claimant name and business name
+- Defendant/debtor name and business name
+- Defendant address
+- Amount demanded (must equal outstandingBalance $${outstandingBalance}, NOT full amountOwed)
+- Invoice number
+- Invoice date
+- Payment due date
+- Agreement/service date
+- Response deadline days (QUICK_ESCALATION=7, STANDARD_RECOVERY=14, GRADUAL_APPROACH=21)
+- No facts asserted that are absent from case data
+- Tone appropriate for strategy (QUICK=firm/urgent, STANDARD=professional, GRADUAL=cooperative)
+
+For each check:
+- "ok": correct or valid legal statement
+- "missing": required field blank when data exists
+- "mismatch": directly contradicts case data
+- "hallucinated": specific party fact invented and not in case data
+
+Return JSON:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [{ "field": "...", "status": "ok|missing|mismatch|hallucinated", "expected": "...", "found": "...", "note": "..." }],
+  "summary": "1-2 sentence summary of genuine issues only",
+  "blankFields": []
+}
+
+Status rules:
+- "verified": all facts match, deadline matches strategy
+- "review_needed": 1-2 missing fields where data wasn't available
+- "issues_found": wrong amount, wrong party name, invented fact, or wrong deadline
+
+Return ONLY valid JSON.`;
+
+  const dlResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: dlPrompt }],
+  });
+
+  const dlContent = dlResp.content[0];
+  if (dlContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(dlContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Please review the letter manually.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+export async function retryDemandLetter(
+  originalHtml: string,
+  verification: CourtFormVerification,
+  caseData: Record<string, unknown>,
+  strategy: string
+): Promise<DemandLetterResult> {
+  const dlIssues = verification.checks.filter(c => c.status !== 'ok');
+  const dlVerified = verification.checks.filter(c => c.status === 'ok');
+  const dlBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+  const dlDeadlines: Record<string, number> = { QUICK_ESCALATION: 7, STANDARD_RECOVERY: 14, GRADUAL_APPROACH: 21 };
+  const dlExpectedDays = dlDeadlines[strategy] ?? 14;
+
+  const dlIssueList = dlIssues
+    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
+    .join('\n\n');
+  const dlVerifiedList = dlVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
+
+  const dlRetryPrompt = `You previously generated a demand letter. Verification found issues. Regenerate with only the flagged errors corrected — keep all other content unchanged.
+
+VERIFICATION SUMMARY: ${verification.summary}
+
+SOURCE CASE DATA (absolute ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+- outstandingBalance: $${dlBalance} (use this as the demand amount)
+- Strategy: ${strategy}
+- Required response deadline: ${dlExpectedDays} days
+
+FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
+${dlVerifiedList || '(none)'}
+
+ISSUES TO FIX (${dlIssues.length}):
+${dlIssueList}
+
+ORIGINAL LETTER HTML:
+${originalHtml.slice(0, 8000)}
+
+Rules: Fix only flagged issues. Amount must be $${dlBalance}. Deadline must be ${dlExpectedDays} days. If verifier contradicts case data, follow case data.
+
+Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
+Return ONLY valid JSON.`;
+
+  const dlRetryResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: dlRetryPrompt }],
+  });
+
+  const dlRetryContent = dlRetryResp.content[0];
+  if (dlRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(dlRetryContent.text)) as DemandLetterResult;
+  } catch {
+    return { text: originalHtml, html: originalHtml };
+  }
+}
+
+// ─── Case Analysis Verification (flag-only, no retry) ─────────────────────────
+
+export async function verifyCaseSynthesis(
+  synthesis: CaseSynthesis,
+  documents: Array<{
+    classification: string | null;
+    supportsTags: string[];
+    summary: string | null;
+    extractedFacts: Record<string, unknown> | null;
+  }>,
+  userFacts: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const synthPrompt = `You are an adversarial reviewer checking an AI-generated legal case analysis for logical consistency and factual grounding. Flag conclusions not supported by the underlying evidence.
+
+USER-PROVIDED FACTS (ground truth):
+${JSON.stringify(userFacts, null, 2)}
+
+DOCUMENTS SUBMITTED (evidence base):
+${JSON.stringify(documents.map(d => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary, extractedFacts: d.extractedFacts })), null, 2)}
+
+AI-GENERATED CASE ANALYSIS:
+${JSON.stringify(synthesis, null, 2)}
+
+Check each of the following:
+- caseStrength: if "strong", verify written contract or strong documentary evidence exists; flag if assessed strong with only oral/weak evidence
+- primaryCauseOfAction.theory: if "breach_of_written_contract", verify hasWrittenContract is true OR a contract document exists; flag otherwise
+- elements[].satisfied = true: each satisfied element must have a non-null evidence field; flag satisfied elements with null evidence
+- counterclaimRisk.signals: each signal must trace to documents or userFacts; flag invented signals
+- caseSummary: must not assert facts absent from userFacts and documents
+- recommendedStrategy: if caseStrength "weak" and strategy QUICK_ESCALATION with no asset evidence, flag as potentially aggressive
+
+For each check:
+- "ok": grounded in evidence
+- "missing": required evidence absent
+- "mismatch": analysis contradicts evidence
+- "hallucinated": fact not present in userFacts or documents
+
+Return JSON:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
+  "summary": "1-2 sentence summary of whether analysis is well-grounded",
+  "blankFields": []
+}
+
+Return ONLY valid JSON.`;
+
+  const synthResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: synthPrompt }],
+  });
+
+  const synthContent = synthResp.content[0];
+  if (synthContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(synthContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Analysis verification could not be completed automatically.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+// ─── Default Judgment Verification ───────────────────────────────────────────
+
+export async function verifyDefaultJudgment(
+  html: string,
+  caseData: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const djBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+  const djBalanceNum = parseFloat(djBalance);
+  const djExpectedCourt = djBalanceNum < 10000
+    ? 'Commercial Claims Court'
+    : djBalanceNum < 50000
+    ? 'Civil Court of the City of New York'
+    : 'Supreme Court of the State of New York';
+
+  const djVerifyPrompt = `You are an adversarial reviewer checking a Motion for Default Judgment for accuracy before court filing.
+
+SOURCE CASE DATA (ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+COMPUTED VALUES:
+- outstandingBalance: $${djBalance}
+- Expected court: ${djExpectedCourt}
+- Service: ${caseData.serviceInitiatedDate ? `initiated ${caseData.serviceInitiatedDate}` : 'not in case data'}
+
+GENERATED DEFAULT JUDGMENT HTML:
+${html.slice(0, 20000)}
+
+Check:
+- Plaintiff/claimant name (must match exactly)
+- Defendant name (must match exactly)
+- Dollar amount (must equal $${djBalance}, not full amountOwed)
+- Court name (should match ${djExpectedCourt})
+- County (derive from debtor address)
+- Service date (must match case data if available; flag [UNKNOWN] if data exists)
+- All 3 sections present: Notice of Motion, Affidavit in Support, Proposed Order/Judgment
+- No [UNKNOWN — VERIFY BEFORE FILING] for fields that ARE in case data
+- No facts absent from case data
+
+For each check: "ok" | "missing" | "mismatch" | "hallucinated"
+
+Return JSON:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
+  "summary": "1-2 sentence summary",
+  "blankFields": ["fields [UNKNOWN] where data was available"]
+}
+
+Return ONLY valid JSON.`;
+
+  const djResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: djVerifyPrompt }],
+  });
+
+  const djContent = djResp.content[0];
+  if (djContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(djContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before filing.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+export async function retryDefaultJudgment(
+  originalHtml: string,
+  verification: CourtFormVerification,
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const djRetryIssues = verification.checks.filter(c => c.status !== 'ok');
+  const djRetryVerified = verification.checks.filter(c => c.status === 'ok');
+  const djRetryBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+
+  const djIssueList = djRetryIssues
+    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
+    .join('\n\n');
+  const djVerifiedList = djRetryVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
+
+  const djRetryPrompt = `You previously generated a Motion for Default Judgment. Verification found issues. Regenerate the full document with only the flagged errors corrected.
+
+VERIFICATION SUMMARY: ${verification.summary}
+
+SOURCE CASE DATA (absolute ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+- outstandingBalance: $${djRetryBalance} (correct judgment amount)
+
+FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
+${djVerifiedList || '(none)'}
+
+ISSUES TO FIX (${djRetryIssues.length}):
+${djIssueList}
+
+ORIGINAL DOCUMENT HTML:
+${originalHtml.slice(0, 8000)}
+
+Rules: Keep all 3 sections. Amount must be $${djRetryBalance}. Return complete corrected HTML.
+
+Return ONLY raw HTML. No JSON, no markdown, no code fences.`;
+
+  const djRetryResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no commentary.',
+    messages: [{ role: 'user', content: djRetryPrompt }],
+  });
+
+  const djRetryContent = djRetryResp.content[0];
+  if (djRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  const djHtml = djRetryContent.text
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+
+  return { text: djHtml, html: djHtml };
+}
+
+// ─── Settlement Verification ──────────────────────────────────────────────────
+
+export async function verifySettlement(
+  html: string,
+  caseData: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const stlFullOwed = parseFloat(String(caseData.amountOwed ?? '0')).toFixed(2);
+
+  const stlVerifyPrompt = `You are an adversarial reviewer checking a Stipulation of Settlement for accuracy.
+
+SOURCE CASE DATA (ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+COMPUTED VALUES:
+- Full amount owed (original debt): $${stlFullOwed} — should appear in default/acceleration clause
+- Settlement amount: must be BLANK PLACEHOLDER (to be negotiated) — flag as hallucinated if pre-filled
+
+GENERATED SETTLEMENT HTML:
+${html.slice(0, 20000)}
+
+Check:
+- Plaintiff/creditor name and business (must match exactly)
+- Defendant/debtor name and business (must match exactly)
+- Original debt in default/acceleration clause (must be $${stlFullOwed})
+- Settlement amount (must be blank or "TO BE NEGOTIATED" — flag as hallucinated if pre-filled)
+- Governing law (must be New York)
+- Signature blocks present for both parties
+- No facts absent from case data
+
+For each check: "ok" | "missing" | "mismatch" | "hallucinated"
+
+Return JSON:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
+  "summary": "1-2 sentence summary",
+  "blankFields": []
+}
+
+Return ONLY valid JSON.`;
+
+  const stlResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: stlVerifyPrompt }],
+  });
+
+  const stlContent = stlResp.content[0];
+  if (stlContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(stlContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before signing.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+export async function retrySettlement(
+  originalHtml: string,
+  verification: CourtFormVerification,
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const stlIssues = verification.checks.filter(c => c.status !== 'ok');
+  const stlVerified = verification.checks.filter(c => c.status === 'ok');
+  const stlFullOwed = parseFloat(String(caseData.amountOwed ?? '0')).toFixed(2);
+
+  const stlIssueList = stlIssues
+    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
+    .join('\n\n');
+  const stlVerifiedList = stlVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
+
+  const stlRetryPrompt = `You previously generated a Stipulation of Settlement. Verification found issues. Regenerate with only flagged errors corrected.
+
+VERIFICATION SUMMARY: ${verification.summary}
+
+SOURCE CASE DATA: ${JSON.stringify(caseData, null, 2)}
+
+- Full debt for default clause: $${stlFullOwed}
+- Settlement amount must remain blank — do NOT fill it in
+
+FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
+${stlVerifiedList || '(none)'}
+
+ISSUES TO FIX (${stlIssues.length}): ${stlIssueList}
+
+ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
+
+Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
+Return ONLY valid JSON.`;
+
+  const stlRetryResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: stlRetryPrompt }],
+  });
+
+  const stlRetryContent = stlRetryResp.content[0];
+  if (stlRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(stlRetryContent.text)) as DemandLetterResult;
+  } catch {
+    return { text: originalHtml, html: originalHtml };
+  }
+}
+
+// ─── Payment Plan Verification ────────────────────────────────────────────────
+
+export async function verifyPaymentPlan(
+  html: string,
+  caseData: Record<string, unknown>
+): Promise<CourtFormVerification> {
+  const ppBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+
+  const ppVerifyPrompt = `You are an adversarial reviewer checking a Payment Plan Agreement for accuracy.
+
+SOURCE CASE DATA (ground truth):
+${JSON.stringify(caseData, null, 2)}
+
+COMPUTED VALUES:
+- outstandingBalance: $${ppBalance} (= amountOwed minus amountPaid)
+
+GENERATED PAYMENT PLAN HTML:
+${html.slice(0, 20000)}
+
+Check:
+- Plaintiff/creditor name and business (must match exactly)
+- Defendant/debtor name and business (must match exactly)
+- Total amount (must equal $${ppBalance})
+- Interest rate (must be 9% per annum — New York statutory rate)
+- Acceleration clause present
+- Acknowledgment of debt present (for SOL reset)
+- Governing law is New York
+- Math: if installment amount AND payments AND total all have specific numbers, verify installment × payments ≈ total; skip if any is a blank placeholder
+
+For each check: "ok" | "missing" | "mismatch" | "hallucinated"
+
+Return JSON:
+{
+  "overallStatus": "verified" | "review_needed" | "issues_found",
+  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
+  "summary": "1-2 sentence summary",
+  "blankFields": []
+}
+
+Return ONLY valid JSON.`;
+
+  const ppResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: ppVerifyPrompt }],
+  });
+
+  const ppContent = ppResp.content[0];
+  if (ppContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(ppContent.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before signing.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+export async function retryPaymentPlan(
+  originalHtml: string,
+  verification: CourtFormVerification,
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const ppIssues = verification.checks.filter(c => c.status !== 'ok');
+  const ppVerified = verification.checks.filter(c => c.status === 'ok');
+  const ppBalance = (
+    parseFloat(String(caseData.amountOwed ?? '0')) -
+    parseFloat(String(caseData.amountPaid ?? '0'))
+  ).toFixed(2);
+
+  const ppIssueList = ppIssues
+    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
+    .join('\n\n');
+  const ppVerifiedList = ppVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
+
+  const ppRetryPrompt = `You previously generated a Payment Plan Agreement. Verification found issues. Regenerate with only flagged errors corrected.
+
+VERIFICATION SUMMARY: ${verification.summary}
+
+SOURCE CASE DATA: ${JSON.stringify(caseData, null, 2)}
+
+- outstandingBalance: $${ppBalance}
+- Interest rate: 9% per annum (NY statutory — do not change)
+
+FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
+${ppVerifiedList || '(none)'}
+
+ISSUES TO FIX (${ppIssues.length}): ${ppIssueList}
+
+ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
+
+Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
+Return ONLY valid JSON.`;
+
+  const ppRetryResp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: ppRetryPrompt }],
+  });
+
+  const ppRetryContent = ppRetryResp.content[0];
+  if (ppRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(ppRetryContent.text)) as DemandLetterResult;
+  } catch {
+    return { text: originalHtml, html: originalHtml };
+  }
+}

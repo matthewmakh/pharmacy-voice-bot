@@ -71,8 +71,13 @@ model Case {
   filingPacketHtml     String? @db.Text
   courtFormType         String?
   courtFormInstructions Json?
-  courtFormVerification Json?
-  defaultJudgment       String? @db.Text
+  courtFormVerification       Json?
+  demandLetterVerification    Json?
+  caseAnalysisVerification    Json?
+  defaultJudgmentVerification Json?
+  settlementVerification      Json?
+  paymentPlanVerification     Json?
+  defaultJudgment             String? @db.Text
   defaultJudgmentHtml   String? @db.Text
 
   industry String?
