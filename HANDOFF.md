@@ -1,9 +1,11 @@
 # Reclaim — Collections Platform: Handoff Document
-**Date:** April 19, 2026  
+**Last updated:** April 19, 2026  
 **Branch:** `claude/collections-platform-mvp-J862j`  
 **Deployed at:** `https://getmoney.up.railway.app`  
 **Repo:** `matthewmakh/pharmacy-voice-bot`  
 **DB:** Railway PostgreSQL (get connection string from Railway dashboard)
+
+> **Note:** Changes made in parallel threads not visible to this session may not be reflected here. Check `git log` for the full picture.
 
 ---
 
@@ -33,7 +35,7 @@ pharmacy-voice-bot/
 ├── client/                        # React frontend
 │   └── src/
 │       ├── pages/
-│       │   ├── CaseDetail.tsx     # Main case UI (3200+ lines, 7 tabs)
+│       │   ├── CaseDetail.tsx     # Main case UI (3300+ lines, 7 tabs)
 │       │   ├── Dashboard.tsx
 │       │   ├── NewCase.tsx
 │       │   ├── Login.tsx
@@ -51,9 +53,9 @@ pharmacy-voice-bot/
         ├── middleware/auth.ts     # JWT auth
         ├── lib/prisma.ts
         ├── routes/
-        │   ├── cases.ts           # All case routes (~1280 lines)
+        │   ├── cases.ts           # All case routes (~1100 lines)
         │   ├── auth.ts            # Register/login/me
-        │   └── documents.ts       # File upload + extraction
+        │   └── documents.ts       # File upload + extraction + reanalyze
         └── services/
             ├── claude.ts          # All Claude AI functions (~2000 lines)
             ├── pdf.ts             # Puppeteer HTML→PDF + pdf-lib court form
@@ -77,12 +79,31 @@ DRAFT → ASSEMBLING → ANALYZING → STRATEGY_PENDING → STRATEGY_SELECTED �
 
 Each status maps to a phase:
 - **DRAFT/ASSEMBLING**: Case created, documents being uploaded
-- **ANALYZING**: Claude synthesizeCase() running
+- **ANALYZING**: `synthesizeCase()` running in background
 - **STRATEGY_PENDING**: Analysis done, user picks strategy
 - **STRATEGY_SELECTED**: Strategy set, ready to generate demand letter
-- **GENERATING**: Claude generating demand letter
+- **GENERATING**: Demand letter, settlement, or payment plan generating in background
 - **READY**: Demand letter done
 - **ESCALATING**: Pre-filing notice sent
+
+**Important:** `GENERATING` is now used by 3 routes — demand letter, settlement, and payment plan. All three run as background jobs and the frontend polls at 3s intervals while `status === 'GENERATING'`.
+
+---
+
+## Background Processing Architecture
+
+The following routes are **fire-and-forget** — they set status, return immediately, and complete work in a background async function. The frontend polls via `refetchInterval: 3000` when status is `ANALYZING` or `GENERATING`.
+
+| Route | Background fn | Status during | Resets to on error |
+|---|---|---|---|
+| `POST /:id/analyze` | `analyzeCaseInBackground()` | `ANALYZING` | `ASSEMBLING` |
+| `POST /:id/generate` | `generateLetterInBackground()` | `GENERATING` | `STRATEGY_SELECTED` |
+| `POST /:id/generate-settlement` | `generateSettlementInBackground()` | `GENERATING` | prior status |
+| `POST /:id/generate-payment-plan` | `generatePaymentPlanInBackground()` | `GENERATING` | prior status |
+
+Document analysis (`analyzeDocumentInBackground()` in `documents.ts`) has always been fire-and-forget.
+
+If the server restarts mid-background-job, the startup cleanup in `index.ts` resets stuck `ANALYZING`/`GENERATING` cases to `ASSEMBLING`.
 
 ---
 
@@ -90,15 +111,20 @@ Each status maps to a phase:
 
 ### Document Processing
 - `analyzeDocument(text, filename, mimeType)` → classification, tags, facts
+  - Text cap: **15,000 chars** (was 8,000)
+  - Extracts 4 new boolean fields: `isSignedOrExecuted`, `disputedByDebtor`, `lateFeesMentioned`, `partialPaymentEvidence`
+  - Tag definitions included in prompt for accuracy
+  - Retries once (10s pause) before marking `analysisError: true`
 
 ### Case Analysis
 - `synthesizeCase(documents, userFacts)` → CaseSynthesis (strength, strategy, timeline, legal theory)
-- `verifyCaseSynthesis(synthesis, documents, userFacts)` → CourtFormVerification ← **NEW: judge agent**
+- `verifyCaseSynthesis(synthesis, documents, userFacts)` → CourtFormVerification — **flag-only, no retry**
+  - Note: passes only `classification/supportsTags/summary` to verifier (NOT full extractedFacts) to avoid truncation; max_tokens 4096
 
 ### Demand Letter
 - `generateDemandLetter(caseData, strategy)` → DemandLetterResult
-- `verifyDemandLetter(html, caseData)` → CourtFormVerification ← **NEW: judge agent**
-- `retryDemandLetter(html, verification, caseData, strategy)` → DemandLetterResult ← **NEW**
+- `verifyDemandLetter(html, caseData)` → CourtFormVerification
+- `retryDemandLetter(html, verification, caseData, strategy)` → DemandLetterResult
 
 ### Pre-Filing Notice
 - `generateFinalNotice(caseData, { demandLetterDate, courtName, filingDate })` → DemandLetterResult
@@ -109,17 +135,19 @@ Each status maps to a phase:
 - `retryCourtForm(html, verification, caseData, track, formType)` → CourtFormResult
 
 ### Default Judgment
-- `generateDefaultJudgment(caseData)` → DemandLetterResult
-- `verifyDefaultJudgment(html, caseData)` → CourtFormVerification ← **NEW: judge agent**
-- `retryDefaultJudgment(html, verification, caseData)` → DemandLetterResult ← **NEW**
+- `generateDefaultJudgment(caseData)` → DemandLetterResult (raw HTML, no JSON wrapper)
+- `verifyDefaultJudgment(html, caseData)` → CourtFormVerification
+- `retryDefaultJudgment(html, verification, caseData)` → DemandLetterResult
 
 ### Settlement & Payment Plan
-- `generateStipulationOfSettlement(caseData)` → DemandLetterResult
-- `verifySettlement(html, caseData)` → CourtFormVerification ← **NEW: judge agent**
-- `retrySettlement(html, verification, caseData)` → DemandLetterResult ← **NEW**
-- `generatePaymentPlanAgreement(caseData)` → DemandLetterResult
-- `verifyPaymentPlan(html, caseData)` → CourtFormVerification ← **NEW: judge agent**
-- `retryPaymentPlan(html, verification, caseData)` → DemandLetterResult ← **NEW**
+- `generateStipulationOfSettlement(caseData)` → DemandLetterResult (raw HTML, 8192 tokens)
+- `verifySettlement(html, caseData)` → CourtFormVerification
+- `retrySettlement(html, verification, caseData)` → DemandLetterResult (raw HTML, 8192 tokens)
+- `generatePaymentPlanAgreement(caseData)` → DemandLetterResult (raw HTML, 8192 tokens)
+- `verifyPaymentPlan(html, caseData)` → CourtFormVerification
+- `retryPaymentPlan(html, verification, caseData)` → DemandLetterResult (raw HTML, 8192 tokens)
+
+**Settlement/payment plan use raw HTML output** (not JSON-wrapped text+html) to avoid truncation at token limits.
 
 ### Affidavit of Service
 - `generateAffidavitOfService(caseData)` → DemandLetterResult
@@ -131,16 +159,16 @@ Each status maps to a phase:
 
 ## Verification Pipeline Pattern
 
-Every document generation route now runs:
-1. **Generate** the document
+Every document generation route runs:
+1. **Generate** the document (background, post-fire-and-forget return)
 2. **Verify** with adversarial Claude call → `CourtFormVerification` (`overallStatus`: verified / review_needed / issues_found)
 3. If `issues_found` → **Retry** with issues as context → **Verify again**
 4. Store `xVerification` JSON on Case model
-5. Return alongside document HTML
+5. Frontend polls and renders `<VerificationPanel>` below each document
 
-`VerificationPanel` component in `CaseDetail.tsx` renders the result below each document.
+`VerificationPanel` component in `CaseDetail.tsx` is a shared component used across all documents.
 
-The `CourtFormVerification` type:
+The `CourtFormVerification` / `DocumentVerification` type:
 ```typescript
 {
   overallStatus: 'verified' | 'review_needed' | 'issues_found';
@@ -149,8 +177,24 @@ The `CourtFormVerification` type:
   blankFields: string[];
   verifiedAt: string;
   didRetry?: boolean;
+  generationFailed?: boolean;
 }
 ```
+
+Case analysis (`verifyCaseSynthesis`) is **flag-only** — no retry, result shown before user selects strategy.
+
+---
+
+## Document Analysis — Failed State Handling
+
+Documents go through 3 possible states:
+- `classification === null && !analysisError` → **Pending** (spinner, polling active)
+- `analysisError === true` → **Failed** (red badge + Retry button, polling stops)
+- `classification !== null` → **Classified** (colored badge)
+
+`analyzeDocumentInBackground()` retries once after 10s on failure. On second failure, sets `analysisError: true` on the Document record.
+
+`POST /api/cases/:caseId/documents/:docId/reanalyze` — re-triggers analysis for a failed document. Resets `analysisError: false, classification: null` then fires background analysis.
 
 ---
 
@@ -178,22 +222,22 @@ POST   /api/auth/register
 POST   /api/auth/login
 GET    /api/auth/me
 
-GET    /api/cases                          # list
-POST   /api/cases                          # create
-GET    /api/cases/:id                      # get one
-PUT    /api/cases/:id                      # update
-DELETE /api/cases/:id                      # delete one
+GET    /api/cases                                      # list
+POST   /api/cases                                      # create
+GET    /api/cases/:id                                  # get one
+PUT    /api/cases/:id                                  # update
+DELETE /api/cases/:id                                  # delete one
 
-POST   /api/cases/:id/analyze              # run AI synthesis
+POST   /api/cases/:id/analyze                          # fire-and-forget AI synthesis
 POST   /api/cases/:id/reset-analysis
 POST   /api/cases/:id/set-strategy
-POST   /api/cases/:id/generate             # demand letter
+POST   /api/cases/:id/generate                         # fire-and-forget demand letter
 POST   /api/cases/:id/final-notice
 POST   /api/cases/:id/court-form
 POST   /api/cases/:id/default-judgment
 POST   /api/cases/:id/generate-affidavit-of-service
-POST   /api/cases/:id/generate-settlement
-POST   /api/cases/:id/generate-payment-plan
+POST   /api/cases/:id/generate-settlement              # fire-and-forget
+POST   /api/cases/:id/generate-payment-plan            # fire-and-forget
 POST   /api/cases/:id/assess-strategy
 
 GET    /api/cases/:id/demand-letter-pdf
@@ -210,7 +254,13 @@ GET    /api/cases/:id/ucc
 GET    /api/cases/:id/ecb
 GET    /api/cases/:id/pacer
 
-POST   /api/cases/:id/actions              # log manual action
+POST   /api/cases/:caseId/documents                          # upload (fire-and-forget analysis)
+DELETE /api/cases/:caseId/documents/:docId
+POST   /api/cases/:caseId/documents/:docId/reanalyze         # re-trigger failed analysis
+GET    /api/cases/:caseId/documents/:docId/view
+GET    /api/cases/:caseId/documents/:docId/download
+
+POST   /api/cases/:id/actions                          # log manual action
 ```
 
 ---
@@ -237,11 +287,14 @@ POST   /api/cases/:id/actions              # log manual action
 `defaultJudgment, defaultJudgmentHtml`  
 `affidavitOfServiceHtml, settlementHtml, paymentPlanHtml`
 
-### Verification Results (JSON) ← NEW
+### Verification Results (JSON)
 `courtFormVerification, demandLetterVerification, caseAnalysisVerification, defaultJudgmentVerification, settlementVerification, paymentPlanVerification`
 
 ### Debtor Research (JSON)
 `acrisResult, courtHistory, entityResult, uccResult, ecbResult, pacerResult`
+
+### Document Model
+`analysisError Boolean @default(false)` — set to true after 2 failed analysis attempts; triggers "Analysis failed" badge + Retry button in UI instead of infinite spinner.
 
 ---
 
@@ -256,7 +309,7 @@ Always `amountOwed - amountPaid`. All prompts, verification functions, and court
 - `> $50,000` → Supreme Court (Summons with Notice)
 
 ### Startup Cleanup (server/src/index.ts)
-On boot, cases stuck in `ANALYZING` or `GENERATING` are reset to `ASSEMBLING` (handles Railway restart mid-request).
+On boot, cases stuck in `ANALYZING` or `GENERATING` are reset to `ASSEMBLING` (handles Railway restart mid-background-job).
 
 ### PDF Generation (server/src/services/pdf.ts)
 Uses Puppeteer with container-safe flags:
@@ -274,37 +327,43 @@ Case-insensitive lookup using `findFirst` with `mode: 'insensitive'`. Emails are
 - **View**: blob URL (`openHtmlInTab()` utility in CaseDetail.tsx) — no server call
 - **Download PDF**: calls Puppeteer endpoint on server
 
+### Settlement / Payment Plan Token Limits
+Both use raw HTML output (not JSON-wrapped) with `max_tokens: 8192`. The JSON approach caused truncation on long documents. If you ever switch back to JSON, the parse failure fallback was rendering raw Claude output as the document body.
+
+### Frontend Polling
+`refetchInterval` in `CaseDetail.tsx` polls every 3 seconds when:
+- `status === 'ANALYZING'` or `'GENERATING'`
+- Any document has `classification === null && !analysisError`
+
+Returns `false` (no polling) otherwise.
+
 ---
 
 ## UI Structure (CaseDetail.tsx Tabs)
 
-1. **Overview** — case details, party info, SOL calculator, missing info
-2. **Evidence** — document upload, AI classification badges, preview
-3. **Strategy** — AI analysis results, legal theory, debtor research lookups, strategy selector
+1. **Overview** — case details, party info, SOL calculator, pre-judgment interest, missing info
+2. **Evidence** — document upload, AI classification badges (3 states: pending/failed/classified), preview, retry button
+3. **Strategy** — AI analysis results, legal theory, analysis verification panel, debtor research lookups, strategy selector
 4. **Letter** — demand letter generate/view/download/email + verification panel
 5. **Escalation** — pre-filing notice, court form + verification, process server, affidavit, default judgment + verification, settlement + verification, payment plan + verification
 6. **Filing** — NY court filing guide, NYSCEF instructions by track
 7. **Timeline** — chronological action log
 
 Key components in CaseDetail.tsx:
-- `RotatingFact` — animated loader with elapsed timer + progress bar
-- `InlineProgress` — compact progress bar for small cards
-- `VerificationPanel` — renders CourtFormVerification result (shared across all documents)
+- `RotatingFact` — animated loader with elapsed timer + progress bar (used for long analysis)
+- `InlineProgress` — compact progress bar for smaller generation cards (45s estimate for settlement/payment plan)
+- `VerificationPanel` — renders DocumentVerification result (shared across all documents)
 - `RefineStrategyPanel` — shows "Refine Strategy with Research" button + results
 
 ---
 
 ## Known Issues / Pending Work
 
-- **Schema migration pending**: The 5 new verification fields (`demandLetterVerification`, `caseAnalysisVerification`, `defaultJudgmentVerification`, `settlementVerification`, `paymentPlanVerification`) are in the Prisma schema and Prisma client is regenerated, but `prisma db push` has NOT been run against Railway DB yet. **Run this before testing new verification features:**
-  ```bash
-  # From server/ with Railway DATABASE_URL set:
-  DATABASE_URL="YOUR_RAILWAY_DATABASE_URL" npx prisma db push
-  ```
-
 - **PACER account**: User needs to contact PACER support at (800) 676-6856 to enable PCL search privileges on account `tyenyllc`
 
 - **UCC lookup**: Requires 2captcha API key for NYS UCC scraper
+
+- **All schema migrations are deployed**: `analysisError` column on Document and all 5 verification fields on Case are live in the Railway DB.
 
 ---
 
