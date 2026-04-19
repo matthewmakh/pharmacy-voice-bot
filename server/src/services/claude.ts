@@ -1608,7 +1608,7 @@ USER-PROVIDED FACTS (ground truth):
 ${JSON.stringify(userFacts, null, 2)}
 
 DOCUMENTS SUBMITTED (evidence base):
-${JSON.stringify(documents.map(d => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary, extractedFacts: d.extractedFacts })), null, 2)}
+${JSON.stringify(documents.map(d => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary })), null, 2)}
 
 AI-GENERATED CASE ANALYSIS:
 ${JSON.stringify(synthesis, null, 2)}
@@ -1639,7 +1639,7 @@ Return ONLY valid JSON.`;
 
   const synthResp = await client.messages.create({
     model: MODEL,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: synthPrompt }],
   });
