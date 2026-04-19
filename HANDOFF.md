@@ -1,6 +1,6 @@
 # Reclaim — Collections Platform: Handoff Document
-**Last updated:** April 19, 2026  
-**Branch:** `claude/collections-platform-mvp-J862j`  
+**Last updated:** April 24, 2026  
+**Branch:** `claude/refresh-frontend-design-wW79w` (merged from `claude/collections-platform-mvp-J862j`)  
 **Deployed at:** `https://getmoney.up.railway.app`  
 **Repo:** `matthewmakh/pharmacy-voice-bot`  
 **DB:** Railway PostgreSQL (get connection string from Railway dashboard)
@@ -32,42 +32,93 @@ A full-stack B2B debt collections platform for New York businesses. It walks a u
 
 ```
 pharmacy-voice-bot/
-├── client/                        # React frontend
+├── client/                                # React frontend
 │   └── src/
+│       ├── App.tsx
 │       ├── pages/
-│       │   ├── CaseDetail.tsx     # Main case UI (3300+ lines, 7 tabs)
-│       │   ├── Dashboard.tsx
-│       │   ├── NewCase.tsx
-│       │   ├── Login.tsx
-│       │   └── Register.tsx
-│       ├── lib/
-│       │   ├── api.ts             # All API calls
-│       │   └── utils.ts
-│       ├── types/index.ts         # TypeScript types (Case, Document, etc.)
-│       └── components/
-│           └── evidence/UploadZone.tsx
+│       │   ├── Dashboard.tsx              # Cases list + stats
+│       │   ├── NewCase.tsx                # 4-step intake form
+│       │   ├── Login.tsx / Register.tsx
+│       │   └── case-detail/               # Split case UI (was CaseDetail.tsx, 3,181 lines)
+│       │       ├── index.tsx              # Shell: header, StatusPill, TabBar, routes tabs
+│       │       ├── OverviewTab.tsx        # Key #s, parties, dates, SOL, evidence, missing info
+│       │       ├── EvidenceTab.tsx        # Upload + list + preview modal + retry for analysisError docs
+│       │       ├── StrategyTab.tsx        # AI assessment + strategy selector
+│       │       ├── LetterTab.tsx          # Demand letter generate/view/email
+│       │       ├── EscalationTab.tsx      # Composes 6 sub-document panels below
+│       │       ├── FilingGuideTab.tsx     # NY court filing guide (per-track)
+│       │       ├── TimelineTab.tsx        # Chronological action log
+│       │       ├── shared/
+│       │       │   ├── VerificationPanel.tsx   # Renders CourtFormVerification below each doc
+│       │       │   ├── RotatingFact.tsx        # Animated loader + 35 legal tips
+│       │       │   ├── InlineProgress.tsx      # Compact progress bar for small cards
+│       │       │   ├── sol.ts                  # computeSOL() — NY CPLR §213 6-yr calc
+│       │       │   ├── openHtmlInTab.ts        # Blob-URL viewer for generated HTML
+│       │       │   └── actions.ts              # ACTION_TYPE_OPTIONS + ACTION_ICONS
+│       │       ├── strategy/
+│       │       │   ├── LookupCard.tsx          # Shared wrapper for all 6 lookup cards
+│       │       │   ├── AcrisLookup.tsx         # NYC property (acris.ts backend)
+│       │       │   ├── CourtHistoryLookup.tsx  # NYC civil court history
+│       │       │   ├── NysEntityLookup.tsx     # NYS DOS entity search
+│       │       │   ├── UccLookup.tsx           # NYS UCC filings (2captcha)
+│       │       │   ├── EcbLookup.tsx           # NYC code violations
+│       │       │   ├── PacerLookup.tsx         # Federal bankruptcy
+│       │       │   ├── RefineStrategyPanel.tsx # "Refine with research" → assessStrategy
+│       │       │   └── lookupTypes.ts          # Shared TS types for lookup results
+│       │       ├── escalation/
+│       │       │   ├── PreFilingNotice.tsx
+│       │       │   ├── CourtFormPanel.tsx
+│       │       │   ├── ProcessServerPanel.tsx  # Includes "Log Service Initiated" modal
+│       │       │   ├── AffidavitPanel.tsx
+│       │       │   ├── DefaultJudgmentPanel.tsx
+│       │       │   ├── SettlementPanel.tsx     # Settlement + Payment Plan (side-by-side)
+│       │       │   └── DocumentActions.tsx     # Shared View / Download / Regenerate button row
+│       │       └── filing/
+│       │           └── filingSteps.tsx         # Per-track (commercial/civil/supreme) step content
+│       ├── components/
+│       │   ├── evidence/UploadZone.tsx
+│       │   ├── layout/{Layout,Sidebar}.tsx
+│       │   └── ui/                        # Reusable primitives (NEW)
+│       │       ├── Badge.tsx              # <Badge tone="neutral|info|success|warning|danger">
+│       │       ├── StatusPill.tsx         # CaseStatus → Badge
+│       │       ├── Alert.tsx              # <Alert tone title>...</Alert>
+│       │       ├── SectionCard.tsx        # Card with collapsible/defaultOpen + title/action
+│       │       ├── EmptyState.tsx         # Icon + title + description + CTA
+│       │       └── TabBar.tsx             # Horizontal tabs with icons
+│       ├── contexts/AuthContext.tsx
+│       ├── lib/{api.ts,utils.ts}          # api.ts includes reanalyzeDocument() for failed-analysis retries
+│       ├── types/index.ts                 # TypeScript types (Case, Document w/ analysisError, etc.)
+│       └── index.css                      # @layer components: .btn, .card, .input, .divider, .kbd-label, etc.
 └── server/
-    ├── prisma/schema.prisma       # DB schema
+    ├── prisma/schema.prisma               # DB schema
     └── src/
-        ├── index.ts               # Express app entry point
-        ├── middleware/auth.ts     # JWT auth
+        ├── index.ts                       # Express app entry point
+        ├── middleware/auth.ts             # JWT auth
         ├── lib/prisma.ts
         ├── routes/
-        │   ├── cases.ts           # All case routes (~1100 lines)
-        │   ├── auth.ts            # Register/login/me
-        │   └── documents.ts       # File upload + extraction + reanalyze
+        │   ├── cases.ts                   # All case routes (~1280 lines, incl. background /analyze and /generate)
+        │   ├── auth.ts                    # Register/login/me
+        │   └── documents.ts               # File upload + extraction + reanalyze
         └── services/
-            ├── claude.ts          # All Claude AI functions (~2000 lines)
-            ├── pdf.ts             # Puppeteer HTML→PDF + pdf-lib court form
-            ├── acris.ts           # NYC property lookup
-            ├── nycourts.ts        # NY court history lookup
-            ├── nysEntity.ts       # NYS entity lookup
-            ├── nysUCC.ts          # UCC filings lookup
-            ├── nycECB.ts          # NYC ECB violations
-            ├── pacer.ts           # Federal bankruptcy check
-            ├── fileProcessor.ts   # PDF/image text extraction
-            └── twoCaptcha.ts      # CAPTCHA solver for UCC
+            ├── claude.ts                  # All Claude AI functions (~2000 lines)
+            ├── pdf.ts                     # Puppeteer HTML→PDF + pdf-lib court form
+            ├── acris.ts                   # NYC property lookup
+            ├── nycourts.ts                # NY court history lookup
+            ├── nysEntity.ts               # NYS entity lookup
+            ├── nysUCC.ts                  # UCC filings lookup
+            ├── nycECB.ts                  # NYC ECB violations
+            ├── pacer.ts                   # Federal bankruptcy check
+            ├── fileProcessor.ts           # PDF/image text extraction
+            └── twoCaptcha.ts              # CAPTCHA solver for UCC
 ```
+
+### Frontend design system (April 19, 2026 refresh)
+
+- **Color palette is a 4-tone semantic system** (neutral / info / success / warning / danger). Every status chip, badge, and alert maps to one of these tones — no more 9-color rainbow.
+- **Source of truth for tones** lives in `client/src/components/ui/Badge.tsx`. Consumers use `<StatusPill>`, `<Badge tone="">`, `<Alert tone="">` — never raw `bg-*-100 text-*-700` combos.
+- **Tone maps** in `client/src/lib/utils.ts`: `STATUS_TONES`, `DOC_CLASSIFICATION_TONES`, `STRENGTH_TONES` (replaced the old `*_COLORS` string maps).
+- **Dense sections are collapsible** via `<SectionCard collapsible defaultOpen>` — Overview (dates/evidence/missing), Strategy (research/risk), Escalation (each sub-document), FilingGuide (every reference section).
+- **No new dependencies** — still React + Tailwind + Lucide. No shadcn / Radix / Headless UI.
 
 ---
 
@@ -339,21 +390,25 @@ Returns `false` (no polling) otherwise.
 
 ---
 
-## UI Structure (CaseDetail.tsx Tabs)
+## UI Structure (case-detail/ tabs)
 
-1. **Overview** — case details, party info, SOL calculator, pre-judgment interest, missing info
-2. **Evidence** — document upload, AI classification badges (3 states: pending/failed/classified), preview, retry button
-3. **Strategy** — AI analysis results, legal theory, analysis verification panel, debtor research lookups, strategy selector
-4. **Letter** — demand letter generate/view/download/email + verification panel
-5. **Escalation** — pre-filing notice, court form + verification, process server, affidavit, default judgment + verification, settlement + verification, payment plan + verification
-6. **Filing** — NY court filing guide, NYSCEF instructions by track
-7. **Timeline** — chronological action log
+Lives in `client/src/pages/case-detail/`. The shell is `index.tsx` (routes the active tab). Each tab is its own file. Composition order inside each tab uses `<SectionCard>` from `components/ui/` — most sections are collapsible and open by default only when relevant data exists.
 
-Key components in CaseDetail.tsx:
-- `RotatingFact` — animated loader with elapsed timer + progress bar (used for long analysis)
-- `InlineProgress` — compact progress bar for smaller generation cards (45s estimate for settlement/payment plan)
-- `VerificationPanel` — renders DocumentVerification result (shared across all documents)
-- `RefineStrategyPanel` — shows "Refine Strategy with Research" button + results
+1. **Overview** (`OverviewTab.tsx`) — key numbers (mobile-responsive stat cards), pre-judgment interest (CPLR §5001, wraps gracefully on small screens), inline edit form (~25 fields), parties, key dates + SOL, evidence summary, missing info (both legacy string and `MissingInfoItem` with impact/consequence/workaround).
+2. **Evidence** (`EvidenceTab.tsx`) — upload zone, flat doc list with classification `<Badge>` (3 states: analyzing / failed-with-retry-button / classified), preview modal (image/PDF inline), delete, reanalyze.
+3. **Strategy** (`StrategyTab.tsx`) — disclaimer alert, AI strength badge, legal theory elements, risk & enforcement (counterclaim risk + entity path + SOL + strategy reasoning as Alerts), **Debtor Research** SectionCard containing 6 lookup cards (one file each under `strategy/`), analysis verification panel, `RefineStrategyPanel`, 3-card strategy selector.
+4. **Letter** (`LetterTab.tsx`) — generate / copy / email / view / download PDF / regenerate + verification panel + rendered HTML preview.
+5. **Escalation** (`EscalationTab.tsx`) — composes 6 collapsible panels from `escalation/`: `PreFilingNotice`, `CourtFormPanel`, `ProcessServerPanel` (with "Log Service Initiated" modal and auto-computed deadline cards), `AffidavitPanel` (only after service logged), `DefaultJudgmentPanel` (only after answer deadline passes), `SettlementPanel` (Stipulation + Payment Plan side-by-side, fire-and-forget generation — continues in background if browser closed). Each generated doc gets its own verification panel when present.
+6. **Filing** (`FilingGuideTab.tsx`) — court routing card with SOL, thresholds reference, pre-filing checklist, per-track step-by-step from `filing/filingSteps.tsx`, service best-practices, 8-row deadline tracker, common mistakes, enforcement tools, NYC marshal directory, attorney disclaimer.
+7. **Timeline** (`TimelineTab.tsx`) — log-action form (payment amount appears only when `PAYMENT_RECEIVED`), reverse-chronological action list.
+
+Reusable pieces (all in `case-detail/shared/`):
+- `RotatingFact` — animated loader with elapsed timer + progress bar + 35 rotating NY-collections tips (used during every AI-generation wait state).
+- `InlineProgress` — compact progress bar for the small side-by-side settlement/payment-plan cards (45s estimate).
+- `VerificationPanel` — renders `DocumentVerification` for the 6 verified document types (case analysis, demand letter, court form, default judgment, settlement, payment plan). Pre-filing notice and affidavit do **not** have verification pipelines on the backend.
+- `sol.ts` — `computeSOL()` and `SOL_STATUS_TONE` mapping. Shared across Overview, Strategy, FilingGuide.
+- `openHtmlInTab()` — blob-URL viewer for generated HTML (no server roundtrip).
+- `actions.ts` — `ACTION_TYPE_OPTIONS` + `ACTION_ICONS` for the Timeline tab.
 
 ---
 
@@ -363,7 +418,9 @@ Key components in CaseDetail.tsx:
 
 - **UCC lookup**: Requires 2captcha API key for NYS UCC scraper
 
-- **All schema migrations are deployed**: `analysisError` column on Document and all 5 verification fields on Case are live in the Railway DB.
+- **Schema migrations**: `analysisError` column on Document and all 5 verification fields on Case are in the schema. The production DB already has them deployed; the preview Railway service uses a separate DB that `prisma db push` will provision on first boot.
+
+- **Frontend refresh**: The April 19 2026 refactor (`f65f1ef`) was audited for 1:1 functional parity against the pre-change commit (`d18f3d9`). Deployed and accessible via the preview Railway service — login page confirmed rendering with new design.
 
 ---
 
