@@ -1269,11 +1269,17 @@ router.post('/:id/default-judgment', async (req: Request, res: Response) => {
 // DELETE /api/cases/all — temporary: delete all cases for the authenticated user
 router.delete('/all', async (req: Request, res: Response) => {
   try {
-    const result = await prisma.case.deleteMany({ where: { userId: req.user!.id } });
-    res.json({ deleted: result.count });
+    const cases = await prisma.case.findMany({ where: { userId: req.user!.id }, select: { id: true } });
+    const ids = cases.map(c => c.id);
+    if (ids.length > 0) {
+      await prisma.caseAction.deleteMany({ where: { caseId: { in: ids } } });
+      await prisma.document.deleteMany({ where: { caseId: { in: ids } } });
+      await prisma.case.deleteMany({ where: { id: { in: ids } } });
+    }
+    res.json({ deleted: ids.length });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to delete cases' });
+    res.status(500).json({ error: 'Failed to delete cases', details: String(err) });
   }
 });
 
