@@ -1266,4 +1266,15 @@ router.post('/:id/default-judgment', async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /api/cases/all — temporary: delete all cases for the authenticated user
+router.delete('/all', async (req: Request, res: Response) => {
+  try {
+    const result = await prisma.case.deleteMany({ where: { userId: req.user!.id } });
+    res.json({ deleted: result.count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete cases' });
+  }
+});
+
 export default router;
