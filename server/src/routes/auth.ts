@@ -52,7 +52,11 @@ router.post('/login', async (req: Request, res: Response) => {
     const { email: rawEmail, password } = loginSchema.parse(req.body);
     const email = rawEmail.toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // Use case-insensitive search so accounts created before the lowercase
+    // normalization fix (stored as e.g. "Matt@tyeny.com") can still log in.
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
     if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
