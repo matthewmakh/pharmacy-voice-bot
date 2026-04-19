@@ -418,9 +418,9 @@ Reusable pieces (all in `case-detail/shared/`):
 
 - **UCC lookup**: Requires 2captcha API key for NYS UCC scraper
 
-- **Schema migrations**: `analysisError` column on Document and all 5 verification fields on Case are in the schema. The production DB already has them deployed; the preview Railway service uses a separate DB that `prisma db push` will provision on first boot.
+- **Schema migrations**: `analysisError` column on Document and all 5 verification fields on Case are in the schema. The production DB already has them deployed; the preview Railway service uses a separate DB that `prisma db push` provisions on first boot.
 
-- **Frontend refresh**: The April 19 2026 refactor (`f65f1ef`) was audited for 1:1 functional parity against the pre-change commit (`d18f3d9`). Deployed and accessible via the preview Railway service — login page confirmed rendering with new design.
+- **Frontend refresh — browser QA partially done**: The April 19 2026 refactor (commits `f65f1ef` + `18f6547` + follow-ups) passed `tsc --noEmit`, `npm run build`, and a smoke test against the Vite dev server (every key file served with HTTP 200, no transform errors). Audited for 1:1 functional parity against the pre-change commit `d18f3d9`. Login page confirmed rendering in the live preview Railway deploy. Remaining walk-through: Dashboard → open a case → every tab (Overview, Evidence, Strategy, Letter, Escalation, Filing, Timeline) in each status (DRAFT, STRATEGY_PENDING, READY, ESCALATING). Confirm `RotatingFact` appears during analyze/generate waits and `VerificationPanel` appears below each generated document.
 
 ---
 

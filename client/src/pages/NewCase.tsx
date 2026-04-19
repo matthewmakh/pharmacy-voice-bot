@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Building2, User, DollarSign, FileText } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, User, DollarSign, FileText, Check } from 'lucide-react';
 import { createCase } from '../lib/api';
 import Alert from '../components/ui/Alert';
 import type { CreateCaseInput } from '../types';
@@ -35,7 +35,7 @@ function StepIndicator({ current }: { current: Step }) {
                     : 'bg-slate-200 text-slate-500'
                 }`}
               >
-                {done ? '✓' : <Icon className="w-3.5 h-3.5" />}
+                {done ? <Check className="w-4 h-4" /> : <Icon className="w-3.5 h-3.5" />}
               </div>
               <span
                 className={`text-sm font-medium hidden sm:block ${
