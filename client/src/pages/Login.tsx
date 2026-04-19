@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Scale } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import Alert from '../components/ui/Alert';
 
 export default function Login() {
   const { login } = useAuth();
@@ -70,11 +71,7 @@ export default function Login() {
               />
             </div>
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
-                {error}
-              </div>
-            )}
+            {error && <Alert tone="danger">{error}</Alert>}
 
             <button type="submit" disabled={loading} className="btn-primary w-full py-2.5">
               {loading ? 'Signing in...' : 'Sign In'}

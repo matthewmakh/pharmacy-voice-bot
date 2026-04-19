@@ -1,5 +1,7 @@
 import type { CaseStatus, Strategy } from '../types';
 
+export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+
 export function formatCurrency(value: string | number | null | undefined): string {
   if (value == null || value === '') return '—';
   const num = typeof value === 'string' ? parseFloat(value) : value;
@@ -41,19 +43,19 @@ export const STATUS_LABELS: Record<CaseStatus, string> = {
   CLOSED: 'Closed',
 };
 
-export const STATUS_COLORS: Record<CaseStatus, string> = {
-  DRAFT: 'bg-slate-100 text-slate-600',
-  ASSEMBLING: 'bg-blue-100 text-blue-700',
-  ANALYZING: 'bg-purple-100 text-purple-700',
-  STRATEGY_PENDING: 'bg-amber-100 text-amber-700',
-  STRATEGY_SELECTED: 'bg-orange-100 text-orange-700',
-  GENERATING: 'bg-purple-100 text-purple-700',
-  READY: 'bg-green-100 text-green-700',
-  SENT: 'bg-teal-100 text-teal-700',
-  AWAITING_RESPONSE: 'bg-sky-100 text-sky-700',
-  ESCALATING: 'bg-red-100 text-red-700',
-  RESOLVED: 'bg-emerald-100 text-emerald-700',
-  CLOSED: 'bg-slate-100 text-slate-500',
+export const STATUS_TONES: Record<CaseStatus, Tone> = {
+  DRAFT: 'neutral',
+  ASSEMBLING: 'info',
+  ANALYZING: 'info',
+  STRATEGY_PENDING: 'warning',
+  STRATEGY_SELECTED: 'info',
+  GENERATING: 'info',
+  READY: 'success',
+  SENT: 'success',
+  AWAITING_RESPONSE: 'info',
+  ESCALATING: 'warning',
+  RESOLVED: 'success',
+  CLOSED: 'neutral',
 };
 
 export const STRATEGY_LABELS: Record<Strategy, string> = {
@@ -73,19 +75,19 @@ export const DOC_CLASSIFICATION_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-export const DOC_CLASSIFICATION_COLORS: Record<string, string> = {
-  contract: 'bg-blue-100 text-blue-700',
-  invoice: 'bg-green-100 text-green-700',
-  proof_of_work: 'bg-teal-100 text-teal-700',
-  communication: 'bg-purple-100 text-purple-700',
-  payment_record: 'bg-emerald-100 text-emerald-700',
-  business_record: 'bg-slate-100 text-slate-700',
-  screenshot: 'bg-orange-100 text-orange-700',
-  other: 'bg-slate-100 text-slate-600',
+export const DOC_CLASSIFICATION_TONES: Record<string, Tone> = {
+  contract: 'info',
+  invoice: 'success',
+  proof_of_work: 'info',
+  communication: 'neutral',
+  payment_record: 'success',
+  business_record: 'neutral',
+  screenshot: 'neutral',
+  other: 'neutral',
 };
 
-export const STRENGTH_COLORS: Record<string, string> = {
-  strong: 'text-emerald-600',
-  moderate: 'text-amber-600',
-  weak: 'text-red-500',
+export const STRENGTH_TONES: Record<string, Tone> = {
+  strong: 'success',
+  moderate: 'warning',
+  weak: 'danger',
 };

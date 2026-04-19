@@ -69,4 +69,24 @@
   .muted {
     @apply text-sm text-slate-500;
   }
+
+  .divider {
+    @apply border-t border-slate-200/70;
+  }
+
+  .kbd-label {
+    @apply text-[11px] font-semibold text-slate-500 uppercase tracking-wider;
+  }
+
+  .stack-sm > * + * { @apply mt-2; }
+  .stack-md > * + * { @apply mt-4; }
+  .stack-lg > * + * { @apply mt-6; }
+
+  .field-label {
+    @apply text-xs font-medium text-slate-500;
+  }
+
+  .field-value {
+    @apply text-sm font-medium text-slate-900;
+  }
 }

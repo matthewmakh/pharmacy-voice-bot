@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Building2, User, DollarSign, FileText } from 'lucide-react';
 import { createCase } from '../lib/api';
+import Alert from '../components/ui/Alert';
 import type { CreateCaseInput } from '../types';
 
 type Step = 1 | 2 | 3 | 4;
@@ -292,9 +293,7 @@ export default function NewCase() {
               </div>
 
               {mutation.isError && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
-                  Failed to create case. Please try again.
-                </div>
+                <Alert tone="danger">Failed to create case. Please try again.</Alert>
               )}
             </div>
           )}
