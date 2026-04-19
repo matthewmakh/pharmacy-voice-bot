@@ -1328,30 +1328,20 @@ Generate a complete Stipulation of Settlement with these sections:
 
 Include a header disclaimer: "⚠ DISCLAIMER: This Stipulation of Settlement was prepared from your case data. Have an attorney review before signing. The settlement amount must be negotiated and filled in before execution."
 
-Return JSON:
-{
-  "text": "plain text version",
-  "html": "HTML version — serif font, max-width 750px, professional legal document style, numbered paragraphs, clear section headers"
-}
-
-Return ONLY valid JSON.`;
+Return only raw HTML — no JSON, no markdown, no code fences, no explanations. Start directly with the HTML content.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    const text = content.text;
-    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
-  }
+  const html = content.text.trim();
+  return { text: html, html };
 }
 
 /**
@@ -1418,30 +1408,20 @@ Generate a complete Payment Plan Agreement with these sections:
 
 Include disclaimer: "⚠ DISCLAIMER: This Payment Plan Agreement was prepared from your case data. Fill in all blanks before signing. Have an attorney review if the amount is significant."
 
-Return JSON:
-{
-  "text": "plain text version",
-  "html": "HTML version — serif font, max-width 750px, numbered paragraphs, checkbox symbols for frequency selection"
-}
-
-Return ONLY valid JSON.`;
+Return only raw HTML — no JSON, no markdown, no code fences, no explanations. Start directly with the HTML content.`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 3072,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    const text = content.text;
-    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
-  }
+  const html = content.text.trim();
+  return { text: html, html };
 }
 
 // ─── Demand Letter Verification ──────────────────────────────────────────────
@@ -1875,24 +1855,20 @@ ISSUES TO FIX (${stlIssues.length}): ${stlIssueList}
 
 ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
 
-Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
-Return ONLY valid JSON.`;
+Return only raw HTML with corrections applied. No JSON, no markdown, no code fences.`;
 
   const stlRetryResp = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: stlRetryPrompt }],
   });
 
   const stlRetryContent = stlRetryResp.content[0];
   if (stlRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  try {
-    return JSON.parse(extractJson(stlRetryContent.text)) as DemandLetterResult;
-  } catch {
-    return { text: originalHtml, html: originalHtml };
-  }
+  const stlHtml = stlRetryContent.text.trim() || originalHtml;
+  return { text: stlHtml, html: stlHtml };
 }
 
 // ─── Payment Plan Verification ────────────────────────────────────────────────
@@ -1991,22 +1967,18 @@ ISSUES TO FIX (${ppIssues.length}): ${ppIssueList}
 
 ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
 
-Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
-Return ONLY valid JSON.`;
+Return only raw HTML with corrections applied. No JSON, no markdown, no code fences.`;
 
   const ppRetryResp = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    max_tokens: 8192,
+    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: ppRetryPrompt }],
   });
 
   const ppRetryContent = ppRetryResp.content[0];
   if (ppRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  try {
-    return JSON.parse(extractJson(ppRetryContent.text)) as DemandLetterResult;
-  } catch {
-    return { text: originalHtml, html: originalHtml };
-  }
+  const ppHtml = ppRetryContent.text.trim() || originalHtml;
+  return { text: ppHtml, html: ppHtml };
 }

@@ -510,18 +510,18 @@ function OverviewTab({ caseData }: { caseData: Case }) {
   return (
     <div className="space-y-6">
       {/* Key Numbers */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="card p-5">
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Amount Owed</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountOwed)}</div>
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className="card p-3 sm:p-5">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 leading-tight">Amount Owed</div>
+          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountOwed)}</div>
         </div>
-        <div className="card p-5">
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Amount Paid</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountPaid || 0)}</div>
+        <div className="card p-3 sm:p-5">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 leading-tight">Amount Paid</div>
+          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountPaid || 0)}</div>
         </div>
-        <div className="card p-5 border-red-200 bg-red-50">
-          <div className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1">Outstanding Balance</div>
-          <div className="text-2xl font-bold text-red-600">{formatCurrency(outstanding)}</div>
+        <div className="card p-3 sm:p-5 border-red-200 bg-red-50">
+          <div className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1 leading-tight">Balance Due</div>
+          <div className="text-base sm:text-2xl font-bold text-red-600 truncate">{formatCurrency(outstanding)}</div>
         </div>
       </div>
 
@@ -540,20 +540,20 @@ function OverviewTab({ caseData }: { caseData: Case }) {
               <span className="text-xs font-semibold text-amber-700 uppercase tracking-wider">Pre-Judgment Interest</span>
               <span className="text-xs text-amber-600">NY CPLR §5001 — 9% per year</span>
             </div>
-            <div className="flex items-baseline gap-4 mt-1">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 mt-1">
               <div>
-                <div className="text-xs text-amber-600 mb-0.5">Accrued interest ({yearsElapsed} yrs)</div>
-                <div className="text-lg font-bold text-amber-700">{formatCurrency(interest)}</div>
+                <div className="text-xs text-amber-600 mb-0.5">Interest ({yearsElapsed} yrs)</div>
+                <div className="text-base font-bold text-amber-700">{formatCurrency(interest)}</div>
               </div>
-              <div className="text-slate-300 text-xl">+</div>
+              <div className="text-slate-300 text-lg">+</div>
               <div>
                 <div className="text-xs text-slate-500 mb-0.5">Principal</div>
-                <div className="text-lg font-semibold text-slate-700">{formatCurrency(outstanding)}</div>
+                <div className="text-base font-semibold text-slate-700">{formatCurrency(outstanding)}</div>
               </div>
-              <div className="text-slate-300 text-xl">=</div>
+              <div className="text-slate-300 text-lg">=</div>
               <div>
                 <div className="text-xs text-slate-500 mb-0.5">Total claim value</div>
-                <div className="text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
+                <div className="text-base font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
               </div>
             </div>
             <p className="text-xs text-amber-600 mt-2 leading-relaxed">
@@ -2021,7 +2021,6 @@ function EscalationTab({ caseData }: { caseData: Case }) {
   const affidavitStartRef = React.useRef<Date | null>(null);
   const settlementStartRef = React.useRef<Date | null>(null);
   const paymentPlanStartRef = React.useRef<Date | null>(null);
-
   const finalNoticeMutation = useMutation({
     mutationFn: () => { finalNoticeStartRef.current = new Date(); return generateFinalNotice(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
@@ -2477,8 +2476,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
               A binding agreement between both parties — includes settlement amount (to be negotiated), payment terms, mutual release, and default provisions.
             </p>
-            {settlementMutation.isPending && settlementStartRef.current ? (
-              <InlineProgress startedAt={settlementStartRef.current} estimatedSeconds={15} label="Generating…" />
+            {(settlementMutation.isPending || (!caseData.settlementHtml && caseData.status === 'GENERATING')) && settlementStartRef.current ? (
+              <InlineProgress startedAt={settlementStartRef.current} estimatedSeconds={45} label="Generating…" />
             ) : caseData.settlementHtml ? (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -2505,8 +2504,8 @@ function EscalationTab({ caseData }: { caseData: Case }) {
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
               Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments. Resets the statute of limitations.
             </p>
-            {paymentPlanMutation.isPending && paymentPlanStartRef.current ? (
-              <InlineProgress startedAt={paymentPlanStartRef.current} estimatedSeconds={15} label="Generating…" />
+            {(paymentPlanMutation.isPending || (!caseData.paymentPlanHtml && caseData.status === 'GENERATING')) && paymentPlanStartRef.current ? (
+              <InlineProgress startedAt={paymentPlanStartRef.current} estimatedSeconds={45} label="Generating…" />
             ) : caseData.paymentPlanHtml ? (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 flex-wrap">

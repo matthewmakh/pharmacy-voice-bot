@@ -886,6 +886,56 @@ router.get('/:id/affidavit-of-service-pdf', async (req: Request, res: Response) 
   }
 });
 
+async function generateSettlementInBackground(caseId: string, context: Record<string, unknown>, priorStatus: string) {
+  try {
+    let result = await generateStipulationOfSettlement(context);
+    let stlVerification = await verifySettlement(result.html, context);
+    let stlDidRetry = false;
+    if (stlVerification.overallStatus === 'issues_found') {
+      const retried = await retrySettlement(result.html, stlVerification, context);
+      stlVerification = await verifySettlement(retried.html, context);
+      result = retried;
+      stlDidRetry = true;
+    }
+    await prisma.case.update({
+      where: { id: caseId },
+      data: {
+        status: priorStatus as never,
+        settlementHtml: result.html,
+        settlementVerification: { ...stlVerification, didRetry: stlDidRetry } as never,
+      },
+    });
+  } catch (err) {
+    console.error(`Background settlement generation failed for case ${caseId}:`, err);
+    await prisma.case.update({ where: { id: caseId }, data: { status: priorStatus as never } }).catch(() => {});
+  }
+}
+
+async function generatePaymentPlanInBackground(caseId: string, context: Record<string, unknown>, priorStatus: string) {
+  try {
+    let result = await generatePaymentPlanAgreement(context);
+    let ppVerification = await verifyPaymentPlan(result.html, context);
+    let ppDidRetry = false;
+    if (ppVerification.overallStatus === 'issues_found') {
+      const retried = await retryPaymentPlan(result.html, ppVerification, context);
+      ppVerification = await verifyPaymentPlan(retried.html, context);
+      result = retried;
+      ppDidRetry = true;
+    }
+    await prisma.case.update({
+      where: { id: caseId },
+      data: {
+        status: priorStatus as never,
+        paymentPlanHtml: result.html,
+        paymentPlanVerification: { ...ppVerification, didRetry: ppDidRetry } as never,
+      },
+    });
+  } catch (err) {
+    console.error(`Background payment plan generation failed for case ${caseId}:`, err);
+    await prisma.case.update({ where: { id: caseId }, data: { status: priorStatus as never } }).catch(() => {});
+  }
+}
+
 // POST /api/cases/:id/generate-settlement
 router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
   try {
@@ -905,28 +955,15 @@ router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
       courtFormType: caseData.courtFormType,
     };
 
-    let result = await generateStipulationOfSettlement(context as Record<string, unknown>);
-
-    // Verify → retry if issues found → verify again
-    let stlVerification = await verifySettlement(result.html, context as Record<string, unknown>);
-    let stlDidRetry = false;
-    if (stlVerification.overallStatus === 'issues_found') {
-      const retried = await retrySettlement(result.html, stlVerification, context as Record<string, unknown>);
-      const retryV = await verifySettlement(retried.html, context as Record<string, unknown>);
-      result = retried;
-      stlVerification = retryV;
-      stlDidRetry = true;
-    }
-
-    const updated = await prisma.case.update({
+    const priorStatus = caseData.status;
+    const updatedCase = await prisma.case.update({
       where: { id: req.params.id },
-      data: {
-        settlementHtml: result.html,
-        settlementVerification: { ...stlVerification, didRetry: stlDidRetry } as never,
-      },
+      data: { status: 'GENERATING' },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
-    res.json(updated);
+    res.json(updatedCase);
+
+    generateSettlementInBackground(caseData.id, context as Record<string, unknown>, priorStatus);
   } catch (err) {
     console.error('Settlement generation error:', err);
     res.status(500).json({ error: 'Settlement generation failed', details: String(err) });
@@ -970,28 +1007,15 @@ router.post('/:id/generate-payment-plan', async (req: Request, res: Response) =>
       serviceDescription: caseData.serviceDescription,
     };
 
-    let result = await generatePaymentPlanAgreement(context as Record<string, unknown>);
-
-    // Verify → retry if issues found → verify again
-    let ppVerification = await verifyPaymentPlan(result.html, context as Record<string, unknown>);
-    let ppDidRetry = false;
-    if (ppVerification.overallStatus === 'issues_found') {
-      const retried = await retryPaymentPlan(result.html, ppVerification, context as Record<string, unknown>);
-      const retryV = await verifyPaymentPlan(retried.html, context as Record<string, unknown>);
-      result = retried;
-      ppVerification = retryV;
-      ppDidRetry = true;
-    }
-
-    const updated = await prisma.case.update({
+    const priorStatus = caseData.status;
+    const updatedCase = await prisma.case.update({
       where: { id: req.params.id },
-      data: {
-        paymentPlanHtml: result.html,
-        paymentPlanVerification: { ...ppVerification, didRetry: ppDidRetry } as never,
-      },
+      data: { status: 'GENERATING' },
       include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
     });
-    res.json(updated);
+    res.json(updatedCase);
+
+    generatePaymentPlanInBackground(caseData.id, context as Record<string, unknown>, priorStatus);
   } catch (err) {
     console.error('Payment plan generation error:', err);
     res.status(500).json({ error: 'Payment plan generation failed', details: String(err) });
