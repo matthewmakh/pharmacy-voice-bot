@@ -961,10 +961,31 @@ router.post('/:id/final-notice', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findFirst({
       where: { id: req.params.id, userId: req.user!.id },
+      include: { actions: { orderBy: { createdAt: 'asc' } } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
-    const context = {
+    // Derive court from outstanding balance
+    const outstanding = parseFloat(caseData.amountOwed?.toString() || '0') - parseFloat(caseData.amountPaid?.toString() || '0');
+    const courtName = outstanding <= 10000
+      ? 'NYC Commercial Claims Court'
+      : outstanding <= 50000
+      ? 'NYC Civil Court'
+      : 'New York Supreme Court';
+
+    // Find when the demand letter was generated so we can reference it by date
+    const demandAction = (caseData.actions as Array<{ type: string; createdAt: Date }>)
+      .find(a => a.type === 'DEMAND_LETTER_GENERATED');
+    const demandLetterDate = demandAction
+      ? new Date(demandAction.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      : null;
+
+    // Hard filing date: 7 days from today
+    const filingDateObj = new Date();
+    filingDateObj.setDate(filingDateObj.getDate() + 7);
+    const filingDate = filingDateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+    const caseContext = {
       claimantName: caseData.claimantName,
       claimantBusiness: caseData.claimantBusiness,
       debtorName: caseData.debtorName,
@@ -974,11 +995,13 @@ router.post('/:id/final-notice', async (req: Request, res: Response) => {
       amountPaid: caseData.amountPaid?.toString(),
       invoiceNumber: caseData.invoiceNumber,
       serviceDescription: caseData.serviceDescription,
-      paymentDueDate: caseData.paymentDueDate?.toISOString().split('T')[0],
-      demandLetterSent: !!caseData.demandLetter,
     };
 
-    const result = await generateFinalNotice(context as Record<string, unknown>);
+    const result = await generateFinalNotice(caseContext as Record<string, unknown>, {
+      demandLetterDate,
+      courtName,
+      filingDate,
+    });
 
     const updated = await prisma.case.update({
       where: { id: req.params.id },

@@ -407,32 +407,48 @@ Return ONLY valid JSON.`;
 }
 
 export async function generateFinalNotice(
-  caseData: Record<string, unknown>
+  caseData: Record<string, unknown>,
+  context: {
+    demandLetterDate: string | null;
+    courtName: string;
+    filingDate: string;
+  }
 ): Promise<DemandLetterResult> {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const outstanding = (parseFloat(String(caseData.amountOwed || '0')) - parseFloat(String(caseData.amountPaid || '0'))).toFixed(2);
+  const priorDemand = context.demandLetterDate
+    ? `Our demand letter dated ${context.demandLetterDate} has gone unanswered.`
+    : `Our prior demand for payment has gone unanswered.`;
 
-  const prompt = `You are drafting a FINAL NOTICE letter for a collections matter in New York. The initial demand letter was already sent and the deadline has passed without payment.
+  const prompt = `You are drafting a NOTICE OF IMMINENT LEGAL ACTION — the final communication before a lawsuit is filed. This is NOT a demand letter. Do not re-explain the dispute or the business relationship. The debtor has already received a full demand letter and ignored it.
 
-TODAY'S DATE: ${today}
+TODAY: ${today}
+PRIOR DEMAND: ${priorDemand}
+COURT WHERE FILING WILL OCCUR: ${context.courtName}
+FILING WILL COMMENCE ON OR AFTER: ${context.filingDate}
+OUTSTANDING BALANCE: $${outstanding}
+CLAIMANT: ${caseData.claimantBusiness || caseData.claimantName}
+DEBTOR: ${caseData.debtorBusiness || caseData.debtorName}
+DEBTOR ADDRESS: ${caseData.debtorAddress || '[address on file]'}
 
-CASE FACTS:
-${JSON.stringify(caseData, null, 2)}
+Write the notice with exactly these components, in this order:
 
-This is the final notice before legal action. It should:
-- Open with today's date (${today}) at the top of the letter
-- Address the debtor by name with their correct address
-- Open with a firm statement that prior demand went unanswered
-- State clearly that legal action will be initiated within 7 days if payment is not received
-- State the full outstanding balance (amountOwed minus amountPaid)
-- Be professional but leave no ambiguity about next steps
-- Mention that all costs of collection including legal fees may be sought
-- Be shorter than the original demand letter — 250-350 words
-- Sign off with the claimant's name and business
+1. Date line (today: ${today}, flush left)
+2. Debtor name and address block
+3. Centered bold header: NOTICE OF IMMINENT LEGAL ACTION
+4. Centered subheader: Final Opportunity to Cure — Payment Required by ${context.filingDate}
+5. One sentence: "${priorDemand}"
+6. One sentence: "Unless payment in full of $${outstanding} is received on or before ${context.filingDate}, [claimant name/business] will file a complaint in ${context.courtName} without further notice or communication."
+7. One sentence: "In addition to the principal amount, we will seek filing costs, service of process fees, and post-judgment interest at the statutory rate of 9% per annum."
+8. One sentence: "No further communications will be sent prior to filing."
+9. Signature block: claimant name and business, date
 
-Return JSON with:
+Total word count: 100–150 words. No background. No explanation of the dispute. No pleasantries.
+
+Return JSON:
 {
   "text": "plain text version",
-  "html": "HTML version with <p> tags"
+  "html": "HTML version — date and address block flush left, header and subheader centered and bold, body paragraphs left-aligned, signature block left-aligned. Use <p>, <strong>, <div style='text-align:center'> tags. No external CSS classes."
 }
 
 Return ONLY valid JSON.`;
