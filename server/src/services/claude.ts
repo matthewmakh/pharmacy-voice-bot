@@ -613,8 +613,35 @@ COURTHOUSE (verified — do not change): ${civilAddr.address}
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
 
-Generate pre-filled HTML. Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
+═══════════════════════════════════════════════════
+PARTY NAMING — DERIVE ONCE, USE VERBATIM THROUGHOUT THE ENTIRE DOCUMENT:
 
+Plaintiff:
+  - If BOTH claimantName AND claimantBusiness are present → use "${caseData.claimantName ? `${caseData.claimantName}, individually and d/b/a ${caseData.claimantBusiness}` : caseData.claimantBusiness}"
+  - If only claimantBusiness → use claimantBusiness alone
+  - If only claimantName → use claimantName alone
+Use this exact format in the caption box, complaint header, signature block, and relief paragraph. Never vary it.
+
+Defendant:
+  - If BOTH debtorName AND debtorBusiness are present → use both: in the caption list debtorBusiness first, then debtorName individually. In the complaint body use "Defendant debtorName, individually and d/b/a debtorBusiness"
+  - If only debtorBusiness → use debtorBusiness alone
+  - If only debtorName → use debtorName alone
+Use this exact format everywhere. Never vary it.
+
+═══════════════════════════════════════════════════
+HANDLING MISSING INFORMATION:
+- Required structural fields (party addresses, dollar amounts, invoice number if referenced): use [UNKNOWN — VERIFY BEFORE FILING]
+- Optional factual details not present in the case data (secondary businesses, additional entities defendant may operate, extra names): OMIT the allegation entirely. Do not mention facts you cannot state. Do not write [UNKNOWN] for optional details.
+- Notary blanks in the verification section (signature line, "Sworn to before me this ___ day of ___", commission expiration): these are intentionally blank for wet-ink completion with the notary in person. Do NOT mark them [UNKNOWN] — leave them as blank underscores.
+
+═══════════════════════════════════════════════════
+AUTHORITATIVE DATES — use single specific dates, never ranges or "approximately":
+- Payment due date: use paymentDueDate as one exact date formatted "Month DD, YYYY". Do not write a range. Do not write "approximately." If there is only one date available, use it as stated.
+- Invoice date: use invoiceDate formatted "Month DD, YYYY"
+- Agreement date: use agreementDate formatted "Month DD, YYYY"
+In the complaint body, always state dates as a single specific date ("On [date], ..."). Never express uncertainty about dates.
+
+═══════════════════════════════════════════════════
 CRITICAL RULES:
 - Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Filing county is ${county} County — use this, do not re-derive
@@ -627,18 +654,23 @@ CRITICAL RULES:
 SUMMONS SECTION:
 - Court header: "CIVIL COURT OF THE CITY OF NEW YORK" + "County of ${county}"
 - Index Number: blank line — [ASSIGNED BY COURT CLERK — DO NOT FILL]
-- Plaintiff box: claimantBusiness or claimantName + full address + phone + email
-- Defendant box: debtorBusiness or debtorName (include DBA if both exist) + full address + phone
+- Plaintiff box: use the Plaintiff format defined above + full address + phone + email
+- Defendant box: use the Defendant format defined above + full address + phone
 - Summons notice: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the County listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint. You must respond to this complaint within the time period prescribed by law (20 days after personal service; 30 days if service is by other means). Failure to appear or respond may result in a default judgment being entered against you for the amount demanded, together with interest, costs, and disbursements."
 - Courthouse address: ${civilAddr.address} — use this exactly
 
 COMPLAINT SECTION:
-- Header: "Plaintiff [claimantName or claimantBusiness], [doing business as X if applicable], appearing Pro Se, alleges as follows:"
+- Header: "Plaintiff [use Plaintiff format defined above], appearing Pro Se, alleges as follows:"
 - Cause of Action heading: pick the most accurate from: BREACH OF CONTRACT / ACCOUNT STATED / QUANTUM MERUIT (use Breach of Contract if there was an agreement; add Account Stated if there was an invoice the defendant didn't dispute; add Quantum Meruit if no written contract)
-- Numbered factual allegations (use actual names, dates, amounts from case data):
-  1. The Parties and Agreement — who the parties are, what was agreed, when, for how much
-  2. Plaintiff's Full Performance — what was delivered/completed and when
-  3. Defendant's Default and Outstanding Balance — invoice amount, partial payment if any, balance remaining, demand made, non-payment
+- Numbered factual allegations (use actual names, single specific dates, amounts from case data):
+  1. The Parties — who the parties are using the exact formats defined above. Do NOT mention secondary businesses or entities unless they are explicitly named in the case data.
+  2. The Agreement — what was agreed, when (exact date), for how much
+  3. Plaintiff's Full Performance — what was delivered/completed and when
+  4. Invoice Rendered — invoice number, exact invoice date, exact payment due date (single date, no ranges)
+  5. Partial Payment and Outstanding Balance — amount paid, amount remaining
+  6. Account Stated (if invoice exists and was not disputed) — invoice establishes account stated
+  7. Quantum Meruit in the alternative (if no written contract)
+  8. Demand for Payment — demand was made, defendant refused
 - Relief Sought box: "WHEREFORE, Plaintiff demands judgment against Defendant in the sum of $[outstandingBalance], together with statutory interest from the date of default, costs, and disbursements of this action, and for such other and further relief as this Court deems just and proper."
 
 SIGNATURE BLOCK:
@@ -649,9 +681,10 @@ VERIFICATION:
 - "State of New York )"
 - "County of [county of claimant's address] ) ss.:"
 - "I, [claimantName], being duly sworn, depose and say that I am the Plaintiff in the above-captioned action; that I have read the foregoing Complaint and know the contents thereof; and that the same is true to my own knowledge, except as to matters therein stated to be alleged on information and belief, and as to those matters I believe them to be true."
-- Signature line + printed name
-- "Sworn to before me this _____ day of _____________, ${year}"
-- Notary Public signature line
+- Signature line + printed name + "Plaintiff, Pro Se"
+- "Sworn to before me this _____ day of _____________, ${year}" — leave as blank underscores, NOT [UNKNOWN]
+- Notary Public signature line — blank underscore
+- "My Commission Expires: ___________" — blank underscore
 
 Format as print-ready HTML (max-width 750px, serif font, court-document style, 1.4 line spacing).
 Include disclaimer banner at top: "⚠ DISCLAIMER: This document was pre-filled from your case data. Have an attorney review before filing if possible. Fields marked [UNKNOWN — VERIFY BEFORE FILING] require your attention before submission."
