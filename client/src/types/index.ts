@@ -191,6 +191,22 @@ export type CaseListItem = Case & {
   actions: Pick<CaseAction, 'id' | 'type' | 'label' | 'createdAt'>[];
 };
 
+export type IntakeFieldName =
+  | 'claimantName' | 'claimantBusiness' | 'claimantAddress' | 'claimantEmail' | 'claimantPhone'
+  | 'debtorName' | 'debtorBusiness' | 'debtorAddress' | 'debtorEmail' | 'debtorPhone' | 'debtorEntityType'
+  | 'amountOwed' | 'amountPaid' | 'serviceDescription'
+  | 'agreementDate' | 'serviceStartDate' | 'serviceEndDate' | 'invoiceDate' | 'paymentDueDate'
+  | 'hasWrittenContract' | 'invoiceNumber' | 'industry';
+
+export interface IntakeFieldExtraction {
+  value: string | number | boolean | null;
+  confidence: 'high' | 'medium' | 'low';
+  sourceDocId: string | null;
+  sourceExcerpt: string | null;
+}
+
+export type IntakeAutofillResult = Record<IntakeFieldName, IntakeFieldExtraction>;
+
 export interface CreateCaseInput {
   title?: string;
   claimantName?: string;

@@ -62,18 +62,22 @@ function CaseRow({ caseItem }: { caseItem: CaseListItem }) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { data: cases = [], isLoading, error } = useQuery({
+  const { data: allCases = [], isLoading, error } = useQuery({
     queryKey: ['cases'],
     queryFn: getCases,
     refetchInterval: 10000,
   });
+
+  // Hide unfinished drafts (cases the user started uploading to but never submitted).
+  // They'd otherwise clutter the dashboard with empty rows.
+  const cases = allCases.filter((c) => c.status !== 'DRAFT');
 
   const activeCount = cases.filter(
     (c) => !['RESOLVED', 'CLOSED'].includes(c.status)
   ).length;
 
   const pendingActionCount = cases.filter((c) =>
-    ['STRATEGY_PENDING', 'ASSEMBLING', 'DRAFT'].includes(c.status)
+    ['STRATEGY_PENDING', 'ASSEMBLING'].includes(c.status)
   ).length;
 
   const resolvedCount = cases.filter((c) =>

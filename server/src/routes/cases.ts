@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyDemandLetter, retryDemandLetter, verifyCaseSynthesis, verifyDefaultJudgment, retryDefaultJudgment, verifySettlement, retrySettlement, verifyPaymentPlan, retryPaymentPlan } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyDemandLetter, retryDemandLetter, verifyCaseSynthesis, verifyDefaultJudgment, retryDefaultJudgment, verifySettlement, retrySettlement, verifyPaymentPlan, retryPaymentPlan, extractIntakeFromDocuments } from '../services/claude';
 import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
@@ -135,6 +135,136 @@ router.post('/', async (req: Request, res: Response) => {
       console.error(err);
       res.status(500).json({ error: 'Failed to create case' });
     }
+  }
+});
+
+// POST /api/cases/draft — create an empty DRAFT case so docs can be attached before final submit
+router.post('/draft', async (req: Request, res: Response) => {
+  try {
+    const newCase = await prisma.case.create({
+      data: {
+        status: 'DRAFT',
+        userId: req.user!.id,
+      },
+      include: { documents: true, actions: true },
+    });
+    res.status(201).json(newCase);
+  } catch (err) {
+    console.error('Draft case creation error:', err);
+    res.status(500).json({ error: 'Failed to create draft case' });
+  }
+});
+
+// POST /api/cases/:id/submit-draft — finalize a DRAFT case (set fields, flip to ASSEMBLING, log creation)
+router.post('/:id/submit-draft', async (req: Request, res: Response) => {
+  try {
+    const data = updateCaseSchema.parse(req.body);
+
+    const existing = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      select: { status: true, debtorName: true, debtorBusiness: true },
+    });
+    if (!existing) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (existing.status !== 'DRAFT') {
+      res.status(400).json({ error: 'Case is no longer a draft' });
+      return;
+    }
+
+    const title =
+      data.title ||
+      (data.debtorBusiness || data.debtorName || existing.debtorBusiness || existing.debtorName || 'Unknown Debtor') +
+        (data.amountOwed ? ` — $${data.amountOwed.toLocaleString()}` : '');
+
+    const updated = await prisma.case.update({
+      where: { id: req.params.id },
+      data: {
+        title,
+        claimantName: data.claimantName,
+        claimantBusiness: data.claimantBusiness,
+        claimantAddress: data.claimantAddress,
+        claimantEmail: data.claimantEmail || undefined,
+        claimantPhone: data.claimantPhone,
+        debtorName: data.debtorName,
+        debtorBusiness: data.debtorBusiness,
+        debtorAddress: data.debtorAddress,
+        debtorEmail: data.debtorEmail || undefined,
+        debtorPhone: data.debtorPhone,
+        debtorEntityType: data.debtorEntityType,
+        amountOwed: data.amountOwed,
+        amountPaid: data.amountPaid,
+        serviceDescription: data.serviceDescription,
+        agreementDate: parseDate(data.agreementDate),
+        serviceStartDate: parseDate(data.serviceStartDate),
+        serviceEndDate: parseDate(data.serviceEndDate),
+        invoiceDate: parseDate(data.invoiceDate),
+        paymentDueDate: parseDate(data.paymentDueDate),
+        hasWrittenContract: data.hasWrittenContract ?? false,
+        invoiceNumber: data.invoiceNumber,
+        industry: data.industry,
+        notes: data.notes,
+        status: 'ASSEMBLING',
+        actions: {
+          create: { type: 'CASE_CREATED', status: 'COMPLETED', label: 'Case created' },
+        },
+      },
+      include: { documents: true, actions: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: err.errors });
+    } else {
+      console.error('Submit draft error:', err);
+      res.status(500).json({ error: 'Failed to submit draft' });
+    }
+  }
+});
+
+// POST /api/cases/:id/autofill — extract intake fields from uploaded documents
+// Returns the field map without persisting; the frontend merges it into the form
+// and persists on final submit via PATCH /:id.
+router.post('/:id/autofill', async (req: Request, res: Response) => {
+  try {
+    const caseData = await prisma.case.findUnique({
+      where: { id: req.params.id, userId: req.user!.id },
+      include: { documents: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (caseData.status !== 'DRAFT') {
+      res.status(400).json({ error: 'Autofill is only available for draft cases' });
+      return;
+    }
+    if (caseData.documents.length === 0) {
+      res.status(400).json({ error: 'No documents attached to extract from' });
+      return;
+    }
+
+    // Wait up to 60s for any in-flight per-document analysis to complete (we need extractedText).
+    // The documents POST route fires extraction in the background; analysisError===false && classification===null means still running.
+    const deadline = Date.now() + 60_000;
+    let docs = caseData.documents;
+    while (Date.now() < deadline) {
+      const stillPending = docs.some(d => !d.analysisError && d.classification === null);
+      if (!stillPending) break;
+      await new Promise(r => setTimeout(r, 2000));
+      docs = await prisma.document.findMany({ where: { caseId: caseData.id } });
+    }
+
+    const ready = docs
+      .filter(d => typeof d.extractedText === 'string' && d.extractedText.length > 0)
+      .map(d => ({ id: d.id, originalName: d.originalName, extractedText: d.extractedText! }));
+
+    if (ready.length === 0) {
+      res.status(422).json({ error: 'Could not extract text from any uploaded documents' });
+      return;
+    }
+
+    const result = await extractIntakeFromDocuments(ready);
+    res.json(result);
+  } catch (err) {
+    console.error('Autofill error:', err);
+    res.status(500).json({ error: 'Autofill failed', details: String(err) });
   }
 });
 

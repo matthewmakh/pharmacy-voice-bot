@@ -108,14 +108,6 @@ router.post(
         },
       });
 
-      // Update case to ASSEMBLING if still DRAFT
-      if (caseRecord.status === 'DRAFT') {
-        await prisma.case.update({
-          where: { id: caseId },
-          data: { status: 'ASSEMBLING' },
-        });
-      }
-
       // Respond immediately — analysis continues in background
       res.status(201).json(docs);
 

@@ -70,6 +70,155 @@ export interface CaseSynthesis {
   caseAssessment: CaseAssessment;
 }
 
+export type IntakeFieldName =
+  | 'claimantName'
+  | 'claimantBusiness'
+  | 'claimantAddress'
+  | 'claimantEmail'
+  | 'claimantPhone'
+  | 'debtorName'
+  | 'debtorBusiness'
+  | 'debtorAddress'
+  | 'debtorEmail'
+  | 'debtorPhone'
+  | 'debtorEntityType'
+  | 'amountOwed'
+  | 'amountPaid'
+  | 'serviceDescription'
+  | 'agreementDate'
+  | 'serviceStartDate'
+  | 'serviceEndDate'
+  | 'invoiceDate'
+  | 'paymentDueDate'
+  | 'hasWrittenContract'
+  | 'invoiceNumber'
+  | 'industry';
+
+export interface IntakeFieldExtraction {
+  value: string | number | boolean | null;
+  confidence: 'high' | 'medium' | 'low';
+  sourceDocId: string | null;
+  sourceExcerpt: string | null;
+}
+
+export type IntakeAutofillResult = Record<IntakeFieldName, IntakeFieldExtraction>;
+
+const INTAKE_FIELD_NAMES: IntakeFieldName[] = [
+  'claimantName', 'claimantBusiness', 'claimantAddress', 'claimantEmail', 'claimantPhone',
+  'debtorName', 'debtorBusiness', 'debtorAddress', 'debtorEmail', 'debtorPhone', 'debtorEntityType',
+  'amountOwed', 'amountPaid', 'serviceDescription',
+  'agreementDate', 'serviceStartDate', 'serviceEndDate', 'invoiceDate', 'paymentDueDate',
+  'hasWrittenContract', 'invoiceNumber', 'industry',
+];
+
+function emptyIntakeResult(): IntakeAutofillResult {
+  const result = {} as IntakeAutofillResult;
+  for (const name of INTAKE_FIELD_NAMES) {
+    result[name] = { value: null, confidence: 'low', sourceDocId: null, sourceExcerpt: null };
+  }
+  return result;
+}
+
+export async function extractIntakeFromDocuments(
+  documents: Array<{ id: string; originalName: string; extractedText: string }>,
+): Promise<IntakeAutofillResult> {
+  if (documents.length === 0) return emptyIntakeResult();
+
+  const docsContext = documents
+    .map(
+      (d, i) =>
+        `=== Document ${i + 1} (id: ${d.id}, filename: ${d.originalName}) ===
+${d.extractedText.slice(0, 12000)}`
+    )
+    .join('\n\n');
+
+  const prompt = `You are pre-filling a New York B2B collections case intake form by extracting fields from the user's uploaded documents (contracts, invoices, emails, etc.). The user will review and edit your suggestions, so accuracy matters more than completeness — when in doubt, return null.
+
+CRITICAL RULES:
+1. Extract ONLY what is explicitly stated or strongly evidenced in the documents. NEVER invent or guess.
+2. Return value: null with confidence: "low" for any field not evidenced — do NOT fabricate plausible-sounding values.
+3. The CLAIMANT is the user's own business (the party owed money). The DEBTOR is the other party. Be careful not to swap them — the claimant is whoever issued the invoices and is suing/collecting; the debtor is the recipient who owes payment.
+4. claimantEmail and claimantPhone rarely appear in invoices the claimant sent — these are the user's own contact info. Return null unless the documents explicitly contain them (e.g., on the claimant's letterhead).
+5. Confidence rubric:
+   - "high" = stated verbatim in the document
+   - "medium" = clearly inferable from context (e.g., debtor address from the "Bill To" section)
+   - "low" = guess (prefer null over a low-confidence guess)
+6. sourceDocId: the document id (from the "id:" header) where you found this fact. null if not found.
+7. sourceExcerpt: a ≤20-word verbatim quote from the source document. null if not found.
+8. Dates must be ISO format (YYYY-MM-DD).
+9. amountOwed and amountPaid must be numbers (no currency symbol, no commas).
+10. hasWrittenContract is a boolean — true if a signed/executed written agreement exists in the documents.
+11. debtorEntityType must be one of: "LLC", "Corporation", "Sole Proprietor", "Partnership", "Individual", "Unknown".
+
+DOCUMENTS:
+${docsContext}
+
+Return a single JSON object with EXACTLY these fields. Each field MUST be an object of shape {"value": ..., "confidence": "high"|"medium"|"low", "sourceDocId": "..." or null, "sourceExcerpt": "..." or null}:
+
+{
+  "claimantName": { ... },
+  "claimantBusiness": { ... },
+  "claimantAddress": { ... },
+  "claimantEmail": { ... },
+  "claimantPhone": { ... },
+  "debtorName": { ... },
+  "debtorBusiness": { ... },
+  "debtorAddress": { ... },
+  "debtorEmail": { ... },
+  "debtorPhone": { ... },
+  "debtorEntityType": { ... },
+  "amountOwed": { ... },
+  "amountPaid": { ... },
+  "serviceDescription": { ... },
+  "agreementDate": { ... },
+  "serviceStartDate": { ... },
+  "serviceEndDate": { ... },
+  "invoiceDate": { ... },
+  "paymentDueDate": { ... },
+  "hasWrittenContract": { ... },
+  "invoiceNumber": { ... },
+  "industry": { ... }
+}
+
+Return ONLY valid JSON. No markdown, no explanation.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: 'You are a document extraction assistant for a legal intake form. Always respond with valid JSON only. Never invent values — return null when uncertain.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  let parsed: Partial<IntakeAutofillResult>;
+  try {
+    parsed = JSON.parse(extractJson(content.text)) as Partial<IntakeAutofillResult>;
+  } catch (err) {
+    console.error('Failed to parse intake autofill JSON:', content.text);
+    throw new Error(`Intake extraction returned invalid JSON: ${String(err)}`);
+  }
+
+  // Validate every field is present and has the right shape; fill in blanks defensively
+  const validDocIds = new Set(documents.map(d => d.id));
+  const result = emptyIntakeResult();
+  for (const name of INTAKE_FIELD_NAMES) {
+    const f = parsed[name];
+    if (f && typeof f === 'object' && 'value' in f) {
+      const conf = f.confidence === 'high' || f.confidence === 'medium' || f.confidence === 'low' ? f.confidence : 'low';
+      const sourceDocId = typeof f.sourceDocId === 'string' && validDocIds.has(f.sourceDocId) ? f.sourceDocId : null;
+      result[name] = {
+        value: f.value === undefined ? null : f.value,
+        confidence: conf,
+        sourceDocId,
+        sourceExcerpt: typeof f.sourceExcerpt === 'string' ? f.sourceExcerpt : null,
+      };
+    }
+  }
+  return result;
+}
+
 export interface DemandLetterResult {
   text: string;
   html: string;

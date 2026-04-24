@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Case, CaseListItem, CreateCaseInput, Document, Strategy } from '../types';
+import type { Case, CaseListItem, CreateCaseInput, Document, IntakeAutofillResult, Strategy } from '../types';
 
 export interface StrategyAssessment {
   strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
@@ -33,6 +33,21 @@ export const getCase = async (id: string): Promise<Case> => {
 
 export const createCase = async (input: CreateCaseInput): Promise<Case> => {
   const { data } = await api.post('/cases', input);
+  return data;
+};
+
+export const createDraftCase = async (): Promise<Case> => {
+  const { data } = await api.post('/cases/draft');
+  return data;
+};
+
+export const autofillFromDocuments = async (caseId: string): Promise<IntakeAutofillResult> => {
+  const { data } = await api.post(`/cases/${caseId}/autofill`, undefined, { timeout: 180000 });
+  return data;
+};
+
+export const submitDraftCase = async (caseId: string, input: CreateCaseInput): Promise<Case> => {
+  const { data } = await api.post(`/cases/${caseId}/submit-draft`, input);
   return data;
 };
 
