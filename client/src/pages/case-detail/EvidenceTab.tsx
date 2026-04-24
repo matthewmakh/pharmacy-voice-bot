@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Loader2, Trash2, Eye, X } from 'lucide-react';
+import { AlertCircle, FileText, Loader2, Trash2, Eye, X } from 'lucide-react';
 import {
   uploadDocuments,
   deleteDocument,
+  reanalyzeDocument,
   getDocumentViewUrl,
 } from '../../lib/api';
 import { formatDate, formatFileSize, DOC_CLASSIFICATION_LABELS, DOC_CLASSIFICATION_TONES } from '../../lib/utils';
@@ -33,6 +34,11 @@ export default function EvidenceTab({ caseData, onRefresh }: { caseData: Case; o
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
+  const reanalyzeMutation = useMutation({
+    mutationFn: (docId: string) => reanalyzeDocument(caseData.id, docId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
   return (
     <div className="space-y-6">
       <UploadZone onUpload={handleUpload} uploading={uploading} />
@@ -48,7 +54,18 @@ export default function EvidenceTab({ caseData, onRefresh }: { caseData: Case; o
                   {formatFileSize(doc.size)} · {formatDate(doc.uploadedAt)}
                 </div>
               </div>
-              {doc.classification === null ? (
+              {doc.analysisError ? (
+                <div className="flex items-center gap-2">
+                  <Badge tone="danger" icon={<AlertCircle className="w-3 h-3" />}>Analysis failed</Badge>
+                  <button
+                    onClick={() => reanalyzeMutation.mutate(doc.id)}
+                    disabled={reanalyzeMutation.isPending}
+                    className="text-xs text-blue-600 hover:text-blue-700 underline disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : doc.classification === null ? (
                 <Badge tone="neutral" icon={<Loader2 className="w-3 h-3 animate-spin" />}>Analyzing…</Badge>
               ) : (
                 <Badge tone={DOC_CLASSIFICATION_TONES[doc.classification] ?? 'neutral'}>

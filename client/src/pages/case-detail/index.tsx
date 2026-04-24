@@ -45,7 +45,7 @@ export default function CaseDetail() {
       const data = query.state.data;
       if (!data) return false;
       const analyzing = ['ANALYZING', 'GENERATING'].includes(data.status);
-      const docsAnalyzing = data.documents.some((d) => d.classification === null);
+      const docsAnalyzing = data.documents.some((d) => d.classification === null && !d.analysisError);
       return analyzing || docsAnalyzing ? 3000 : false;
     },
   });

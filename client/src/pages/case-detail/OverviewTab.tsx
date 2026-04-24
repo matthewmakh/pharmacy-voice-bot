@@ -80,18 +80,18 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
   return (
     <div className="space-y-6">
       {/* Key Numbers */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="card p-5">
-          <div className="field-label mb-1">Amount Owed</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountOwed)}</div>
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className="card p-3 sm:p-5">
+          <div className="field-label mb-1 leading-tight">Amount Owed</div>
+          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountOwed)}</div>
         </div>
-        <div className="card p-5">
-          <div className="field-label mb-1">Amount Paid</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountPaid || 0)}</div>
+        <div className="card p-3 sm:p-5">
+          <div className="field-label mb-1 leading-tight">Amount Paid</div>
+          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountPaid || 0)}</div>
         </div>
-        <div className="card p-5 bg-blue-50 border-blue-200">
-          <div className="text-xs font-medium text-blue-700 mb-1">Outstanding Balance</div>
-          <div className="text-2xl font-bold text-blue-900">{formatCurrency(outstanding)}</div>
+        <div className="card p-3 sm:p-5 bg-blue-50 border-blue-200">
+          <div className="text-xs font-medium text-blue-700 mb-1 leading-tight">Balance Due</div>
+          <div className="text-base sm:text-2xl font-bold text-blue-900 truncate">{formatCurrency(outstanding)}</div>
         </div>
       </div>
 
@@ -111,20 +111,20 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             collapsible
             defaultOpen
           >
-            <div className="flex items-baseline gap-6 flex-wrap">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
               <div>
                 <div className="field-label mb-0.5">Principal</div>
-                <div className="text-lg font-semibold text-slate-800">{formatCurrency(outstanding)}</div>
+                <div className="text-base sm:text-lg font-semibold text-slate-800">{formatCurrency(outstanding)}</div>
               </div>
-              <div className="text-slate-300 text-xl self-center">+</div>
+              <div className="text-slate-300 text-lg self-center">+</div>
               <div>
                 <div className="field-label mb-0.5">Interest ({yearsElapsed} yrs)</div>
-                <div className="text-lg font-semibold text-slate-800">{formatCurrency(interest)}</div>
+                <div className="text-base sm:text-lg font-semibold text-slate-800">{formatCurrency(interest)}</div>
               </div>
-              <div className="text-slate-300 text-xl self-center">=</div>
+              <div className="text-slate-300 text-lg self-center">=</div>
               <div>
                 <div className="field-label mb-0.5">Total claim value</div>
-                <div className="text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
+                <div className="text-base sm:text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
               </div>
             </div>
             <p className="text-xs text-slate-500 mt-3 leading-relaxed">

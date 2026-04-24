@@ -36,8 +36,8 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
           <p className="text-xs text-slate-500 mb-3 leading-relaxed">
             A binding agreement between both parties — settlement amount, payment terms, mutual release, default provisions.
           </p>
-          {settlementMutation.isPending && settlementRef.current ? (
-            <InlineProgress startedAt={settlementRef.current} estimatedSeconds={15} label="Generating…" />
+          {(settlementMutation.isPending || (!caseData.settlementHtml && caseData.status === 'GENERATING')) && settlementRef.current ? (
+            <InlineProgress startedAt={settlementRef.current} estimatedSeconds={45} label="Generating…" />
           ) : caseData.settlementHtml ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
@@ -62,8 +62,8 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
           <p className="text-xs text-slate-500 mb-3 leading-relaxed">
             Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments.
           </p>
-          {paymentPlanMutation.isPending && paymentPlanRef.current ? (
-            <InlineProgress startedAt={paymentPlanRef.current} estimatedSeconds={15} label="Generating…" />
+          {(paymentPlanMutation.isPending || (!caseData.paymentPlanHtml && caseData.status === 'GENERATING')) && paymentPlanRef.current ? (
+            <InlineProgress startedAt={paymentPlanRef.current} estimatedSeconds={45} label="Generating…" />
           ) : caseData.paymentPlanHtml ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
