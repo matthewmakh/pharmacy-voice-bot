@@ -10,6 +10,28 @@ import { requireAuth } from '../middleware/auth';
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
 
+// Run async tasks with a concurrency cap. Errors from individual tasks are caught
+// and logged so one failed doc doesn't stop the others.
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      try {
+        await fn(items[idx]);
+      } catch (err) {
+        console.error('runWithConcurrency task error:', err);
+      }
+    }
+  };
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+}
+
 // Verify the case belongs to the authenticated user
 async function verifyOwnership(caseId: string, userId: string): Promise<boolean> {
   const c = await prisma.case.findUnique({ where: { id: caseId, userId }, select: { id: true } });
@@ -111,12 +133,14 @@ router.post(
       // Respond immediately — analysis continues in background
       res.status(201).json(docs);
 
-      // Kick off background analysis for each file (does not block response)
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const doc = docs[i];
-        analyzeDocumentInBackground(doc.id, file.path, file.mimetype, file.originalname);
-      }
+      // Kick off background analysis with a concurrency cap of 3.
+      // Without a cap, a 20-file upload fires 20 concurrent Claude calls and saturates
+      // Anthropic's per-minute token/request budget — which then makes downstream
+      // /autofill and /analyze calls hit 429s and silently retry inside the SDK.
+      const tasks = files.map((file, i) => ({ file, doc: docs[i] }));
+      void runWithConcurrency(tasks, 3, async ({ file, doc }) => {
+        await analyzeDocumentInBackground(doc.id, file.path, file.mimetype, file.originalname);
+      });
     } catch (err) {
       console.error('Upload error:', err);
       res.status(500).json({ error: 'Upload failed', details: String(err) });

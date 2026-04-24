@@ -367,8 +367,19 @@ async function analyzeCaseInBackground(
   originalCase: { debtorAddress: string | null; debtorName: string | null; debtorBusiness: string | null; claimantName: string | null; claimantBusiness: string | null; amountOwed: { toString(): string } | null; invoiceDate: Date | null; agreementDate: Date | null; paymentDueDate: Date | null; invoiceNumber: string | null }
 ) {
   try {
+    console.log(`[analyze] start case=${caseId} docs=${docInputs.length}`);
     const synthesis = await synthesizeCase(docInputs, userFacts);
-    const analysisVerification = await verifyCaseSynthesis(synthesis, docInputs, userFacts);
+    console.log(`[analyze] synthesis ok case=${caseId}`);
+
+    // Verify is best-effort: if it fails (timeout, rate limit, parse error),
+    // we still persist the synthesis result rather than throwing away a good analysis.
+    let analysisVerification: Awaited<ReturnType<typeof verifyCaseSynthesis>> | null = null;
+    try {
+      analysisVerification = await verifyCaseSynthesis(synthesis, docInputs, userFacts);
+      console.log(`[analyze] verify ok case=${caseId} status=${analysisVerification.overallStatus}`);
+    } catch (verr) {
+      console.error(`[analyze] verify failed case=${caseId} — persisting synthesis without verification:`, verr);
+    }
 
     const f = synthesis.extractedFacts as Record<string, string | boolean | number | null>;
     const safeDate = (v: unknown) => { if (!v || typeof v !== 'string') return undefined; const d = new Date(v); return isNaN(d.getTime()) ? undefined : d; };

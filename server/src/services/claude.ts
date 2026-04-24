@@ -182,12 +182,18 @@ Return a single JSON object with EXACTLY these fields. Each field MUST be an obj
 
 Return ONLY valid JSON. No markdown, no explanation.`;
 
+  const promptBytes = Buffer.byteLength(prompt, 'utf8');
+  const intakeStart = Date.now();
+  console.log(`[claude] fn=extractIntakeFromDocuments docs=${documents.length} promptBytes=${promptBytes}`);
+
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
     system: 'You are a document extraction assistant for a legal intake form. Always respond with valid JSON only. Never invent values — return null when uncertain.',
     messages: [{ role: 'user', content: prompt }],
   });
+
+  console.log(`[claude] fn=extractIntakeFromDocuments ms=${Date.now() - intakeStart} stopReason=${response.stop_reason} inputTokens=${response.usage?.input_tokens} outputTokens=${response.usage?.output_tokens}`);
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -454,12 +460,23 @@ MISSING INFO IMPACT GUIDE:
 
 Sort timeline chronologically. Return ONLY valid JSON.`;
 
+  const promptBytes = Buffer.byteLength(prompt, 'utf8');
+  const synthStart = Date.now();
+  console.log(`[claude] fn=synthesizeCase docs=${documents.length} promptBytes=${promptBytes}`);
+
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 8192,
+    max_tokens: 12288,
     system: 'You are a legal case analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: prompt }],
   });
+
+  console.log(`[claude] fn=synthesizeCase ms=${Date.now() - synthStart} stopReason=${response.stop_reason} inputTokens=${response.usage?.input_tokens} outputTokens=${response.usage?.output_tokens}`);
+
+  // Fail loud on truncation: persisting a half-parsed synthesis as if it were valid is worse than re-running.
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error(`synthesizeCase output truncated at max_tokens (input=${response.usage?.input_tokens} output=${response.usage?.output_tokens}) — case too complex for current cap`);
+  }
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -469,26 +486,10 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
   } catch (e) {
     console.error('Failed to parse Claude case synthesis. Raw response:', content.text);
     console.error('Parse error:', e);
-    return {
-      timeline: [],
-      caseSummary: 'Analysis could not be completed. Please review the uploaded documents manually.',
-      missingInfo: [],
-      caseStrength: 'moderate',
-      extractedFacts: {},
-      evidenceSummary: {},
-      caseAssessment: {
-        primaryCauseOfAction: {
-          theory: 'breach_of_written_contract',
-          reasoning: 'Unable to determine — re-run analysis.',
-          elements: [],
-        },
-        alternativeCauses: [],
-        counterclaimRisk: { level: 'medium', reasoning: 'Unable to determine — re-run analysis.', signals: [] },
-        debtorEntityNotes: null,
-        recommendedStrategy: 'STANDARD_RECOVERY',
-        strategyReasoning: 'Unable to determine — re-run analysis.',
-      },
-    };
+    // No silent fallback — a hardcoded "STANDARD_RECOVERY / breach_of_written_contract" placeholder
+    // would persist as if it were a real analysis and mislead downstream code. Throw so the
+    // background job's catch reverts to ASSEMBLING and the user can re-run.
+    throw new Error(`synthesizeCase returned unparseable JSON: ${String(e)}`);
   }
 }
 
@@ -1766,12 +1767,18 @@ Return JSON:
 
 Return ONLY valid JSON.`;
 
+  const verifyPromptBytes = Buffer.byteLength(synthPrompt, 'utf8');
+  const verifyStart = Date.now();
+  console.log(`[claude] fn=verifyCaseSynthesis docs=${documents.length} promptBytes=${verifyPromptBytes}`);
+
   const synthResp = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
     system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
     messages: [{ role: 'user', content: synthPrompt }],
   });
+
+  console.log(`[claude] fn=verifyCaseSynthesis ms=${Date.now() - verifyStart} stopReason=${synthResp.stop_reason} inputTokens=${synthResp.usage?.input_tokens} outputTokens=${synthResp.usage?.output_tokens}`);
 
   const synthContent = synthResp.content[0];
   if (synthContent.type !== 'text') throw new Error('Unexpected response type from Claude');
