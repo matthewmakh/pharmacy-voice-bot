@@ -10,6 +10,15 @@ import { lookupNYSEntity } from '../services/nysEntity';
 import { lookupNYSUCC } from '../services/nysUCC';
 import { lookupNYCECB } from '../services/nycECB';
 import { checkPACERBankruptcy } from '../services/pacer';
+import { sendEmail } from '../services/resend';
+import { sendCertifiedLetter, parseUSAddress } from '../services/lob';
+import { sendForSignature } from '../services/dropboxSign';
+import {
+  createConnectAccount,
+  createConnectOnboardingLink,
+  createDebtorCheckoutSession,
+} from '../services/stripe';
+import crypto from 'crypto';
 
 const router = Router();
 
@@ -1263,6 +1272,243 @@ router.post('/:id/default-judgment', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Default judgment error:', err);
     res.status(500).json({ error: 'Default judgment generation failed', details: String(err) });
+  }
+});
+
+// ─── Phase A: Send / Sign / Collect actions ──────────────────────────────────
+
+const sendDemandSchema = z.object({
+  channels: z.array(z.enum(['mail', 'email'])).min(1),
+});
+
+/** POST /api/cases/:id/send-demand-letter */
+router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
+  try {
+    const { channels } = sendDemandSchema.parse(req.body);
+
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.demandLetterHtml) {
+      return res.status(400).json({ error: 'Demand letter not generated yet' });
+    }
+
+    const updates: Record<string, unknown> = {};
+    const results: Record<string, unknown> = {};
+
+    if (channels.includes('mail')) {
+      if (!c.debtorAddress) {
+        return res.status(400).json({ error: 'Debtor address required for certified mail' });
+      }
+      if (!c.claimantAddress) {
+        return res.status(400).json({ error: 'Claimant return address required' });
+      }
+      const toAddr = parseUSAddress(c.debtorAddress, c.debtorBusiness || c.debtorName || 'Debtor');
+      const fromAddr = parseUSAddress(c.claimantAddress, c.claimantBusiness || c.claimantName || 'Claimant');
+      if (!toAddr) return res.status(400).json({ error: 'Could not parse debtor address; needs Street, City, ST ZIP' });
+      if (!fromAddr) return res.status(400).json({ error: 'Could not parse claimant return address' });
+
+      const pdf = await htmlToPDF(c.demandLetterHtml);
+      const lobResult = await sendCertifiedLetter({
+        to: toAddr,
+        from: fromAddr,
+        pdfBuffer: pdf,
+        description: `Demand letter for case ${c.id}`,
+        caseId: c.id,
+        kind: 'demand-letter',
+      });
+      updates.demandLetterMailedAt = new Date();
+      updates.demandLetterMailId = lobResult.letterId;
+      updates.demandLetterTracking = lobResult.trackingNumber;
+      results.mail = lobResult;
+    }
+
+    if (channels.includes('email')) {
+      if (!c.debtorEmail) {
+        return res.status(400).json({ error: 'Debtor email required for email send' });
+      }
+      const pdf = channels.includes('mail')
+        ? undefined
+        : await htmlToPDF(c.demandLetterHtml);
+      const emailResult = await sendEmail({
+        to: c.debtorEmail,
+        subject: `Demand for payment — ${c.claimantBusiness || c.claimantName || 'Reclaim'}`,
+        html: c.demandLetterHtml,
+        attachmentPdf: pdf,
+        attachmentFilename: 'demand-letter.pdf',
+        caseId: c.id,
+        kind: 'demand-letter',
+        replyTo: c.claimantEmail || undefined,
+      });
+      updates.demandLetterEmailedAt = new Date();
+      updates.demandLetterEmailId = emailResult.emailId;
+      results.email = emailResult;
+    }
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        ...updates,
+        status: c.status === 'READY' ? 'SENT' : c.status,
+        actions: {
+          create: channels.map((channel) => ({
+            type: channel === 'mail' ? ('CERTIFIED_MAIL_SENT' as const) : ('EMAIL_SENT' as const),
+            label: channel === 'mail' ? 'Demand letter mailed (certified RRR)' : 'Demand letter emailed',
+            metadata: results[channel] as never,
+          })),
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+
+    return res.json({ case: updated, results });
+  } catch (err) {
+    console.error('send-demand-letter error:', err);
+    return res.status(500).json({ error: 'Failed to send demand letter', details: String(err) });
+  }
+});
+
+const sendForSignatureSchema = z.object({
+  kind: z.enum(['settlement', 'payment-plan']),
+});
+
+/** POST /api/cases/:id/send-for-signature */
+router.post('/:id/send-for-signature', async (req: Request, res: Response) => {
+  try {
+    const { kind } = sendForSignatureSchema.parse(req.body);
+
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    const html = kind === 'settlement' ? c.settlementHtml : c.paymentPlanHtml;
+    if (!html) return res.status(400).json({ error: `${kind} document not generated yet` });
+    if (!c.claimantEmail || !c.debtorEmail) {
+      return res.status(400).json({ error: 'Both claimant and debtor email required for e-signature' });
+    }
+
+    const pdf = await htmlToPDF(html);
+    const result = await sendForSignature({
+      title: kind === 'settlement' ? 'Settlement Agreement' : 'Payment Plan Agreement',
+      subject: kind === 'settlement' ? 'Please sign the settlement agreement' : 'Please sign the payment plan agreement',
+      message: 'Please review and sign the attached agreement to resolve the outstanding amount.',
+      signers: [
+        { email: c.claimantEmail, name: c.claimantName || c.claimantBusiness || 'Claimant', order: 0 },
+        { email: c.debtorEmail, name: c.debtorName || c.debtorBusiness || 'Debtor', order: 1 },
+      ],
+      pdfBuffer: pdf,
+      pdfFilename: `${kind}.pdf`,
+      caseId: c.id,
+      kind,
+    });
+
+    const updates =
+      kind === 'settlement'
+        ? { settlementSignatureRequestId: result.signatureRequestId }
+        : { paymentPlanSignatureRequestId: result.signatureRequestId };
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        ...updates,
+        actions: {
+          create: {
+            type: kind === 'settlement' ? 'SETTLEMENT_SENT_FOR_SIGNATURE' : 'PAYMENT_PLAN_SENT_FOR_SIGNATURE',
+            label: `${kind === 'settlement' ? 'Settlement' : 'Payment plan'} sent for e-signature`,
+            metadata: result as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+
+    return res.json({ case: updated, signatureRequestId: result.signatureRequestId });
+  } catch (err) {
+    console.error('send-for-signature error:', err);
+    return res.status(500).json({ error: 'Failed to send for signature', details: String(err) });
+  }
+});
+
+/** POST /api/cases/:id/portal-token — generate magic link for debtor */
+router.post('/:id/portal-token', async (req: Request, res: Response) => {
+  try {
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+    await prisma.case.update({
+      where: { id: c.id },
+      data: { portalToken: token, portalTokenExpiresAt: expiresAt },
+    });
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5173';
+    const url = `${baseUrl}/respond/${token}`;
+
+    return res.json({ token, url, expiresAt });
+  } catch (err) {
+    console.error('portal-token error:', err);
+    return res.status(500).json({ error: 'Failed to generate portal token' });
+  }
+});
+
+/** POST /api/cases/:id/checkout-session — Stripe Checkout for debtor (called from portal) */
+router.post('/:id/checkout-session', async (req: Request, res: Response) => {
+  try {
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.amountOwed) return res.status(400).json({ error: 'Case has no amount owed' });
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5173';
+    const result = await createDebtorCheckoutSession({
+      amountCents: Math.round(Number(c.amountOwed) * 100),
+      caseId: c.id,
+      debtorEmail: c.debtorEmail || undefined,
+      description: `Payment for ${c.claimantBusiness || c.claimantName || 'Reclaim'} — Case ${c.id.slice(0, 8)}`,
+      successUrl: `${baseUrl}/respond/paid`,
+      cancelUrl: `${baseUrl}/respond/${c.portalToken || ''}`,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error('checkout-session error:', err);
+    return res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+/** POST /api/cases/stripe-onboarding — onboard the current user as a Connect account */
+router.post('/stripe-onboarding', async (req: Request, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    let accountId = user.stripeAccountId;
+    if (!accountId) {
+      accountId = await createConnectAccount(user.email);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { stripeAccountId: accountId },
+      });
+    }
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5173';
+    const url = await createConnectOnboardingLink(
+      accountId,
+      `${baseUrl}/settings/payouts`,
+      `${baseUrl}/settings/payouts?onboarded=1`,
+    );
+
+    return res.json({ accountId, onboardingUrl: url });
+  } catch (err) {
+    console.error('stripe-onboarding error:', err);
+    return res.status(500).json({ error: 'Failed to start Stripe onboarding' });
   }
 });
 

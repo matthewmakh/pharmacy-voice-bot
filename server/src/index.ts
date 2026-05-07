@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
 import authRouter from './routes/auth';
+import webhooksRouter from './routes/webhooks';
 import prisma from './lib/prisma';
 
 const app = express();
@@ -39,6 +40,11 @@ app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
+// Webhooks must be mounted BEFORE the global json parser so each handler
+// can install its own body parser (Stripe needs raw body, Dropbox Sign needs
+// urlencoded for multipart form data).
+app.use('/api/webhooks', webhooksRouter);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
