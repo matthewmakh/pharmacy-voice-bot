@@ -13,6 +13,12 @@ model User {
   passwordHash String
   name         String?
   cases        Case[]
+
+  // Stripe Connect (claimant payout account)
+  stripeAccountId         String?
+  stripeAccountChargesEnabled Boolean @default(false)
+  stripeAccountPayoutsEnabled Boolean @default(false)
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -95,6 +101,53 @@ model Case {
   affidavitOfServiceHtml String? @db.Text
   settlementHtml         String? @db.Text
   paymentPlanHtml        String? @db.Text
+
+  // Phase A — Lob certified mail tracking
+  demandLetterMailedAt    DateTime?
+  demandLetterMailId      String?   // Lob letter ID
+  demandLetterTracking    String?   // USPS tracking number
+  demandLetterDeliveredAt DateTime?
+  finalNoticeMailedAt     DateTime?
+  finalNoticeMailId       String?
+  finalNoticeTracking     String?
+  finalNoticeDeliveredAt  DateTime?
+
+  // Phase A — Resend tracked email
+  demandLetterEmailedAt   DateTime?
+  demandLetterEmailId     String?
+  demandLetterEmailOpenedAt DateTime?
+  finalNoticeEmailedAt    DateTime?
+  finalNoticeEmailId      String?
+
+  // Phase A — Dropbox Sign e-signature
+  settlementSignatureRequestId String?
+  settlementSignedAt           DateTime?
+  settlementSignedPdfUrl       String?
+  paymentPlanSignatureRequestId String?
+  paymentPlanSignedAt           DateTime?
+  paymentPlanSignedPdfUrl       String?
+
+  // Phase A — Stripe Connect escrow
+  stripePaymentIntentId   String?
+  stripeChargeId          String?
+  amountCollectedCents    Int?      // total collected via portal (cents)
+  reclaimFeeCents         Int?      // 12% recovery fee taken
+  payoutToClaimantCents   Int?
+  payoutTransferId        String?
+  payoutCompletedAt       DateTime?
+
+  // Phase A — Defendant response portal
+  portalToken             String?   @unique
+  portalTokenExpiresAt    DateTime?
+  portalLastViewedAt      DateTime?
+  defendantDisputeText    String?   @db.Text
+  defendantProposedPlan   Json?
+
+  // Phase A — Auto follow-up cadence
+  followUpEnabled         Boolean   @default(false)
+  followUpStartedAt       DateTime?
+  followUpNextRunAt       DateTime?
+  followUpStepIndex       Int       @default(0)
 
   documents Document[]
   actions   CaseAction[]
@@ -188,6 +241,21 @@ enum ActionType {
   SERVICE_INITIATED
   PAYMENT_RECEIVED
   CASE_CLOSED
+  // Phase A
+  DEMAND_LETTER_MAILED
+  DEMAND_LETTER_DELIVERED
+  EMAIL_OPENED
+  EMAIL_CLICKED
+  SETTLEMENT_SENT_FOR_SIGNATURE
+  SETTLEMENT_SIGNED
+  PAYMENT_PLAN_SENT_FOR_SIGNATURE
+  PAYMENT_PLAN_SIGNED
+  PORTAL_VIEWED
+  PAYMENT_VIA_PORTAL
+  DISPUTE_FILED
+  PAYMENT_PLAN_PROPOSED
+  FOLLOW_UP_SENT
+  ATTORNEY_HANDOFF_INITIATED
 }
 
 enum ActionStatus {
