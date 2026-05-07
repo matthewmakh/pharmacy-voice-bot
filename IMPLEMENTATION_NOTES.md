@@ -50,24 +50,13 @@ risk.
 |---|---|---|
 | Certified mail RRR | **Lob** | API + tracking webhooks, ~$8/letter |
 | Tracked email | **Resend** | $20/mo for 50k emails, shared `mail.reclaim.legal` domain v1 |
-| E-signature | **Adobe Sign** (with Dropbox Sign fallback) | User already has Adobe Sign — see action item below |
+| E-signature | **Dropbox Sign** | Simple API, ~$30/mo, no tier-gating. Decided over Adobe Sign for speed-to-ship. |
 | Escrow / payments | **Stripe Connect** | Charges-only flow, debtor pays → Reclaim escrow → 12% fee → ACH to claimant |
 | Notary (RON) + Process serving + Identity verification | **Proof.com** (single vendor) | One API, one billing relationship. RON via Proof Notarize, process serve via Proof Serve (developer.proofserve.com, 1,300+ servers, NY DCWP-licensed coverage). Per-transaction pricing, no setup minimums. |
 | NYSCEF / EDDS e-filing | **InfoTrack** | OCA-accredited; building NYSCEF ourselves is not realistic (no public API, year+ accreditation, ToS exposure) |
 | Job queue / scheduler | **BullMQ on Redis** | Railway-friendly |
 | PDF rendering | **Puppeteer** (existing) | Already in `server/src/services/pdf.ts` |
 | SCRA lookup | **DOD SCRA portal** (free) | No vendor needed |
-
-### Action item: confirm Adobe Sign API tier
-
-Adobe Sign API access requires the **Adobe Acrobat Sign Solutions** tier. The
-consumer Acrobat Sign bundled with Acrobat Pro **does NOT** include API access.
-
-**Before Phase A starts, confirm the user's Adobe account.** If it's the
-consumer/Acrobat Pro tier, options are:
-
-1. Upgrade to Solutions (~$25/seat/mo + transaction fees), or
-2. Fall back to **Dropbox Sign** (~$30/mo, simpler API, same outcome)
 
 ### Proof.com sales-call verifications
 
@@ -147,7 +136,7 @@ first cut.
 |---|---|---|---|
 | 1 | Lob certified mail (demand + pre-filing notice) | Lob | 2-3 |
 | 2 | Resend tracked email | Resend | 2-3 |
-| 3 | E-sign settlement + payment plan | Adobe Sign or Dropbox Sign | 2 |
+| 3 | E-sign settlement + payment plan | Dropbox Sign | 2 |
 | 4 | Stripe Connect escrow (debtor pays → 12% fee → ACH) | Stripe | 4-5 |
 | 5 | Defendant response portal (magic link, 30-day token) | — | 4-5 |
 | 6 | Auto follow-up cadence (BullMQ, per-strategy 0/7/14/21) | — | 3-4 |
@@ -157,8 +146,7 @@ fee on each. First revenue line proven.
 
 **Input needed from user before sprint starts:**
 
-- Adobe Sign account tier confirmation (see §2)
-- API keys / accounts: Lob, Resend, Stripe Connect, (Adobe Sign or Dropbox Sign)
+- API keys / accounts: Lob, Resend, Stripe Connect, Dropbox Sign
 - Sender domain DNS access for `mail.reclaim.legal` SPF/DKIM/DMARC
 - Partner attorney name + contact (for week-3 handoff testing)
 
@@ -205,7 +193,7 @@ sprint kickoff.
 - **New services** — `server/src/services/`:
   - `lob.ts` — certified mail send + tracking webhooks
   - `resend.ts` — tracked email send + open/click webhooks
-  - `adobeSign.ts` (or `dropboxSign.ts` fallback) — agreement creation + completion webhook
+  - `dropboxSign.ts` — agreement creation + completion webhook
   - `stripe.ts` — Stripe Connect escrow + payouts
   - `proof.ts` — notary (RON) + process service (Proof Serve) wrapper
   - `infoTrack.ts` — NYSCEF / EDDS filing (Phase B)
@@ -252,14 +240,13 @@ sprint kickoff.
 
 ## 9. Open items requiring user input
 
-1. **Adobe Sign account tier** — Solutions (API access) or Acrobat Pro (no API)?
-2. **Partner attorney contact** — for handoff flow testing in Phase B
-3. **Proof.com sales call** — schedule before Phase B kickoff to verify
+1. **Partner attorney contact** — for handoff flow testing in Phase B
+2. **Proof.com sales call** — schedule before Phase B kickoff to verify
    Proof Serve GA + NY DCWP coverage + standalone IDV endpoint
-4. **API keys / accounts** for Phase A: Lob, Resend, Stripe Connect, e-sign provider
-5. **Sender domain** — DNS access for `mail.reclaim.legal` SPF/DKIM/DMARC
+3. **API keys / accounts** for Phase A: Lob, Resend, Stripe Connect, Dropbox Sign
+4. **Sender domain** — DNS access for `mail.reclaim.legal` SPF/DKIM/DMARC
 
-Phase A cannot start until #1 (decides which e-sign vendor) and #4 (keys).
+Phase A cannot start until #3 (keys) and #4 (DNS) are in place.
 
 ---
 
