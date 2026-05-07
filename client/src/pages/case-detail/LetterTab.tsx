@@ -12,6 +12,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { RotatingFact } from './shared/RotatingFact';
 import { VerificationPanel } from './shared/VerificationPanel';
 import { openHtmlInTab } from './shared/openHtmlInTab';
+import SendDemandPanel from './SendDemandPanel';
 
 export default function LetterTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
@@ -76,6 +77,8 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
 
   return (
     <div className="space-y-4">
+      <SendDemandPanel caseData={caseData} />
+
       <SectionCard title="Demand Letter" padding="sm">
         <div className="flex items-center gap-3 flex-wrap">
           <button onClick={handleCopy} className="btn-secondary text-sm">

@@ -33,7 +33,21 @@ export type ActionType =
   | 'FILING_PREPARED'
   | 'SERVICE_INITIATED'
   | 'PAYMENT_RECEIVED'
-  | 'CASE_CLOSED';
+  | 'CASE_CLOSED'
+  | 'DEMAND_LETTER_MAILED'
+  | 'DEMAND_LETTER_DELIVERED'
+  | 'EMAIL_OPENED'
+  | 'EMAIL_CLICKED'
+  | 'SETTLEMENT_SENT_FOR_SIGNATURE'
+  | 'SETTLEMENT_SIGNED'
+  | 'PAYMENT_PLAN_SENT_FOR_SIGNATURE'
+  | 'PAYMENT_PLAN_SIGNED'
+  | 'PORTAL_VIEWED'
+  | 'PAYMENT_VIA_PORTAL'
+  | 'DISPUTE_FILED'
+  | 'PAYMENT_PLAN_PROPOSED'
+  | 'FOLLOW_UP_SENT'
+  | 'ATTORNEY_HANDOFF_INITIATED';
 
 export interface Document {
   id: string;
@@ -177,6 +191,34 @@ export interface Case {
   affidavitOfServiceHtml: string | null;
   settlementHtml: string | null;
   paymentPlanHtml: string | null;
+
+  // Phase A — send / sign / collect tracking
+  demandLetterMailedAt: string | null;
+  demandLetterMailId: string | null;
+  demandLetterTracking: string | null;
+  demandLetterDeliveredAt: string | null;
+  demandLetterEmailedAt: string | null;
+  demandLetterEmailId: string | null;
+  demandLetterEmailOpenedAt: string | null;
+  finalNoticeMailedAt: string | null;
+  finalNoticeTracking: string | null;
+  finalNoticeDeliveredAt: string | null;
+  finalNoticeEmailedAt: string | null;
+  settlementSignatureRequestId: string | null;
+  settlementSignedAt: string | null;
+  settlementSignedPdfUrl: string | null;
+  paymentPlanSignatureRequestId: string | null;
+  paymentPlanSignedAt: string | null;
+  paymentPlanSignedPdfUrl: string | null;
+  amountCollectedCents: number | null;
+  reclaimFeeCents: number | null;
+  payoutToClaimantCents: number | null;
+  payoutCompletedAt: string | null;
+  portalToken: string | null;
+  portalTokenExpiresAt: string | null;
+  portalLastViewedAt: string | null;
+  defendantDisputeText: string | null;
+  defendantProposedPlan: Record<string, unknown> | null;
 
   documents: Document[];
   actions: CaseAction[];

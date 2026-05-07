@@ -253,6 +253,84 @@ export const getPdfDownloadUrl = (caseId: string, type: 'demand-letter' | 'final
   return `/api/cases/${caseId}/${type}-pdf?token=${token}`;
 };
 
+// ─── Phase A: Send / Sign / Collect ──────────────────────────────────────────
+
+export type SendChannel = 'mail' | 'email';
+
+export const sendDemandLetter = async (
+  caseId: string,
+  channels: SendChannel[],
+): Promise<{ case: Case; results: Record<string, unknown> }> => {
+  const { data } = await api.post(`/cases/${caseId}/send-demand-letter`, { channels });
+  return data;
+};
+
+export const sendForSignature = async (
+  caseId: string,
+  kind: 'settlement' | 'payment-plan',
+): Promise<{ case: Case; signatureRequestId: string }> => {
+  const { data } = await api.post(`/cases/${caseId}/send-for-signature`, { kind });
+  return data;
+};
+
+export const generatePortalToken = async (
+  caseId: string,
+): Promise<{ token: string; url: string; expiresAt: string }> => {
+  const { data } = await api.post(`/cases/${caseId}/portal-token`);
+  return data;
+};
+
+export const startStripeOnboarding = async (): Promise<{
+  accountId: string;
+  onboardingUrl: string;
+}> => {
+  const { data } = await api.post(`/cases/stripe-onboarding`);
+  return data;
+};
+
+// ─── Public debtor portal (no auth) ──────────────────────────────────────────
+
+const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });
+
+export interface PortalCaseView {
+  id: string;
+  status: string;
+  claimantName: string;
+  claimantBusiness: string | null;
+  amountOwed: string | null;
+  serviceDescription: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  paymentDueDate: string | null;
+  hasWrittenContract: boolean;
+  alreadyPaid: boolean;
+  disputed: boolean;
+  proposedPlan: unknown;
+}
+
+export const getPortalCase = async (token: string): Promise<PortalCaseView> => {
+  const { data } = await publicApi.get(`/portal/${token}`);
+  return data;
+};
+
+export const filePortalDispute = async (token: string, reason: string): Promise<void> => {
+  await publicApi.post(`/portal/${token}/dispute`, { reason });
+};
+
+export const proposePortalPlan = async (
+  token: string,
+  plan: { monthlyAmount: number; numberOfPayments: number; startDate?: string; notes?: string },
+): Promise<void> => {
+  await publicApi.post(`/portal/${token}/propose-plan`, plan);
+};
+
+export const startPortalCheckout = async (
+  token: string,
+): Promise<{ sessionId: string; url: string }> => {
+  const { data } = await publicApi.post(`/portal/${token}/checkout`);
+  return data;
+};
+
 export const lookupECBViolations = async (caseId: string): Promise<{
   found: boolean;
   totalViolations: number;

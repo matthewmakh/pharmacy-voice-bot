@@ -6,6 +6,8 @@ import NewCase from './pages/NewCase';
 import CaseDetail from './pages/case-detail';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import DebtorPortal from './pages/DebtorPortal';
+import DebtorPortalSubmitted from './pages/DebtorPortalSubmitted';
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -39,6 +41,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
           <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+          <Route path="/respond/submitted" element={<DebtorPortalSubmitted />} />
+          <Route path="/respond/paid" element={<DebtorPortalSubmitted />} />
+          <Route path="/respond/:token" element={<DebtorPortal />} />
           <Route path="/*" element={<ProtectedRoutes />} />
         </Routes>
       </AuthProvider>

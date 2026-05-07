@@ -1,7 +1,7 @@
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, FileText } from 'lucide-react';
-import { generateSettlement, generatePaymentPlan, getPdfDownloadUrl } from '../../../lib/api';
+import { CheckCircle2, Eye, FileText, PenTool, Loader2, Check } from 'lucide-react';
+import { generateSettlement, generatePaymentPlan, getPdfDownloadUrl, sendForSignature } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import { InlineProgress } from '../shared/InlineProgress';
@@ -12,6 +12,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const settlementRef = React.useRef<Date | null>(null);
   const paymentPlanRef = React.useRef<Date | null>(null);
+  const [signError, setSignError] = React.useState<string | null>(null);
 
   const settlementMutation = useMutation({
     mutationFn: () => { settlementRef.current = new Date(); return generateSettlement(caseData.id); },
@@ -20,6 +21,33 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
   const paymentPlanMutation = useMutation({
     mutationFn: () => { paymentPlanRef.current = new Date(); return generatePaymentPlan(caseData.id); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const sendSettlementMutation = useMutation({
+    mutationFn: () => sendForSignature(caseData.id, 'settlement'),
+    onSuccess: () => {
+      setSignError(null);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Failed to send for signature';
+      setSignError(msg);
+    },
+  });
+  const sendPaymentPlanMutation = useMutation({
+    mutationFn: () => sendForSignature(caseData.id, 'payment-plan'),
+    onSuccess: () => {
+      setSignError(null);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Failed to send for signature';
+      setSignError(msg);
+    },
   });
 
   return (
@@ -49,6 +77,14 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 </a>
                 <button onClick={() => settlementMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
+              <SignatureRow
+                kind="settlement"
+                signedAt={caseData.settlementSignedAt}
+                requestId={caseData.settlementSignatureRequestId}
+                isPending={sendSettlementMutation.isPending}
+                onSend={() => sendSettlementMutation.mutate()}
+                disabled={!caseData.claimantEmail || !caseData.debtorEmail}
+              />
               {caseData.settlementVerification && <VerificationPanel verification={caseData.settlementVerification} />}
             </div>
           ) : (
@@ -75,6 +111,14 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 </a>
                 <button onClick={() => paymentPlanMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
+              <SignatureRow
+                kind="payment-plan"
+                signedAt={caseData.paymentPlanSignedAt}
+                requestId={caseData.paymentPlanSignatureRequestId}
+                isPending={sendPaymentPlanMutation.isPending}
+                onSend={() => sendPaymentPlanMutation.mutate()}
+                disabled={!caseData.claimantEmail || !caseData.debtorEmail}
+              />
               {caseData.paymentPlanVerification && <VerificationPanel verification={caseData.paymentPlanVerification} />}
             </div>
           ) : (
@@ -82,6 +126,57 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
           )}
         </div>
       </div>
+
+      {signError && (
+        <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{signError}</div>
+      )}
     </SectionCard>
+  );
+}
+
+function SignatureRow({
+  kind,
+  signedAt,
+  requestId,
+  isPending,
+  onSend,
+  disabled,
+}: {
+  kind: 'settlement' | 'payment-plan';
+  signedAt: string | null;
+  requestId: string | null;
+  isPending: boolean;
+  onSend: () => void;
+  disabled: boolean;
+}) {
+  if (signedAt) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-emerald-700">
+        <Check className="w-3.5 h-3.5" />
+        <span>Fully signed {new Date(signedAt).toLocaleDateString()}</span>
+      </div>
+    );
+  }
+  if (requestId) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-slate-600">
+        <PenTool className="w-3.5 h-3.5" />
+        <span>Out for signature — awaiting parties</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={onSend}
+      disabled={disabled || isPending}
+      className="btn-secondary text-xs"
+      title={disabled ? 'Both claimant and debtor email required' : `Send ${kind} for e-signature`}
+    >
+      {isPending ? (
+        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending…</>
+      ) : (
+        <><PenTool className="w-3.5 h-3.5" /> Send for E-Signature</>
+      )}
+    </button>
   );
 }
