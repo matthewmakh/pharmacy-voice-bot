@@ -13,6 +13,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { createDebtorCheckoutSession } from '../services/stripe';
+import { cancelFollowUpForCase } from '../jobs/followUpScheduler';
 
 const router = Router();
 
@@ -109,6 +110,9 @@ router.post('/:token/dispute', async (req: Request, res: Response) => {
         },
       },
     });
+
+    // Stop auto follow-ups: dispute filed, claim now needs human review
+    cancelFollowUpForCase(c.id).catch(() => { /* non-blocking */ });
 
     return res.json({ ok: true });
   } catch (err) {

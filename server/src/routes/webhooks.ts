@@ -15,6 +15,7 @@ import type { LobWebhookPayload } from '../services/lob';
 import type { ResendWebhookPayload } from '../services/resend';
 import type { DropboxSignWebhookPayload } from '../services/dropboxSign';
 import { verifyStripeSignature } from '../services/stripe';
+import { cancelFollowUpForCase } from '../jobs/followUpScheduler';
 
 const router = Router();
 
@@ -188,6 +189,8 @@ router.post('/dropbox-sign', express.urlencoded({ extended: true }), async (req:
           },
         },
       });
+      // Stop auto follow-ups: settlement reached
+      cancelFollowUpForCase(caseId).catch(() => { /* non-blocking */ });
     } else {
       await prisma.caseAction.create({
         data: {
@@ -252,6 +255,8 @@ router.post(
             },
           },
         });
+        // Stop auto follow-ups: debtor paid
+        cancelFollowUpForCase(caseId).catch(() => { /* non-blocking */ });
       } else if (event.type === 'account.updated') {
         const account = event.data.object as {
           id: string;

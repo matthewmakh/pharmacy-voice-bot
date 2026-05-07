@@ -13,6 +13,7 @@ import { checkPACERBankruptcy } from '../services/pacer';
 import { sendEmail } from '../services/resend';
 import { sendCertifiedLetter, parseUSAddress } from '../services/lob';
 import { sendForSignature } from '../services/dropboxSign';
+import { startFollowUpForCase, cancelFollowUpForCase } from '../jobs/followUpScheduler';
 import {
   createConnectAccount,
   createConnectOnboardingLink,
@@ -1361,6 +1362,11 @@ router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
       },
       include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
     });
+
+    // Kick off auto follow-up cadence (no-op if Redis not configured).
+    startFollowUpForCase(updated.id).catch((e) =>
+      console.warn('[follow-up] failed to start cadence:', e),
+    );
 
     return res.json({ case: updated, results });
   } catch (err) {
