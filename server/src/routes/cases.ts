@@ -16,6 +16,7 @@ import { sendForSignature } from '../services/dropboxSign';
 import { startFollowUpForCase } from '../jobs/followUpScheduler';
 import { createDebtorCheckoutSession, payoutToClaimant } from '../services/stripe';
 import { createNotarization, requestProcessService } from '../services/proof';
+import { submitEFiling, pickTrackForAmount } from '../services/infoTrack';
 import walkthroughRouter from './walkthrough';
 import crypto from 'crypto';
 
@@ -1841,6 +1842,112 @@ router.post('/:id/scra-affidavit/mark-verified', async (req: Request, res: Respo
   } catch (err) {
     console.error('scra-affidavit mark-verified error:', err);
     return res.status(500).json({ error: 'Failed to mark verified' });
+  }
+});
+
+// ─── Phase B: InfoTrack paid e-filing ────────────────────────────────────────
+
+const RECLAIM_FILING_FEE_CENTS = 20000; // $200 service fee
+
+const fileViaInfoTrackSchema = z.object({
+  purpose: z.enum(['complaint', 'default-judgment']),
+});
+
+router.post('/:id/file-via-infotrack', async (req: Request, res: Response) => {
+  try {
+    const { purpose } = fileViaInfoTrackSchema.parse(req.body);
+
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    // Pick which document we're filing
+    const html = purpose === 'complaint' ? c.filingPacketHtml : c.defaultJudgmentHtml;
+    if (!html) return res.status(400).json({ error: `${purpose} document not generated yet` });
+    if (!c.claimantAddress || !c.debtorAddress) {
+      return res.status(400).json({ error: 'Both claimant and debtor addresses required' });
+    }
+    if (!c.claimantEmail) return res.status(400).json({ error: 'Claimant email required' });
+    if (purpose === 'default-judgment' && !c.defaultJudgmentIndexNumber) {
+      return res.status(400).json({ error: 'Existing index number required to file default judgment motion' });
+    }
+
+    const amountUsd = Number(c.amountOwed ?? 0) - Number(c.amountPaid ?? 0);
+    const track = pickTrackForAmount(amountUsd, purpose);
+    if (track.platform === 'commercial-claims') {
+      return res.status(400).json({
+        error: 'Commercial Claims filings must be done in person — not available via InfoTrack',
+      });
+    }
+
+    const pdf = await htmlToPDF(html);
+    const courtCounty = c.debtorAddress?.match(/,\s*([^,]+),\s*[A-Z]{2}\s+\d{5}/)?.[1]?.trim() || 'New York';
+
+    const result = await submitEFiling({
+      caseId: c.id,
+      platform: track.platform,
+      purpose,
+      existingIndexNumber: c.defaultJudgmentIndexNumber ?? undefined,
+      documents: [{
+        name: `${purpose === 'complaint' ? 'summons-and-complaint' : 'default-judgment-motion'}.pdf`,
+        base64: pdf.toString('base64'),
+      }],
+      court: {
+        name: track.platform === 'nyscef' ? 'NY Supreme Court' : 'NYC Civil Court',
+        county: courtCounty,
+        caseType: purpose === 'complaint' ? 'Action — Money / Contract' : undefined,
+      },
+      plaintiff: {
+        name: c.claimantBusiness || c.claimantName || 'Plaintiff',
+        address: c.claimantAddress,
+        email: c.claimantEmail,
+        phone: c.claimantPhone ?? undefined,
+      },
+      defendant: {
+        name: c.debtorBusiness || c.debtorName || 'Defendant',
+        address: c.debtorAddress,
+        email: c.debtorEmail ?? undefined,
+      },
+      amount: amountUsd,
+    });
+
+    const filingFeeCents = Math.round(track.feeUsd * 100);
+
+    const filingUpdates =
+      purpose === 'default-judgment'
+        ? { defaultJudgmentFilingMethod: 'infotrack' }
+        : {};
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        ...filingUpdates,
+        infoTrackOrderId: result.orderId,
+        infoTrackStatus: result.status,
+        infoTrackPurpose: purpose,
+        infoTrackPlatform: track.platform,
+        infoTrackFilingFeeCents: filingFeeCents,
+        infoTrackServiceFeeCents: RECLAIM_FILING_FEE_CENTS,
+        actions: {
+          create: {
+            type: 'FILING_PREPARED',
+            label: `Filed via InfoTrack (${track.platform}) — $${(track.feeUsd + 200).toFixed(2)} total`,
+            metadata: { orderId: result.orderId, purpose, platform: track.platform, courtFee: track.feeUsd } as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+    return res.json({
+      case: updated,
+      filingFeeUsd: track.feeUsd,
+      reclaimFeeUsd: 200,
+      totalUsd: track.feeUsd + 200,
+    });
+  } catch (err) {
+    console.error('file-via-infotrack error:', err);
+    return res.status(500).json({ error: 'Filing failed', details: String(err) });
   }
 });
 

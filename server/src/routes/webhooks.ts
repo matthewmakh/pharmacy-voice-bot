@@ -15,6 +15,7 @@ import type { LobWebhookPayload } from '../services/lob';
 import type { ResendWebhookPayload } from '../services/resend';
 import type { DropboxSignWebhookPayload } from '../services/dropboxSign';
 import type { ProofWebhookPayload } from '../services/proof';
+import type { InfoTrackWebhookPayload } from '../services/infoTrack';
 import { verifyStripeSignature } from '../services/stripe';
 import { cancelFollowUpForCase } from '../jobs/followUpScheduler';
 
@@ -274,6 +275,66 @@ router.post('/proof', express.json(), async (req: Request, res: Response) => {
     res.status(200).json({ ok: true });
   } catch (err) {
     console.error('[webhook:proof] processing error', err);
+    res.status(500).json({ error: 'failed to process' });
+  }
+});
+
+// ─── InfoTrack: e-filing events ──────────────────────────────────────────────
+
+router.post('/infotrack', express.json(), async (req: Request, res: Response) => {
+  const payload = req.body as InfoTrackWebhookPayload;
+  const caseId = payload.data?.metadata?.caseId;
+  const orderId = payload.data?.id;
+
+  if (!caseId || !orderId) {
+    res.status(200).json({ ok: true, ignored: 'missing caseId or order id' });
+    return;
+  }
+
+  try {
+    if (payload.event === 'efiling.accepted' || payload.event === 'efiling.filed') {
+      const indexNumber = payload.data.index_number ?? null;
+      const c = await prisma.case.findFirst({ where: { id: caseId } });
+      const isDefault = c?.infoTrackPurpose === 'default-judgment';
+
+      await prisma.case.update({
+        where: { id: caseId },
+        data: {
+          infoTrackStatus: 'accepted',
+          infoTrackAcceptedAt: new Date(),
+          infoTrackIndexNumber: indexNumber,
+          ...(isDefault && {
+            defaultJudgmentFiledAt: new Date(),
+            defaultJudgmentIndexNumber: indexNumber,
+          }),
+          actions: {
+            create: {
+              type: 'FILING_PREPARED',
+              label: `Court accepted filing${indexNumber ? ` · Index #${indexNumber}` : ''}`,
+              metadata: { orderId, indexNumber } as never,
+            },
+          },
+        },
+      });
+    } else if (payload.event === 'efiling.rejected') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: {
+          infoTrackStatus: 'rejected',
+          infoTrackRejectionReason: payload.data.rejection_reason || 'no reason provided',
+          actions: {
+            create: {
+              type: 'FILING_PREPARED',
+              label: 'Court REJECTED the filing',
+              notes: payload.data.rejection_reason || null,
+            },
+          },
+        },
+      });
+    }
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[webhook:infotrack] processing error', err);
     res.status(500).json({ error: 'failed to process' });
   }
 });

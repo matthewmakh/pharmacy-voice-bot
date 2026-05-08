@@ -521,6 +521,21 @@ export const dispatchProcessServer = async (
   return data;
 };
 
+// ─── Phase B: InfoTrack paid e-filing ────────────────────────────────────────
+
+export const fileViaInfoTrack = async (
+  caseId: string,
+  purpose: 'complaint' | 'default-judgment',
+): Promise<{
+  case: Case;
+  filingFeeUsd: number;
+  reclaimFeeUsd: number;
+  totalUsd: number;
+}> => {
+  const { data } = await api.post(`/cases/${caseId}/file-via-infotrack`, { purpose });
+  return data;
+};
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });

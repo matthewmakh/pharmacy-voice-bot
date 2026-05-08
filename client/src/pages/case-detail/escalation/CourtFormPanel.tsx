@@ -1,8 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Scale, ArrowRight } from 'lucide-react';
-import { generateCourtForm } from '../../../lib/api';
+import { Scale, ArrowRight, Loader2, Check } from 'lucide-react';
+import { generateCourtForm, fileViaInfoTrack } from '../../../lib/api';
 import { formatCurrency } from '../../../lib/utils';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
@@ -73,14 +73,7 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
               </ol>
             </Alert>
           )}
-          <Link
-            to={`/cases/${caseData.id}/walkthrough?purpose=complaint&type=${
-              courtTrack === 'commercial' ? 'commercial-claims' : courtTrack === 'civil' ? 'edds' : 'nyscef'
-            }`}
-            className="btn-primary"
-          >
-            Walk me through filing this <ArrowRight className="w-4 h-4" />
-          </Link>
+          <FilingActionsRow caseData={caseData} courtTrack={courtTrack} />
           <div className="card p-8">
             <div className="prose prose-sm max-w-none prose-slate" dangerouslySetInnerHTML={{ __html: caseData.filingPacketHtml }} />
           </div>
@@ -97,5 +90,82 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
         </div>
       )}
     </SectionCard>
+  );
+}
+
+// ─── FilingActionsRow ────────────────────────────────────────────────────────
+
+function FilingActionsRow({ caseData, courtTrack }: { caseData: import('../../../types').Case; courtTrack: 'commercial' | 'civil' | 'supreme' }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = React.useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () => fileViaInfoTrack(caseData.id, 'complaint'),
+    onSuccess: () => {
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      setError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Failed',
+      );
+    },
+  });
+
+  // Already filed via InfoTrack
+  if (caseData.infoTrackOrderId && caseData.infoTrackPurpose === 'complaint') {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+        <div className="text-sm font-medium text-emerald-900 flex items-center gap-2">
+          <Check className="w-4 h-4" /> Filed via InfoTrack — status: <strong>{caseData.infoTrackStatus}</strong>
+          {caseData.infoTrackIndexNumber && <> · Index #{caseData.infoTrackIndexNumber}</>}
+        </div>
+        {caseData.infoTrackRejectionReason && (
+          <div className="text-xs text-red-700 mt-1">Rejected: {caseData.infoTrackRejectionReason}</div>
+        )}
+      </div>
+    );
+  }
+
+  const walkthroughType = courtTrack === 'commercial' ? 'commercial-claims' : courtTrack === 'civil' ? 'edds' : 'nyscef';
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+      <div className="text-sm font-semibold text-slate-700">File this with the court</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {courtTrack !== 'commercial' && (
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="font-semibold text-slate-700 text-xs mb-1">Pay $200 + court fee — we file it</div>
+            <p className="text-xs text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to {courtTrack === 'civil' ? 'EDDS' : 'NYSCEF'}.</p>
+            <button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="btn-primary text-xs w-full"
+            >
+              {mutation.isPending ? <><Loader2 className="w-3 h-3 animate-spin" /> Submitting…</> : 'File via InfoTrack'}
+            </button>
+            {error && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 mt-2">{error}</div>
+            )}
+          </div>
+        )}
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="font-semibold text-slate-700 text-xs mb-1">File it yourself (free)</div>
+          <p className="text-xs text-slate-500 mb-2 leading-relaxed">
+            {courtTrack === 'commercial'
+              ? 'In-person at your borough\'s clerk window.'
+              : `Step-by-step walkthrough for ${courtTrack === 'civil' ? 'EDDS' : 'NYSCEF'}.`}
+          </p>
+          <Link
+            to={`/cases/${caseData.id}/walkthrough?purpose=complaint&type=${walkthroughType}`}
+            className="btn-secondary text-xs w-full justify-center"
+          >
+            Walk me through it <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }

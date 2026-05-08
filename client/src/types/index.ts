@@ -245,6 +245,17 @@ export interface Case {
   incomeExecutionHtml: string | null;
   marshalRequestHtml: string | null;
 
+  // Phase B — InfoTrack tracking
+  infoTrackOrderId: string | null;
+  infoTrackStatus: 'submitted' | 'accepted' | 'rejected' | 'filed' | null;
+  infoTrackPurpose: 'complaint' | 'default-judgment' | null;
+  infoTrackPlatform: 'nyscef' | 'edds' | null;
+  infoTrackFilingFeeCents: number | null;
+  infoTrackServiceFeeCents: number | null;
+  infoTrackAcceptedAt: string | null;
+  infoTrackIndexNumber: string | null;
+  infoTrackRejectionReason: string | null;
+
   // Phase B — Proof.com tracking
   notarizationId: string | null;
   notarizationStatus: 'pending' | 'in-session' | 'completed' | 'failed' | null;

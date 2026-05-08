@@ -211,6 +211,17 @@ model Case {
   processServeAffidavitUrl String?   // notarized affidavit of service PDF
   processServedAt          DateTime?
 
+  // Phase B — InfoTrack NYSCEF/EDDS e-filing (paid path, $200 markup)
+  infoTrackOrderId         String?
+  infoTrackStatus          String?   // "submitted" | "accepted" | "rejected" | "filed"
+  infoTrackPurpose         String?   // "complaint" | "default-judgment"
+  infoTrackPlatform        String?   // "nyscef" | "edds"
+  infoTrackFilingFeeCents  Int?      // court fee passthrough
+  infoTrackServiceFeeCents Int?      // Reclaim's $200 markup
+  infoTrackAcceptedAt      DateTime?
+  infoTrackIndexNumber     String?
+  infoTrackRejectionReason String?
+
   // Phase B — Attorney handoff
   attorneyPartnerId        String?
   attorneyPartner          AttorneyPartner? @relation(fields: [attorneyPartnerId], references: [id])

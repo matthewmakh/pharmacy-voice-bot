@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Scale, FileCheck, Check, Loader2, AlertCircle } from 'lucide-react';
-import { generateDefaultJudgment, markDefaultJudgmentFiled, type FilingMethod } from '../../../lib/api';
+import { generateDefaultJudgment, markDefaultJudgmentFiled, fileViaInfoTrack, type FilingMethod } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import Alert from '../../../components/ui/Alert';
@@ -151,11 +151,7 @@ function FilingActions({ caseData }: { caseData: Case }) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-        <div className="rounded border border-slate-200 bg-white p-3">
-          <div className="font-semibold text-slate-700 mb-1">Pay $200, we file it</div>
-          <p className="text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to NYSCEF/EDDS. Coming soon in Phase B.</p>
-          <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
-        </div>
+        <InfoTrackTile caseData={caseData} purpose="default-judgment" />
         <div className="rounded border border-slate-200 bg-white p-3">
           <div className="font-semibold text-slate-700 mb-1">File it yourself (free)</div>
           <p className="text-slate-500 mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF, EDDS, or in-person Commercial Claims filing.</p>
@@ -222,6 +218,81 @@ function FilingActions({ caseData }: { caseData: Case }) {
               )}
             </button>
             <button onClick={() => setShowMark(false)} className="btn-ghost text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── InfoTrackTile ───────────────────────────────────────────────────────────
+
+function InfoTrackTile({ caseData, purpose }: { caseData: Case; purpose: 'complaint' | 'default-judgment' }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = React.useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = React.useState(false);
+
+  const mutation = useMutation({
+    mutationFn: () => fileViaInfoTrack(caseData.id, purpose),
+    onSuccess: () => {
+      setError(null);
+      setShowConfirm(false);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      setError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Failed',
+      );
+    },
+  });
+
+  // Show status if already submitted via InfoTrack for this purpose
+  if (caseData.infoTrackOrderId && caseData.infoTrackPurpose === purpose) {
+    return (
+      <div className="rounded border border-emerald-200 bg-emerald-50 p-3">
+        <div className="font-semibold text-emerald-900 mb-1 text-xs flex items-center gap-1">
+          <Check className="w-3.5 h-3.5" /> Filed via InfoTrack
+        </div>
+        <div className="text-xs text-emerald-800 leading-relaxed">
+          Status: <strong>{caseData.infoTrackStatus}</strong>
+          {caseData.infoTrackIndexNumber && <> · Index #{caseData.infoTrackIndexNumber}</>}
+          {caseData.infoTrackRejectionReason && (
+            <div className="mt-1 text-red-700">Rejected: {caseData.infoTrackRejectionReason}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded border border-slate-200 bg-white p-3">
+      <div className="font-semibold text-slate-700 mb-1">Pay $200, we file it</div>
+      <p className="text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to NYSCEF / EDDS. Court fee passthrough + $200 service fee.</p>
+      {!showConfirm ? (
+        <button onClick={() => setShowConfirm(true)} className="btn-primary text-xs w-full">
+          File via InfoTrack →
+        </button>
+      ) : (
+        <div className="space-y-2 text-xs">
+          <p className="text-slate-700">You'll be charged court fees + Reclaim's $200 service fee. Continue?</p>
+          {error && (
+            <div className="text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="btn-primary text-xs flex-1"
+            >
+              {mutation.isPending ? (
+                <><Loader2 className="w-3 h-3 animate-spin" /> Submitting…</>
+              ) : (
+                'Confirm & file'
+              )}
+            </button>
+            <button onClick={() => setShowConfirm(false)} className="btn-ghost text-xs">Cancel</button>
           </div>
         </div>
       )}
