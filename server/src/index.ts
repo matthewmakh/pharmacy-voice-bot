@@ -55,6 +55,32 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/health/phase-a', (_req, res) => {
+  const env = process.env;
+  res.json({
+    timestamp: new Date().toISOString(),
+    vendors: {
+      lob:           keyState(env.LOB_API_KEY, env.LOB_API_KEY?.startsWith('test_') ? 'test' : 'live'),
+      resend:        keyState(env.RESEND_API_KEY),
+      dropboxSign:   keyState(env.DROPBOX_SIGN_API_KEY),
+      stripe:        keyState(env.STRIPE_SECRET_KEY, env.STRIPE_SECRET_KEY?.startsWith('sk_test_') ? 'test' : 'live'),
+    },
+    webhookSecrets: {
+      stripe: !!env.STRIPE_WEBHOOK_SECRET,
+    },
+    sender: {
+      domain: env.EMAIL_SENDER_DOMAIN ?? null,
+      from:   env.EMAIL_FROM_ADDRESS ?? null,
+    },
+    redis:  env.REDIS_URL ? 'configured' : 'unset (follow-up scheduler is a no-op)',
+    publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
+  });
+});
+
+function keyState(key: string | undefined, mode?: string): { configured: boolean; mode?: string } {
+  return { configured: !!key, ...(mode ? { mode } : {}) };
+}
+
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/cases', apiLimiter, casesRouter);
 app.use('/api/cases/:caseId/documents', apiLimiter, documentsRouter);
