@@ -9,6 +9,7 @@ import Register from './pages/Register';
 import DebtorPortal from './pages/DebtorPortal';
 import DebtorPortalSubmitted from './pages/DebtorPortalSubmitted';
 import PayoutSettings from './pages/PayoutSettings';
+import WalkthroughPage from './pages/WalkthroughPage';
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -29,6 +30,7 @@ function ProtectedRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="cases/new" element={<NewCase />} />
         <Route path="cases/:id" element={<CaseDetail />} />
+        <Route path="cases/:id/walkthrough" element={<WalkthroughPage />} />
         <Route path="settings/payouts" element={<PayoutSettings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

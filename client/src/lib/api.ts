@@ -328,6 +328,63 @@ export const markDefaultJudgmentFiled = async (
   return data;
 };
 
+// ─── Phase B: DIY filing walkthrough ─────────────────────────────────────────
+
+export type WalkthroughType = 'nyscef' | 'edds' | 'commercial-claims';
+export type WalkthroughPurpose = 'complaint' | 'default-judgment';
+
+export interface WalkthroughStep {
+  title: string;
+  body: string;
+  link?: { label: string; url: string };
+  needsInput?: { field: string; label: string; placeholder?: string };
+  estimatedMinutes?: number;
+}
+
+export interface WalkthroughState {
+  type: WalkthroughType;
+  purpose: WalkthroughPurpose;
+  step: number;
+  notes: Record<string, string> | null;
+  completedAt: string | null;
+  steps: WalkthroughStep[];
+}
+
+export const startWalkthrough = async (
+  caseId: string,
+  type: WalkthroughType,
+  purpose: WalkthroughPurpose,
+): Promise<{ steps: WalkthroughStep[]; step: number }> => {
+  const { data } = await api.post(`/cases/${caseId}/walkthrough/start`, { type, purpose });
+  return data;
+};
+
+export const getWalkthrough = async (caseId: string): Promise<WalkthroughState> => {
+  const { data } = await api.get(`/cases/${caseId}/walkthrough/steps`);
+  return data;
+};
+
+export const advanceWalkthrough = async (
+  caseId: string,
+  step: number,
+  noteKey?: string,
+  noteValue?: string,
+): Promise<void> => {
+  await api.post(`/cases/${caseId}/walkthrough/advance`, { step, noteKey, noteValue });
+};
+
+export const completeWalkthrough = async (
+  caseId: string,
+  indexNumber?: string,
+): Promise<{ case: Case }> => {
+  const { data } = await api.post(`/cases/${caseId}/walkthrough/complete`, { indexNumber });
+  return data;
+};
+
+export const abandonWalkthrough = async (caseId: string): Promise<void> => {
+  await api.post(`/cases/${caseId}/walkthrough/abandon`);
+};
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });

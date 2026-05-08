@@ -1,6 +1,7 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Scale } from 'lucide-react';
+import { Scale, ArrowRight } from 'lucide-react';
 import { generateCourtForm } from '../../../lib/api';
 import { formatCurrency } from '../../../lib/utils';
 import type { Case } from '../../../types';
@@ -72,6 +73,14 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
               </ol>
             </Alert>
           )}
+          <Link
+            to={`/cases/${caseData.id}/walkthrough?purpose=complaint&type=${
+              courtTrack === 'commercial' ? 'commercial-claims' : courtTrack === 'civil' ? 'edds' : 'nyscef'
+            }`}
+            className="btn-primary"
+          >
+            Walk me through filing this <ArrowRight className="w-4 h-4" />
+          </Link>
           <div className="card p-8">
             <div className="prose prose-sm max-w-none prose-slate" dangerouslySetInnerHTML={{ __html: caseData.filingPacketHtml }} />
           </div>

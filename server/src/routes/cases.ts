@@ -15,12 +15,16 @@ import { sendCertifiedLetter, parseUSAddress } from '../services/lob';
 import { sendForSignature } from '../services/dropboxSign';
 import { startFollowUpForCase } from '../jobs/followUpScheduler';
 import { createDebtorCheckoutSession, payoutToClaimant } from '../services/stripe';
+import walkthroughRouter from './walkthrough';
 import crypto from 'crypto';
 
 const router = Router();
 
 // All case routes require authentication
 router.use(requireAuth);
+
+// Mount walkthrough sub-routes (/:id/walkthrough/...)
+router.use('/', walkthroughRouter);
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 

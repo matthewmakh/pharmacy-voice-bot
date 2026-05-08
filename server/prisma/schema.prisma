@@ -154,6 +154,14 @@ model Case {
   defaultJudgmentFilingMethod String? // "diy" | "infotrack" | "attorney" | "manual"
   defaultJudgmentIndexNumber String?  // court-issued index number
 
+  // Phase B — DIY filing walkthrough state
+  walkthroughType         String?  // "nyscef" | "edds" | "commercial-claims"
+  walkthroughPurpose      String?  // "complaint" | "default-judgment"
+  walkthroughStep         Int      @default(0)
+  walkthroughStartedAt    DateTime?
+  walkthroughCompletedAt  DateTime?
+  walkthroughNotes        Json?    // per-step notes the user entered
+
   documents Document[]
   actions   CaseAction[]
 

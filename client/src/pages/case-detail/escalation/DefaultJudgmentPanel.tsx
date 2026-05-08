@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Scale, FileCheck, Check, Loader2, AlertCircle } from 'lucide-react';
 import { generateDefaultJudgment, markDefaultJudgmentFiled, type FilingMethod } from '../../../lib/api';
@@ -157,8 +158,13 @@ function FilingActions({ caseData }: { caseData: Case }) {
         </div>
         <div className="rounded border border-slate-200 bg-white p-3">
           <div className="font-semibold text-slate-700 mb-1">File it yourself (free)</div>
-          <p className="text-slate-500 mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF/EDDS filing. Coming soon in Phase B.</p>
-          <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
+          <p className="text-slate-500 mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF, EDDS, or in-person Commercial Claims filing.</p>
+          <Link
+            to={`/cases/${caseData.id}/walkthrough?purpose=default-judgment`}
+            className="btn-secondary text-xs w-full justify-center"
+          >
+            Walk me through it →
+          </Link>
         </div>
         <div className="rounded border border-slate-200 bg-white p-3">
           <div className="font-semibold text-slate-700 mb-1">Hand off to attorney</div>

@@ -225,6 +225,14 @@ export interface Case {
   defaultJudgmentFilingMethod: 'diy' | 'infotrack' | 'attorney' | 'manual' | null;
   defaultJudgmentIndexNumber: string | null;
 
+  // Phase B — DIY filing walkthrough state
+  walkthroughType: 'nyscef' | 'edds' | 'commercial-claims' | null;
+  walkthroughPurpose: 'complaint' | 'default-judgment' | null;
+  walkthroughStep: number;
+  walkthroughStartedAt: string | null;
+  walkthroughCompletedAt: string | null;
+  walkthroughNotes: Record<string, string> | null;
+
   documents: Document[];
   actions: CaseAction[];
 
