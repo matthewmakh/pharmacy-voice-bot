@@ -241,15 +241,20 @@ router.post(
           amount_total: number;
           metadata?: Record<string, string>;
         };
+        const collected = session.amount_total;
+        const fee = Math.floor((collected * 1200) / 10_000); // 12%
+        const payout = collected - fee;
         await prisma.case.update({
           where: { id: caseId },
           data: {
             stripePaymentIntentId: session.payment_intent,
-            amountCollectedCents: session.amount_total,
+            amountCollectedCents: collected,
+            reclaimFeeCents: fee,
+            payoutToClaimantCents: payout,
             actions: {
               create: {
                 type: 'PAYMENT_VIA_PORTAL',
-                label: `Debtor paid $${(session.amount_total / 100).toFixed(2)} via portal`,
+                label: `Debtor paid $${(collected / 100).toFixed(2)} via portal`,
                 metadata: { sessionId: session.id, paymentIntentId: session.payment_intent },
               },
             },

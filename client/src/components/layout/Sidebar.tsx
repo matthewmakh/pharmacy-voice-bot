@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Scale, X, LogOut, User } from 'lucide-react';
+import { LayoutDashboard, Plus, Scale, X, LogOut, User, CreditCard } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface Props {
@@ -67,6 +67,20 @@ export default function Sidebar({ onClose }: Props) {
         >
           <LayoutDashboard className="w-4 h-4 shrink-0" />
           Cases
+        </NavLink>
+        <NavLink
+          to="/settings/payouts"
+          onClick={onClose}
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              isActive
+                ? 'bg-slate-700 text-white'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`
+          }
+        >
+          <CreditCard className="w-4 h-4 shrink-0" />
+          Payouts
         </NavLink>
       </nav>
 

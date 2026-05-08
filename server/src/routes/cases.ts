@@ -13,12 +13,8 @@ import { checkPACERBankruptcy } from '../services/pacer';
 import { sendEmail } from '../services/resend';
 import { sendCertifiedLetter, parseUSAddress } from '../services/lob';
 import { sendForSignature } from '../services/dropboxSign';
-import { startFollowUpForCase, cancelFollowUpForCase } from '../jobs/followUpScheduler';
-import {
-  createConnectAccount,
-  createConnectOnboardingLink,
-  createDebtorCheckoutSession,
-} from '../services/stripe';
+import { startFollowUpForCase } from '../jobs/followUpScheduler';
+import { createDebtorCheckoutSession, payoutToClaimant } from '../services/stripe';
 import crypto from 'crypto';
 
 const router = Router();
@@ -67,6 +63,23 @@ function parseDate(val: string | undefined): Date | undefined {
   if (!val) return undefined;
   const d = new Date(val);
   return isNaN(d.getTime()) ? undefined : d;
+}
+
+/** Prepend a "Pay / Respond online" CTA to the email HTML body. */
+function wrapEmailWithPortalCTA(letterHtml: string, portalUrl: string): string {
+  const cta = `
+<table style="border:1px solid #d1d5db;border-radius:8px;padding:16px;margin:0 0 20px;width:100%;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <tr>
+    <td style="vertical-align:middle">
+      <div style="font-size:14px;color:#1f2937;margin-bottom:6px;font-weight:600">You can respond to this notice online</div>
+      <div style="font-size:13px;color:#4b5563">Pay, propose a payment plan, or dispute the claim.</div>
+    </td>
+    <td style="text-align:right;vertical-align:middle;padding-left:12px">
+      <a href="${portalUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">Respond online</a>
+    </td>
+  </tr>
+</table>`;
+  return cta + letterHtml;
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -1325,6 +1338,17 @@ router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
       results.mail = lobResult;
     }
 
+    // Make sure a debtor portal token exists so we can include the link in
+    // the email and the certified-mail letter footer.
+    let portalToken = c.portalToken;
+    if (!portalToken) {
+      portalToken = crypto.randomBytes(32).toString('base64url');
+      updates.portalToken = portalToken;
+      updates.portalTokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    }
+    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5173';
+    const portalUrl = `${baseUrl}/respond/${portalToken}`;
+
     if (channels.includes('email')) {
       if (!c.debtorEmail) {
         return res.status(400).json({ error: 'Debtor email required for email send' });
@@ -1335,7 +1359,7 @@ router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
       const emailResult = await sendEmail({
         to: c.debtorEmail,
         subject: `Demand for payment — ${c.claimantBusiness || c.claimantName || 'Reclaim'}`,
-        html: c.demandLetterHtml,
+        html: wrapEmailWithPortalCTA(c.demandLetterHtml, portalUrl),
         attachmentPdf: pdf,
         attachmentFilename: 'demand-letter.pdf',
         caseId: c.id,
@@ -1372,6 +1396,88 @@ router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('send-demand-letter error:', err);
     return res.status(500).json({ error: 'Failed to send demand letter', details: String(err) });
+  }
+});
+
+/** POST /api/cases/:id/send-final-notice — same shape as demand letter, different content */
+router.post('/:id/send-final-notice', async (req: Request, res: Response) => {
+  try {
+    const { channels } = sendDemandSchema.parse(req.body);
+
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.finalNoticeHtml) {
+      return res.status(400).json({ error: 'Pre-filing notice not generated yet' });
+    }
+
+    const updates: Record<string, unknown> = {};
+    const results: Record<string, unknown> = {};
+
+    if (channels.includes('mail')) {
+      if (!c.debtorAddress) return res.status(400).json({ error: 'Debtor address required for certified mail' });
+      if (!c.claimantAddress) return res.status(400).json({ error: 'Claimant return address required' });
+      const toAddr = parseUSAddress(c.debtorAddress, c.debtorBusiness || c.debtorName || 'Debtor');
+      const fromAddr = parseUSAddress(c.claimantAddress, c.claimantBusiness || c.claimantName || 'Claimant');
+      if (!toAddr) return res.status(400).json({ error: 'Could not parse debtor address; needs Street, City, ST ZIP' });
+      if (!fromAddr) return res.status(400).json({ error: 'Could not parse claimant return address' });
+
+      const pdf = await htmlToPDF(c.finalNoticeHtml);
+      const lobResult = await sendCertifiedLetter({
+        to: toAddr,
+        from: fromAddr,
+        pdfBuffer: pdf,
+        description: `Pre-filing notice for case ${c.id}`,
+        caseId: c.id,
+        kind: 'final-notice',
+      });
+      updates.finalNoticeMailedAt = new Date();
+      updates.finalNoticeMailId = lobResult.letterId;
+      updates.finalNoticeTracking = lobResult.trackingNumber;
+      results.mail = lobResult;
+    }
+
+    if (channels.includes('email')) {
+      if (!c.debtorEmail) return res.status(400).json({ error: 'Debtor email required for email send' });
+      const pdf = channels.includes('mail') ? undefined : await htmlToPDF(c.finalNoticeHtml);
+      const portalUrl = c.portalToken
+        ? `${process.env.PUBLIC_BASE_URL || 'http://localhost:5173'}/respond/${c.portalToken}`
+        : null;
+      const emailResult = await sendEmail({
+        to: c.debtorEmail,
+        subject: `FINAL NOTICE — Pre-filing notice from ${c.claimantBusiness || c.claimantName || 'Reclaim'}`,
+        html: portalUrl ? wrapEmailWithPortalCTA(c.finalNoticeHtml, portalUrl) : c.finalNoticeHtml,
+        attachmentPdf: pdf,
+        attachmentFilename: 'pre-filing-notice.pdf',
+        caseId: c.id,
+        kind: 'final-notice',
+        replyTo: c.claimantEmail || undefined,
+      });
+      updates.finalNoticeEmailedAt = new Date();
+      updates.finalNoticeEmailId = emailResult.emailId;
+      results.email = emailResult;
+    }
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        ...updates,
+        actions: {
+          create: channels.map((channel) => ({
+            type: channel === 'mail' ? ('CERTIFIED_MAIL_SENT' as const) : ('FINAL_NOTICE_SENT' as const),
+            label: channel === 'mail' ? 'Pre-filing notice mailed (certified RRR)' : 'Pre-filing notice emailed',
+            metadata: results[channel] as never,
+          })),
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+
+    return res.json({ case: updated, results });
+  } catch (err) {
+    console.error('send-final-notice error:', err);
+    return res.status(500).json({ error: 'Failed to send pre-filing notice', details: String(err) });
   }
 });
 
@@ -1489,32 +1595,56 @@ router.post('/:id/checkout-session', async (req: Request, res: Response) => {
   }
 });
 
-/** POST /api/cases/stripe-onboarding — onboard the current user as a Connect account */
-router.post('/stripe-onboarding', async (req: Request, res: Response) => {
+/** POST /api/cases/:id/release-payout — transfer the 88% to the claimant's Connect account */
+router.post('/:id/release-payout', async (req: Request, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    let accountId = user.stripeAccountId;
-    if (!accountId) {
-      accountId = await createConnectAccount(user.email);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { stripeAccountId: accountId },
-      });
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.amountCollectedCents || !c.stripePaymentIntentId) {
+      return res.status(400).json({ error: 'No collected payment to release' });
+    }
+    if (c.payoutCompletedAt) {
+      return res.status(400).json({ error: 'Payout already released' });
     }
 
-    const baseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:5173';
-    const url = await createConnectOnboardingLink(
-      accountId,
-      `${baseUrl}/settings/payouts`,
-      `${baseUrl}/settings/payouts?onboarded=1`,
-    );
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!user?.stripeAccountId) {
+      return res.status(400).json({ error: 'Stripe payouts not connected. Set up payouts first.' });
+    }
+    if (!user.stripeAccountPayoutsEnabled) {
+      return res.status(400).json({ error: 'Stripe Connect onboarding incomplete — payouts not yet enabled.' });
+    }
 
-    return res.json({ accountId, onboardingUrl: url });
+    const result = await payoutToClaimant({
+      paymentIntentId: c.stripePaymentIntentId,
+      claimantAccountId: user.stripeAccountId,
+      amountCollectedCents: c.amountCollectedCents,
+      caseId: c.id,
+    });
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        payoutTransferId: result.transferId,
+        payoutCompletedAt: new Date(),
+        reclaimFeeCents: result.feeCents,
+        payoutToClaimantCents: result.payoutCents,
+        actions: {
+          create: {
+            type: 'PAYMENT_RECEIVED',
+            label: `Payout released: $${(result.payoutCents / 100).toFixed(2)} to claimant`,
+            metadata: { transferId: result.transferId, feeCents: result.feeCents },
+          },
+        },
+      },
+    });
+
+    return res.json({ case: updated, ...result });
   } catch (err) {
-    console.error('stripe-onboarding error:', err);
-    return res.status(500).json({ error: 'Failed to start Stripe onboarding' });
+    console.error('release-payout error:', err);
+    return res.status(500).json({ error: 'Failed to release payout', details: String(err) });
   }
 });
 

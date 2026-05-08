@@ -280,11 +280,41 @@ export const generatePortalToken = async (
   return data;
 };
 
+export interface PayoutStatus {
+  accountId: string | null;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+}
+
+export const getPayoutStatus = async (): Promise<PayoutStatus> => {
+  const { data } = await api.get(`/payouts/status`);
+  return data;
+};
+
 export const startStripeOnboarding = async (): Promise<{
   accountId: string;
   onboardingUrl: string;
 }> => {
-  const { data } = await api.post(`/cases/stripe-onboarding`);
+  const { data } = await api.post(`/payouts/onboarding`);
+  return data;
+};
+
+export const sendFinalNotice = async (
+  caseId: string,
+  channels: SendChannel[],
+): Promise<{ case: Case; results: Record<string, unknown> }> => {
+  const { data } = await api.post(`/cases/${caseId}/send-final-notice`, { channels });
+  return data;
+};
+
+export const releasePayout = async (caseId: string): Promise<{
+  case: Case;
+  transferId: string;
+  feeCents: number;
+  payoutCents: number;
+}> => {
+  const { data } = await api.post(`/cases/${caseId}/release-payout`);
   return data;
 };
 
