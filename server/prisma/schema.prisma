@@ -201,6 +201,16 @@ model Case {
   incomeExecutionHtml      String? @db.Text
   marshalRequestHtml       String? @db.Text
 
+  // Phase B — Proof.com (notary + process serve)
+  notarizationId           String?   // Proof Notarize transaction ID
+  notarizationStatus       String?   // "pending" | "in-session" | "completed" | "failed"
+  notarizedPdfUrl          String?   // signed/notarized PDF after RON
+  notarizedAt              DateTime?
+  processServeJobId        String?   // Proof Serve job ID
+  processServeStatus       String?   // "pending" | "attempted" | "served" | "unsuccessful"
+  processServeAffidavitUrl String?   // notarized affidavit of service PDF
+  processServedAt          DateTime?
+
   // Phase B — Attorney handoff
   attorneyPartnerId        String?
   attorneyPartner          AttorneyPartner? @relation(fields: [attorneyPartnerId], references: [id])

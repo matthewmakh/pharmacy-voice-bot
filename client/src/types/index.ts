@@ -245,6 +245,16 @@ export interface Case {
   incomeExecutionHtml: string | null;
   marshalRequestHtml: string | null;
 
+  // Phase B — Proof.com tracking
+  notarizationId: string | null;
+  notarizationStatus: 'pending' | 'in-session' | 'completed' | 'failed' | null;
+  notarizedPdfUrl: string | null;
+  notarizedAt: string | null;
+  processServeJobId: string | null;
+  processServeStatus: 'pending' | 'attempted' | 'served' | 'unsuccessful' | null;
+  processServeAffidavitUrl: string | null;
+  processServedAt: string | null;
+
   // Phase B — Attorney handoff
   attorneyPartnerId: string | null;
   attorneyHandoffStatus: 'pending' | 'accepted' | 'declined' | 'in-progress' | 'resolved' | 'lost' | null;

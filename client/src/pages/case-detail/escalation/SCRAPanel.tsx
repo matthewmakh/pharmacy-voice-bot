@@ -1,7 +1,7 @@
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, ExternalLink, Check, FileText, Eye, Loader2, AlertCircle } from 'lucide-react';
-import { generateSCRAAffidavit, markSCRAVerified } from '../../../lib/api';
+import { Shield, ExternalLink, Check, FileText, Eye, Loader2, AlertCircle, Stamp } from 'lucide-react';
+import { generateSCRAAffidavit, markSCRAVerified, requestNotarization } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import { openHtmlInTab } from '../shared/openHtmlInTab';
@@ -17,6 +17,21 @@ export default function SCRAPanel({ caseData }: { caseData: Case }) {
   const generateMutation = useMutation({
     mutationFn: () => generateSCRAAffidavit(caseData.id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  const notarizeMutation = useMutation({
+    mutationFn: () => requestNotarization(caseData.id, 'scra-affidavit'),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+      if (res.signerUrl) window.open(res.signerUrl, '_blank');
+    },
+    onError: (err: unknown) => {
+      setError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Notarization failed',
+      );
+    },
   });
 
   const verifyMutation = useMutation({
@@ -148,15 +163,39 @@ export default function SCRAPanel({ caseData }: { caseData: Case }) {
           }
         />
 
-        {/* Step 3: notarize and file */}
+        {/* Step 3: notarize */}
         <Step
-          done={false}
+          done={!!caseData.notarizedAt}
           number={3}
-          title="Sign before a notary, then file with default judgment"
+          title="Notarize the affidavit"
           body={
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Print the affidavit, sign it before a notary public, attach the DOD certificate as Exhibit A, and include both with your default judgment motion package.
-            </p>
+            caseData.notarizedAt ? (
+              <div className="text-xs text-emerald-700">
+                Notarized {fmtDate(caseData.notarizedAt)} via Proof
+                {caseData.notarizedPdfUrl && (
+                  <> · <a href={caseData.notarizedPdfUrl} target="_blank" rel="noreferrer" className="underline">View signed PDF</a></>
+                )}
+              </div>
+            ) : caseData.notarizationStatus === 'in-session' || caseData.notarizationStatus === 'pending' ? (
+              <p className="text-xs text-slate-500">RON session in progress — check email for the signer link.</p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                  Online notary via Proof — ~10 minutes, complete from your computer with a webcam. Or print and use a local notary.
+                </p>
+                <button
+                  onClick={() => notarizeMutation.mutate()}
+                  disabled={!generated || notarizeMutation.isPending}
+                  className="btn-secondary text-xs"
+                >
+                  {notarizeMutation.isPending ? (
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>
+                  ) : (
+                    <><Stamp className="w-3.5 h-3.5" /> Notarize online via Proof</>
+                  )}
+                </button>
+              </>
+            )
           }
           last
         />

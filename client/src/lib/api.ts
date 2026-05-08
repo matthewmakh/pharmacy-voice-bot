@@ -502,6 +502,25 @@ export const reportAttorneyOutcome = async (
 export const getAttorneyDocUrl = (token: string, kind: string): string =>
   `/api/attorney/${token}/doc/${kind}`;
 
+// ─── Phase B: Proof.com (notary + process serve) ─────────────────────────────
+
+export const requestNotarization = async (
+  caseId: string,
+  kind: 'scra-affidavit' | 'affidavit-of-service' | 'default-judgment',
+): Promise<{ case: Case; signerUrl: string }> => {
+  const { data } = await api.post(`/cases/${caseId}/notarize`, { kind });
+  return data;
+};
+
+export const dispatchProcessServer = async (
+  caseId: string,
+  rush?: 'standard' | 'rush' | 'same-day',
+  notes?: string,
+): Promise<{ case: Case }> => {
+  const { data } = await api.post(`/cases/${caseId}/serve-process`, { rush, notes });
+  return data;
+};
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });

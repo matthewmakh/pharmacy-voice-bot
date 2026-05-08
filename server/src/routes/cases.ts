@@ -15,6 +15,7 @@ import { sendCertifiedLetter, parseUSAddress } from '../services/lob';
 import { sendForSignature } from '../services/dropboxSign';
 import { startFollowUpForCase } from '../jobs/followUpScheduler';
 import { createDebtorCheckoutSession, payoutToClaimant } from '../services/stripe';
+import { createNotarization, requestProcessService } from '../services/proof';
 import walkthroughRouter from './walkthrough';
 import crypto from 'crypto';
 
@@ -1649,6 +1650,131 @@ router.post('/:id/release-payout', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('release-payout error:', err);
     return res.status(500).json({ error: 'Failed to release payout', details: String(err) });
+  }
+});
+
+// ─── Phase B: Proof.com — notarize ───────────────────────────────────────────
+
+const notarizeSchema = z.object({
+  kind: z.enum(['scra-affidavit', 'affidavit-of-service', 'default-judgment']),
+});
+
+router.post('/:id/notarize', async (req: Request, res: Response) => {
+  try {
+    const { kind } = notarizeSchema.parse(req.body);
+    const c = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    const html = kind === 'scra-affidavit' ? c.scraAffidavitHtml
+      : kind === 'affidavit-of-service' ? c.affidavitOfServiceHtml
+      : c.defaultJudgmentHtml;
+    if (!html) return res.status(400).json({ error: `${kind} document not generated yet` });
+    if (!c.claimantEmail) return res.status(400).json({ error: 'Claimant email required for notarization' });
+
+    const pdf = await htmlToPDF(html);
+    const result = await createNotarization({
+      signer: {
+        firstName: (c.claimantName || c.claimantBusiness || 'Claimant').split(' ')[0] || 'Claimant',
+        lastName: (c.claimantName || '').split(' ').slice(1).join(' ') || (c.claimantBusiness || 'Representative'),
+        email: c.claimantEmail,
+      },
+      document: {
+        name: `${kind}.pdf`,
+        base64: pdf.toString('base64'),
+      },
+      caseId: c.id,
+      kind,
+    });
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        notarizationId: result.notarizationId,
+        notarizationStatus: result.status,
+        actions: {
+          create: {
+            type: 'FILING_PREPARED',
+            label: `Notarization requested via Proof: ${kind}`,
+            metadata: { notarizationId: result.notarizationId, signerUrl: result.signerUrl } as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+    return res.json({ case: updated, signerUrl: result.signerUrl });
+  } catch (err) {
+    console.error('notarize error:', err);
+    return res.status(500).json({ error: 'Notarization failed', details: String(err) });
+  }
+});
+
+// ─── Phase B: Proof.com — process serve ──────────────────────────────────────
+
+const serveSchema = z.object({
+  rush: z.enum(['standard', 'rush', 'same-day']).optional(),
+  notes: z.string().optional(),
+});
+
+router.post('/:id/serve-process', async (req: Request, res: Response) => {
+  try {
+    const { rush, notes } = serveSchema.parse(req.body);
+    const c = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.filingPacketHtml) return res.status(400).json({ error: 'Court form / Summons + Complaint not generated yet' });
+    if (!c.debtorAddress) return res.status(400).json({ error: 'Debtor address required for service' });
+
+    const toAddr = parseUSAddress(c.debtorAddress, c.debtorBusiness || c.debtorName || 'Defendant');
+    if (!toAddr) return res.status(400).json({ error: 'Could not parse debtor address; needs Street, City, ST ZIP' });
+
+    const outstanding = parseFloat(String(c.amountOwed ?? '0')) - parseFloat(String(c.amountPaid ?? '0'));
+    const courtName = outstanding <= 10000 ? 'NYC Civil Court — Commercial Claims'
+      : outstanding <= 50000 ? 'NYC Civil Court'
+      : 'NY Supreme Court';
+
+    const pdf = await htmlToPDF(c.filingPacketHtml);
+    const result = await requestProcessService({
+      recipient: {
+        firstName: c.debtorName?.split(' ')[0],
+        lastName: c.debtorName?.split(' ').slice(1).join(' '),
+        businessName: c.debtorBusiness ?? undefined,
+        addressLine1: toAddr.addressLine1,
+        addressLine2: toAddr.addressLine2,
+        city: toAddr.city,
+        state: toAddr.state,
+        zip: toAddr.zip,
+      },
+      document: {
+        name: 'summons-and-complaint.pdf',
+        base64: pdf.toString('base64'),
+      },
+      court: {
+        name: courtName,
+        indexNumber: c.defaultJudgmentIndexNumber ?? undefined,
+      },
+      rush,
+      caseId: c.id,
+      notes,
+    });
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        processServeJobId: result.jobId,
+        processServeStatus: result.status,
+        actions: {
+          create: {
+            type: 'SERVICE_INITIATED',
+            label: `Process service dispatched via Proof Serve (${rush || 'standard'})`,
+            metadata: { jobId: result.jobId } as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+    return res.json({ case: updated });
+  } catch (err) {
+    console.error('serve-process error:', err);
+    return res.status(500).json({ error: 'Process service request failed', details: String(err) });
   }
 });
 

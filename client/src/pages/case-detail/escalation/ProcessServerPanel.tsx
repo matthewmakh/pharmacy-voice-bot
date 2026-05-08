@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Send, CheckCircle2, X } from 'lucide-react';
-import { logAction } from '../../../lib/api';
+import { Loader2, Send, CheckCircle2, X, Truck, AlertCircle } from 'lucide-react';
+import { logAction, dispatchProcessServer } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import Alert from '../../../components/ui/Alert';
@@ -11,6 +11,8 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [notes, setNotes] = useState('');
+  const [rush, setRush] = useState<'standard' | 'rush' | 'same-day'>('standard');
+  const [serveError, setServeError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => logAction(
@@ -23,6 +25,23 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
       await queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
       setShowModal(false);
       setNotes('');
+    },
+  });
+
+  const dispatchMutation = useMutation({
+    mutationFn: () => dispatchProcessServer(caseData.id, rush, notes || undefined),
+    onSuccess: async () => {
+      setServeError(null);
+      setShowModal(false);
+      setNotes('');
+      await queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      setServeError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Dispatch failed',
+      );
     },
   });
 
@@ -49,9 +68,41 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
         </div>
 
         {!svcAction ? (
-          <button onClick={() => setShowModal(true)} className="btn-secondary text-sm">
-            Log Service Initiated
-          </button>
+          <div className="space-y-3">
+            {caseData.processServeStatus && (
+              <Alert tone="info">
+                Process service via Proof: <strong>{caseData.processServeStatus}</strong>
+                {caseData.processServeAffidavitUrl && (
+                  <> · <a href={caseData.processServeAffidavitUrl} target="_blank" rel="noreferrer" className="underline">Affidavit</a></>
+                )}
+              </Alert>
+            )}
+            <button
+              onClick={() => dispatchMutation.mutate()}
+              disabled={dispatchMutation.isPending || !caseData.debtorAddress || !caseData.filingPacketHtml}
+              className="btn-primary text-sm"
+              title={
+                !caseData.filingPacketHtml ? 'Generate the court form first'
+                : !caseData.debtorAddress ? 'Defendant address required'
+                : 'Dispatch a licensed NY DCWP server via Proof Serve'
+              }
+            >
+              {dispatchMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Dispatching…</>
+              ) : (
+                <><Truck className="w-4 h-4" /> Dispatch via Proof Serve</>
+              )}
+            </button>
+            {serveError && (
+              <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>{serveError}</span>
+              </div>
+            )}
+            <button onClick={() => setShowModal(true)} className="btn-ghost text-xs">
+              Already used your own server? Log it manually →
+            </button>
+          </div>
         ) : (() => {
           const svcDate = new Date(svcAction.createdAt);
           const personalDeadline = new Date(svcDate); personalDeadline.setDate(personalDeadline.getDate() + 20);

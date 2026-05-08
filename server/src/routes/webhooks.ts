@@ -14,6 +14,7 @@ import prisma from '../lib/prisma';
 import type { LobWebhookPayload } from '../services/lob';
 import type { ResendWebhookPayload } from '../services/resend';
 import type { DropboxSignWebhookPayload } from '../services/dropboxSign';
+import type { ProofWebhookPayload } from '../services/proof';
 import { verifyStripeSignature } from '../services/stripe';
 import { cancelFollowUpForCase } from '../jobs/followUpScheduler';
 
@@ -205,6 +206,74 @@ router.post('/dropbox-sign', express.urlencoded({ extended: true }), async (req:
     res.status(200).send('Hello API Event Received');
   } catch (err) {
     console.error('[webhook:dropbox-sign] processing error', err);
+    res.status(500).json({ error: 'failed to process' });
+  }
+});
+
+// ─── Proof.com: notarization + process service events ───────────────────────
+
+router.post('/proof', express.json(), async (req: Request, res: Response) => {
+  const payload = req.body as ProofWebhookPayload;
+  const caseId = payload.data?.metadata?.caseId;
+  const objectId = payload.data?.id;
+
+  if (!caseId || !objectId) {
+    res.status(200).json({ ok: true, ignored: 'missing caseId or id' });
+    return;
+  }
+
+  try {
+    if (payload.event === 'notarization.completed') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: {
+          notarizationStatus: 'completed',
+          notarizedAt: new Date(),
+          notarizedPdfUrl: payload.data.signed_document_url ?? null,
+          actions: {
+            create: {
+              type: 'FILING_PREPARED',
+              label: 'Notarization completed via Proof',
+              metadata: { notarizationId: objectId, signedUrl: payload.data.signed_document_url } as never,
+            },
+          },
+        },
+      });
+    } else if (payload.event === 'notarization.failed') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: { notarizationStatus: 'failed' },
+      });
+    } else if (payload.event === 'service.served') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: {
+          processServeStatus: 'served',
+          processServedAt: new Date(),
+          processServeAffidavitUrl: payload.data.affidavit_url ?? null,
+          actions: {
+            create: {
+              type: 'SERVICE_INITIATED',
+              label: 'Process server completed service',
+              metadata: { jobId: objectId, affidavitUrl: payload.data.affidavit_url } as never,
+            },
+          },
+        },
+      });
+    } else if (payload.event === 'service.attempted') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: { processServeStatus: 'attempted' },
+      });
+    } else if (payload.event === 'service.unsuccessful') {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: { processServeStatus: 'unsuccessful' },
+      });
+    }
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[webhook:proof] processing error', err);
     res.status(500).json({ error: 'failed to process' });
   }
 });
