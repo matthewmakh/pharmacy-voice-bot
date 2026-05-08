@@ -238,6 +238,25 @@ export interface Case {
   scraVerifiedAt: string | null;
   scraCertificateNumber: string | null;
 
+  // Phase B — Post-judgment doc drafts (handoff package)
+  informationSubpoenaHtml: string | null;
+  restrainingNoticeHtml: string | null;
+  propertyExecutionHtml: string | null;
+  incomeExecutionHtml: string | null;
+  marshalRequestHtml: string | null;
+
+  // Phase B — Attorney handoff
+  attorneyPartnerId: string | null;
+  attorneyHandoffStatus: 'pending' | 'accepted' | 'declined' | 'in-progress' | 'resolved' | 'lost' | null;
+  attorneyHandoffInitiatedAt: string | null;
+  attorneyHandoffAcceptedAt: string | null;
+  attorneyHandoffResolvedAt: string | null;
+  attorneyHandoffToken: string | null;
+  attorneyHandoffNotes: string | null;
+  attorneyHandoffOutcome: string | null;
+  attorneyHandoffSettlementCents: number | null;
+  referralFeeCents: number | null;
+
   documents: Document[];
   actions: CaseAction[];
 

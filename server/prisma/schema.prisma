@@ -19,8 +19,35 @@ model User {
   stripeAccountChargesEnabled Boolean @default(false)
   stripeAccountPayoutsEnabled Boolean @default(false)
 
+  // Partner attorneys this user has used for handoffs
+  attorneyPartners AttorneyPartner[]
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model AttorneyPartner {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String
+  firmName  String?
+  email     String
+  phone     String?
+  barNumber String?
+  state     String  @default("NY")
+  notes     String? @db.Text
+
+  // Default referral fee percentage (e.g. 20.00 for 20%)
+  referralFeePercent Decimal @default(20) @db.Decimal(5, 2)
+
+  cases Case[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model Case {
@@ -166,6 +193,27 @@ model Case {
   scraAffidavitHtml       String?   @db.Text
   scraVerifiedAt          DateTime? // when user confirmed non-military status via DOD portal
   scraCertificateNumber   String?   // optional: certificate # from DOD portal
+
+  // Phase B — Post-judgment doc generators (used as inputs to attorney handoff package)
+  informationSubpoenaHtml  String? @db.Text
+  restrainingNoticeHtml    String? @db.Text
+  propertyExecutionHtml    String? @db.Text
+  incomeExecutionHtml      String? @db.Text
+  marshalRequestHtml       String? @db.Text
+
+  // Phase B — Attorney handoff
+  attorneyPartnerId        String?
+  attorneyPartner          AttorneyPartner? @relation(fields: [attorneyPartnerId], references: [id])
+  attorneyHandoffStatus    String?   // "pending" | "accepted" | "declined" | "in-progress" | "resolved" | "lost"
+  attorneyHandoffInitiatedAt DateTime?
+  attorneyHandoffAcceptedAt DateTime?
+  attorneyHandoffResolvedAt DateTime?
+  attorneyHandoffToken     String?   @unique // magic-link token for partner attorney portal
+  attorneyHandoffTokenExpiresAt DateTime?
+  attorneyHandoffNotes     String?   @db.Text  // notes from claimant to attorney
+  attorneyHandoffOutcome   String?   // partner attorney's report
+  attorneyHandoffSettlementCents Int?
+  referralFeeCents         Int?      // 20% of attorney contingency at resolution
 
   documents Document[]
   actions   CaseAction[]

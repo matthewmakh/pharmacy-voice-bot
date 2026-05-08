@@ -6,6 +6,7 @@ import AffidavitPanel from './escalation/AffidavitPanel';
 import SCRAPanel from './escalation/SCRAPanel';
 import DefaultJudgmentPanel from './escalation/DefaultJudgmentPanel';
 import SettlementPanel from './escalation/SettlementPanel';
+import HandoffPanel from './escalation/HandoffPanel';
 
 export default function EscalationTab({ caseData }: { caseData: Case }) {
   const outstanding = parseFloat(caseData.amountOwed || '0') - parseFloat(caseData.amountPaid || '0');
@@ -20,6 +21,7 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
       <SCRAPanel caseData={caseData} />
       <DefaultJudgmentPanel caseData={caseData} />
       <SettlementPanel caseData={caseData} />
+      <HandoffPanel caseData={caseData} />
     </div>
   );
 }

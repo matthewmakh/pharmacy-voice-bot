@@ -398,6 +398,110 @@ export const markSCRAVerified = async (
   return data;
 };
 
+// ─── Phase B: Attorney handoff (creditor side) ───────────────────────────────
+
+export interface AttorneyPartner {
+  id: string;
+  userId: string;
+  name: string;
+  firmName: string | null;
+  email: string;
+  phone: string | null;
+  barNumber: string | null;
+  state: string;
+  notes: string | null;
+  referralFeePercent: string;
+  createdAt: string;
+}
+
+export const listAttorneyPartners = async (): Promise<AttorneyPartner[]> => {
+  const { data } = await api.get(`/handoff/partners`);
+  return data;
+};
+
+export const createAttorneyPartner = async (input: {
+  name: string;
+  firmName?: string;
+  email: string;
+  phone?: string;
+  barNumber?: string;
+  state?: string;
+  notes?: string;
+  referralFeePercent?: number;
+}): Promise<AttorneyPartner> => {
+  const { data } = await api.post(`/handoff/partners`, input);
+  return data;
+};
+
+export type PostJudgmentDocKind =
+  | 'information-subpoena'
+  | 'restraining-notice'
+  | 'property-execution'
+  | 'income-execution'
+  | 'marshal-request';
+
+export const generatePostJudgmentDocs = async (
+  caseId: string,
+  docs: PostJudgmentDocKind[],
+): Promise<{ case: Case }> => {
+  const { data } = await api.post(`/handoff/cases/${caseId}/handoff/generate-docs`, { docs });
+  return data;
+};
+
+export interface HandoffPackagePreview {
+  caseId: string;
+  summary: Record<string, unknown>;
+  preTrial: Record<string, boolean>;
+  postJudgmentDrafts: Record<string, boolean>;
+  investigation: Record<string, boolean>;
+  timeline: Array<{ type: string; label: string | null; notes: string | null; createdAt: string }>;
+  documents: Array<{ id: string; name: string; classification: string | null }>;
+  handoff: { status: string | null; partnerId: string | null; initiatedAt: string | null; token: string | null; notes: string | null };
+}
+
+export const getHandoffPackage = async (caseId: string): Promise<HandoffPackagePreview> => {
+  const { data } = await api.get(`/handoff/cases/${caseId}/handoff/package`);
+  return data;
+};
+
+export const initiateHandoff = async (
+  caseId: string,
+  attorneyPartnerId: string,
+  notes?: string,
+): Promise<{ case: Case; portalUrl: string }> => {
+  const { data } = await api.post(`/handoff/cases/${caseId}/handoff/initiate`, { attorneyPartnerId, notes });
+  return data;
+};
+
+// ─── Public partner-attorney portal (no auth) ───────────────────────────────
+
+const attorneyApi = axios.create({ baseURL: '/api', timeout: 30000 });
+
+export const getAttorneyHandoffCase = async (token: string): Promise<unknown> => {
+  const { data } = await attorneyApi.get(`/attorney/${token}`);
+  return data;
+};
+
+export const acceptAttorneyHandoff = async (token: string): Promise<void> => {
+  await attorneyApi.post(`/attorney/${token}/accept`);
+};
+
+export const declineAttorneyHandoff = async (token: string, reason?: string): Promise<void> => {
+  await attorneyApi.post(`/attorney/${token}/decline`, { reason });
+};
+
+export const reportAttorneyOutcome = async (
+  token: string,
+  status: 'in-progress' | 'resolved' | 'lost',
+  settlementAmount?: number,
+  notes?: string,
+): Promise<void> => {
+  await attorneyApi.post(`/attorney/${token}/report-outcome`, { status, settlementAmount, notes });
+};
+
+export const getAttorneyDocUrl = (token: string, kind: string): string =>
+  `/api/attorney/${token}/doc/${kind}`;
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });

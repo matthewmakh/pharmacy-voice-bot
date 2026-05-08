@@ -10,6 +10,7 @@ import DebtorPortal from './pages/DebtorPortal';
 import DebtorPortalSubmitted from './pages/DebtorPortalSubmitted';
 import PayoutSettings from './pages/PayoutSettings';
 import WalkthroughPage from './pages/WalkthroughPage';
+import AttorneyPortal from './pages/AttorneyPortal';
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/respond/submitted" element={<DebtorPortalSubmitted />} />
           <Route path="/respond/paid" element={<DebtorPortalSubmitted />} />
           <Route path="/respond/:token" element={<DebtorPortal />} />
+          <Route path="/attorney/:token" element={<AttorneyPortal />} />
           <Route path="/*" element={<ProtectedRoutes />} />
         </Routes>
       </AuthProvider>

@@ -10,6 +10,8 @@ import authRouter from './routes/auth';
 import webhooksRouter from './routes/webhooks';
 import portalRouter from './routes/portal';
 import payoutsRouter from './routes/payouts';
+import handoffRouter from './routes/handoff';
+import attorneyRouter from './routes/attorney';
 import prisma from './lib/prisma';
 
 const app = express();
@@ -86,6 +88,8 @@ app.use('/api/cases', apiLimiter, casesRouter);
 app.use('/api/cases/:caseId/documents', apiLimiter, documentsRouter);
 app.use('/api/portal', apiLimiter, portalRouter);
 app.use('/api/payouts', apiLimiter, payoutsRouter);
+app.use('/api/handoff', apiLimiter, handoffRouter);
+app.use('/api/attorney', apiLimiter, attorneyRouter);
 
 // ─── Static Frontend ──────────────────────────────────────────────────────────
 const clientDistPath = path.join(__dirname, '../../client/dist');
