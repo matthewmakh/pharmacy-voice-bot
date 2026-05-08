@@ -1994,3 +1994,80 @@ Return ONLY valid JSON.`;
     return { text: originalHtml, html: originalHtml };
   }
 }
+
+/**
+ * SCRA Non-Military Affidavit — required by 50 U.S.C. § 3931 before a court
+ * will enter a default judgment against an individual defendant. The plaintiff
+ * (or counsel) attests that they checked the DOD database and confirmed the
+ * defendant is not on active military duty.
+ *
+ * The user must complete the lookup themselves at https://scra.dmdc.osd.mil
+ * and attach the resulting certificate. This generator produces the affidavit
+ * the user signs to attach to the certificate.
+ */
+export async function generateSCRAAffidavit(
+  caseData: Record<string, unknown>
+): Promise<DemandLetterResult> {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const prompt = `You are preparing a Non-Military Affidavit (also called SCRA Affidavit) under 50 U.S.C. § 3931 for a New York default judgment matter. This document is signed by the plaintiff (or plaintiff's attorney) to attest that the defendant is not on active military duty.
+
+TODAY'S DATE: ${today}
+
+CASE FACTS:
+${JSON.stringify(caseData, null, 2)}
+
+Generate a complete affidavit with these sections:
+
+1. CAPTION (full court caption, with index number line "Index No.: __________")
+
+2. AFFIDAVIT BODY
+   - "STATE OF NEW YORK )"
+   - "COUNTY OF _________ ) ss.:"
+   - "I, [plaintiff name from case data — claimantName or claimantBusiness's authorized representative], being duly sworn, depose and say:"
+   - "1. I am the plaintiff in the above-captioned action [or: I am the authorized representative of plaintiff [claimant business]]. I am over 18 years of age and am competent to make this affidavit."
+   - "2. The defendant in this action is [debtor name]. To my knowledge, defendant is an individual and not a corporation or other business entity. [If the case data shows debtor is a business — say: 'The named defendant is a business entity, and SCRA does not apply to corporate defendants. This affidavit is provided in an abundance of caution.']"
+   - "3. On _____________, 20____, I conducted a search of the United States Department of Defense Manpower Data Center's Servicemembers Civil Relief Act (SCRA) website at https://scra.dmdc.osd.mil to determine whether defendant is currently on active military duty."
+   - "4. The Department of Defense returned a Status Report stating that defendant is NOT on active duty in the United States military as of the date of the search. A copy of the SCRA Status Report (Certificate No.: __________________) is attached as Exhibit A."
+   - "5. Based on the foregoing, I have verified that defendant is not entitled to the protections of the Servicemembers Civil Relief Act, 50 U.S.C. § 3901 et seq."
+   - "6. I declare under penalty of perjury under the laws of the State of New York that the foregoing is true and correct."
+
+3. SIGNATURE BLOCK
+   - "___________________________________"
+   - "Print Name: ___________________________"
+   - "Title (if applicable): ___________________"
+   - "Date: _________________________________"
+   - "Sworn to before me this ____ day of _____________, 20____"
+   - "___________________________________"
+   - "Notary Public"
+   - "My Commission Expires: ________________"
+
+Pre-fill: court caption (court name, parties, county), defendant name, plaintiff name, current year. Leave blanks for: search date, certificate number, signature, notary fields.
+
+Include a header disclaimer: "⚠ Before filing: Complete the SCRA lookup at https://scra.dmdc.osd.mil/scra/#/single-record. Print the resulting Certificate as Exhibit A. Sign before a notary."
+
+Return JSON:
+{
+  "text": "plain text version",
+  "html": "HTML version — serif font, court-document style, max-width 750px, proper caption formatting"
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 3072,
+    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
+  } catch {
+    const text = content.text;
+    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
+  }
+}

@@ -162,6 +162,11 @@ model Case {
   walkthroughCompletedAt  DateTime?
   walkthroughNotes        Json?    // per-step notes the user entered
 
+  // Phase B — SCRA non-military affidavit (required for default judgment vs individual)
+  scraAffidavitHtml       String?   @db.Text
+  scraVerifiedAt          DateTime? // when user confirmed non-military status via DOD portal
+  scraCertificateNumber   String?   // optional: certificate # from DOD portal
+
   documents Document[]
   actions   CaseAction[]
 

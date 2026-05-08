@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyDemandLetter, retryDemandLetter, verifyCaseSynthesis, verifyDefaultJudgment, retryDefaultJudgment, verifySettlement, retrySettlement, verifyPaymentPlan, retryPaymentPlan } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, verifyCourtForm, retryCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyDemandLetter, retryDemandLetter, verifyCaseSynthesis, verifyDefaultJudgment, retryDefaultJudgment, verifySettlement, retrySettlement, verifyPaymentPlan, retryPaymentPlan, generateSCRAAffidavit } from '../services/claude';
 import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
@@ -1649,6 +1649,72 @@ router.post('/:id/release-payout', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('release-payout error:', err);
     return res.status(500).json({ error: 'Failed to release payout', details: String(err) });
+  }
+});
+
+// ─── Phase B: SCRA non-military affidavit ────────────────────────────────────
+
+/** POST /api/cases/:id/scra-affidavit/generate */
+router.post('/:id/scra-affidavit/generate', async (req: Request, res: Response) => {
+  try {
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    const result = await generateSCRAAffidavit(c as Record<string, unknown>);
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        scraAffidavitHtml: result.html,
+        actions: {
+          create: {
+            type: 'FILING_PREPARED',
+            label: 'SCRA non-military affidavit generated',
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+    return res.json(updated);
+  } catch (err) {
+    console.error('scra-affidavit generate error:', err);
+    return res.status(500).json({ error: 'Failed to generate SCRA affidavit', details: String(err) });
+  }
+});
+
+const scraVerifySchema = z.object({
+  certificateNumber: z.string().optional(),
+});
+
+/** POST /api/cases/:id/scra-affidavit/mark-verified — user confirms they ran the DOD lookup */
+router.post('/:id/scra-affidavit/mark-verified', async (req: Request, res: Response) => {
+  try {
+    const { certificateNumber } = scraVerifySchema.parse(req.body);
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        scraVerifiedAt: new Date(),
+        scraCertificateNumber: certificateNumber,
+        actions: {
+          create: {
+            type: 'FILING_PREPARED',
+            label: `SCRA lookup verified${certificateNumber ? ` (Certificate #${certificateNumber})` : ''}`,
+            metadata: { certificateNumber } as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+    return res.json({ case: updated });
+  } catch (err) {
+    console.error('scra-affidavit mark-verified error:', err);
+    return res.status(500).json({ error: 'Failed to mark verified' });
   }
 });
 

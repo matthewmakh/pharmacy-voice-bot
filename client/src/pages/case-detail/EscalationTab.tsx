@@ -3,6 +3,7 @@ import PreFilingNotice from './escalation/PreFilingNotice';
 import CourtFormPanel from './escalation/CourtFormPanel';
 import ProcessServerPanel from './escalation/ProcessServerPanel';
 import AffidavitPanel from './escalation/AffidavitPanel';
+import SCRAPanel from './escalation/SCRAPanel';
 import DefaultJudgmentPanel from './escalation/DefaultJudgmentPanel';
 import SettlementPanel from './escalation/SettlementPanel';
 
@@ -16,6 +17,7 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
       <CourtFormPanel caseData={caseData} />
       {(courtTrack === 'civil' || courtTrack === 'supreme') && <ProcessServerPanel caseData={caseData} />}
       <AffidavitPanel caseData={caseData} />
+      <SCRAPanel caseData={caseData} />
       <DefaultJudgmentPanel caseData={caseData} />
       <SettlementPanel caseData={caseData} />
     </div>

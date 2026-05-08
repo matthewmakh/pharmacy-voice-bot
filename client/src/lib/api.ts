@@ -385,6 +385,19 @@ export const abandonWalkthrough = async (caseId: string): Promise<void> => {
   await api.post(`/cases/${caseId}/walkthrough/abandon`);
 };
 
+export const generateSCRAAffidavit = async (caseId: string): Promise<Case> => {
+  const { data } = await api.post(`/cases/${caseId}/scra-affidavit/generate`);
+  return data;
+};
+
+export const markSCRAVerified = async (
+  caseId: string,
+  certificateNumber?: string,
+): Promise<{ case: Case }> => {
+  const { data } = await api.post(`/cases/${caseId}/scra-affidavit/mark-verified`, { certificateNumber });
+  return data;
+};
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });

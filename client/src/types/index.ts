@@ -233,6 +233,11 @@ export interface Case {
   walkthroughCompletedAt: string | null;
   walkthroughNotes: Record<string, string> | null;
 
+  // Phase B — SCRA non-military affidavit
+  scraAffidavitHtml: string | null;
+  scraVerifiedAt: string | null;
+  scraCertificateNumber: string | null;
+
   documents: Document[];
   actions: CaseAction[];
 
