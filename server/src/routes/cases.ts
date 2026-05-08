@@ -1648,4 +1648,49 @@ router.post('/:id/release-payout', async (req: Request, res: Response) => {
   }
 });
 
+// ─── Phase B: Default judgment filing ────────────────────────────────────────
+
+const markFiledSchema = z.object({
+  method: z.enum(['diy', 'infotrack', 'attorney', 'manual']),
+  indexNumber: z.string().optional(),
+  filedAt: z.string().optional(), // ISO date; defaults to now
+});
+
+/** POST /api/cases/:id/default-judgment/mark-filed */
+router.post('/:id/default-judgment/mark-filed', async (req: Request, res: Response) => {
+  try {
+    const { method, indexNumber, filedAt } = markFiledSchema.parse(req.body);
+
+    const c = await prisma.case.findFirst({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (!c.defaultJudgmentHtml) {
+      return res.status(400).json({ error: 'Default judgment not generated yet' });
+    }
+
+    const updated = await prisma.case.update({
+      where: { id: c.id },
+      data: {
+        defaultJudgmentFiledAt: filedAt ? new Date(filedAt) : new Date(),
+        defaultJudgmentFilingMethod: method,
+        defaultJudgmentIndexNumber: indexNumber,
+        actions: {
+          create: {
+            type: 'FILING_PREPARED',
+            label: `Default judgment filed via ${method}${indexNumber ? ` (Index #${indexNumber})` : ''}`,
+            metadata: { method, indexNumber } as never,
+          },
+        },
+      },
+      include: { actions: { orderBy: { createdAt: 'desc' }, take: 5 } },
+    });
+
+    return res.json({ case: updated });
+  } catch (err) {
+    console.error('default-judgment mark-filed error:', err);
+    return res.status(500).json({ error: 'Failed to mark as filed', details: String(err) });
+  }
+});
+
 export default router;

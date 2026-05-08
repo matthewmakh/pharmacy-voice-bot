@@ -220,6 +220,11 @@ export interface Case {
   defendantDisputeText: string | null;
   defendantProposedPlan: Record<string, unknown> | null;
 
+  // Phase B — filing tracking
+  defaultJudgmentFiledAt: string | null;
+  defaultJudgmentFilingMethod: 'diy' | 'infotrack' | 'attorney' | 'manual' | null;
+  defaultJudgmentIndexNumber: string | null;
+
   documents: Document[];
   actions: CaseAction[];
 

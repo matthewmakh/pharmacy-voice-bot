@@ -149,6 +149,11 @@ model Case {
   followUpNextRunAt       DateTime?
   followUpStepIndex       Int       @default(0)
 
+  // Phase B — Filing tracking (any of: demand-letter civil filing, default judgment)
+  defaultJudgmentFiledAt    DateTime?
+  defaultJudgmentFilingMethod String? // "diy" | "infotrack" | "attorney" | "manual"
+  defaultJudgmentIndexNumber String?  // court-issued index number
+
   documents Document[]
   actions   CaseAction[]
 

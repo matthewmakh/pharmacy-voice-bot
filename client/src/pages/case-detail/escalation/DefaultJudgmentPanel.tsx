@@ -1,7 +1,7 @@
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Scale } from 'lucide-react';
-import { generateDefaultJudgment } from '../../../lib/api';
+import { Scale, FileCheck, Check, Loader2, AlertCircle } from 'lucide-react';
+import { generateDefaultJudgment, markDefaultJudgmentFiled, type FilingMethod } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import Alert from '../../../components/ui/Alert';
@@ -63,6 +63,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
                   filename="default-judgment-motion.pdf"
                   onRegenerate={() => mutation.mutate()}
                 />
+                <FilingActions caseData={caseData} />
                 {caseData.defaultJudgmentVerification && (
                   <VerificationPanel verification={caseData.defaultJudgmentVerification} />
                 )}
@@ -84,5 +85,140 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
         );
       })()}
     </SectionCard>
+  );
+}
+
+// ─── FilingActions ───────────────────────────────────────────────────────────
+
+function FilingActions({ caseData }: { caseData: Case }) {
+  const queryClient = useQueryClient();
+  const [showMark, setShowMark] = React.useState(false);
+  const [method, setMethod] = React.useState<FilingMethod>('manual');
+  const [indexNumber, setIndexNumber] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+
+  const filed = !!caseData.defaultJudgmentFiledAt;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      markDefaultJudgmentFiled(caseData.id, {
+        method,
+        indexNumber: indexNumber.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setShowMark(false);
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
+    },
+    onError: (err: unknown) => {
+      setError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || (err as Error)?.message
+        || 'Failed to mark as filed',
+      );
+    },
+  });
+
+  if (filed) {
+    const fmtDate = (d: string | null) =>
+      d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    const methodLabel = {
+      diy: 'filed yourself (NYSCEF/EDDS)',
+      infotrack: 'filed via InfoTrack',
+      attorney: 'handed off to attorney',
+      manual: 'logged manually',
+    }[caseData.defaultJudgmentFilingMethod || 'manual'];
+
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <div className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+          <Check className="w-4 h-4" />
+          Default judgment {methodLabel} on {fmtDate(caseData.defaultJudgmentFiledAt)}
+        </div>
+        {caseData.defaultJudgmentIndexNumber && (
+          <div className="text-xs text-emerald-700 mt-1 ml-6">Index #{caseData.defaultJudgmentIndexNumber}</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <FileCheck className="w-4 h-4 text-slate-500" />
+        <div className="text-sm font-semibold text-slate-700">File this motion</div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="font-semibold text-slate-700 mb-1">Pay $200, we file it</div>
+          <p className="text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to NYSCEF/EDDS. Coming soon in Phase B.</p>
+          <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
+        </div>
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="font-semibold text-slate-700 mb-1">File it yourself (free)</div>
+          <p className="text-slate-500 mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF/EDDS filing. Coming soon in Phase B.</p>
+          <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
+        </div>
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="font-semibold text-slate-700 mb-1">Hand off to attorney</div>
+          <p className="text-slate-500 mb-2 leading-relaxed">Package case + drafts and route to a partner attorney. Coming soon in Phase B.</p>
+          <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
+        </div>
+      </div>
+
+      {!showMark ? (
+        <button onClick={() => setShowMark(true)} className="btn-ghost text-xs">
+          Already filed it? Log it manually →
+        </button>
+      ) : (
+        <div className="rounded border border-slate-200 bg-white p-3 space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="label">Filing method</label>
+              <select
+                value={method}
+                onChange={(e) => setMethod(e.target.value as FilingMethod)}
+                className="input text-sm"
+              >
+                <option value="manual">Manual log</option>
+                <option value="diy">DIY (NYSCEF / EDDS / in person)</option>
+                <option value="attorney">My attorney filed it</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Index number (optional)</label>
+              <input
+                type="text"
+                value={indexNumber}
+                onChange={(e) => setIndexNumber(e.target.value)}
+                placeholder="e.g. 156789/2025"
+                className="input text-sm"
+              />
+            </div>
+          </div>
+          {error && (
+            <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="btn-primary text-sm"
+            >
+              {mutation.isPending ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</>
+              ) : (
+                'Save'
+              )}
+            </button>
+            <button onClick={() => setShowMark(false)} className="btn-ghost text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

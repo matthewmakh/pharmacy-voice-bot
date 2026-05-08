@@ -318,6 +318,16 @@ export const releasePayout = async (caseId: string): Promise<{
   return data;
 };
 
+export type FilingMethod = 'diy' | 'infotrack' | 'attorney' | 'manual';
+
+export const markDefaultJudgmentFiled = async (
+  caseId: string,
+  payload: { method: FilingMethod; indexNumber?: string; filedAt?: string },
+): Promise<{ case: Case }> => {
+  const { data } = await api.post(`/cases/${caseId}/default-judgment/mark-filed`, payload);
+  return data;
+};
+
 // ─── Public debtor portal (no auth) ──────────────────────────────────────────
 
 const publicApi = axios.create({ baseURL: '/api', timeout: 30000 });
