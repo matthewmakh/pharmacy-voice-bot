@@ -1,279 +1,116 @@
-# HIPAA-Compliant Pharmacy Voice Bot
+# Reclaim — NY B2B Collections Platform
 
-A FastAPI-based voice calling system for pharmacy prescription confirmations, built with strict HIPAA compliance in mind.
+An AI-powered platform that takes a NY B2B collections case from intake through pre-trial workflow, then hands off cleanly to a partner attorney. Acts like a real NY collections lawyer — not a generic AI wrapper.
 
-## 🔒 HIPAA Compliance Architecture
+**Repo name** is `pharmacy-voice-bot` for historical reasons (the repo started as a different project). The current product is **Reclaim**.
 
-This system is designed to keep Protected Health Information (PHI) **strictly on the backend**, never exposing it to third-party AI services.
+---
 
-### What is PHI?
-- Patient names
-- Addresses  
-- Phone numbers
-- Email addresses
-- Dates of birth
-- Medication names
-- Insurance information
-- Any other personally identifiable health information
+## What it does
 
-### How We Maintain HIPAA Compliance
+| Stage | What the platform handles |
+|---|---|
+| Intake | Case + parties + claim + evidence upload, AI synthesis, SOL check, counterclaim risk model |
+| Strategy | Cause-of-action analysis (breach / account stated / quantum meruit), pre-judgment interest @ 9%, court routing by amount |
+| Investigation | 6 debtor-research scrapers: ACRIS (NYC property), NY Courts, NYS Entity, NYS UCC, NYC ECB, PACER |
+| Demand | AI-drafted demand letter + pre-filing notice, certified mail (Lob), tracked email (Resend), e-signature (Dropbox Sign) |
+| Collect | Debtor magic-link portal (pay / propose plan / dispute), Stripe Connect escrow with 12% recovery fee, BullMQ follow-up cadences |
+| File | Default judgment, NYSCEF / EDDS / Commercial Claims — paid via InfoTrack, or DIY walkthrough |
+| Serve | Proof.com process service + RON notary, SCRA non-military affidavit |
+| Hand off | Partner-attorney portal with full case package + draft post-judgment toolkit (info subpoena, restraining notice, executions) |
 
-#### ✅ PHI is ALLOWED in:
-- **Twilio** - Covered by Business Associate Agreement (BAA)
-- **Our backend** - This FastAPI application and its database
+Every generated document is run through an adversarial "judge agent" verification + auto-retry.
 
-#### ❌ PHI is NEVER sent to:
-- **OpenAI GPT** - Used for conversation logic only, receives sanitized transcripts
-- **ElevenLabs** - Used for text-to-speech only, receives PHI-free text
+---
 
-### The PHI Sanitization Pipeline
+## Stack
 
-```
-1. User speaks → Twilio transcribes (PHI may be present)
-2. Our backend receives transcript
-3. PHI Sanitizer extracts and stores PHI locally:
-   - Detects: phone numbers, emails, addresses, dates, etc.
-   - Stores: Raw PHI in CallSession object (backend only)
-   - Replaces: PHI with tokens like [PHONE_NUMBER_PROVIDED]
-4. Only sanitized transcript sent to GPT
-5. GPT returns intent and PHI-free reply
-6. PHI-free reply sent to ElevenLabs for TTS
-7. Twilio plays audio to user
-```
+- **Frontend:** React 18 + Vite + TypeScript + Tailwind, React Query, React Router 7
+- **Backend:** Express + TypeScript, Prisma + PostgreSQL, Puppeteer for PDF, BullMQ + Redis for jobs
+- **AI:** Anthropic Claude (Sonnet 4.6 for case analysis, doc generation, judge verification)
+- **Vendors:** Lob (mail), Resend (email), Dropbox Sign (e-sig), Stripe Connect (escrow), Proof.com (notary + process serve), InfoTrack (e-filing)
+- **Deploy:** Railway (single service, monorepo, nixpacks)
 
-## 🏗️ Architecture
+---
 
-```
-┌─────────┐     ┌──────────────┐     ┌─────────┐
-│ Twilio  │────▶│   Backend    │────▶│   GPT   │
-│  (BAA)  │     │  (FastAPI)   │     │ (no PHI)│
-└─────────┘     │              │     └─────────┘
-                │  - Sessions  │
-                │  - PHI Store │     ┌──────────────┐
-                │  - Sanitizer │────▶│ ElevenLabs   │
-                │  - Conv Flow │     │   (no PHI)   │
-                └──────────────┘     └──────────────┘
-```
+## Run locally
 
-## 📁 Project Structure
-
-```
-.
-├── app/
-│   ├── main.py              # FastAPI app, Twilio webhooks
-│   ├── models.py            # CallSession data model
-│   ├── conversation_engine.py  # Bland flow JSON interpreter
-│   ├── phi_sanitizer.py     # PHI detection and tokenization
-│   ├── gpt_client.py        # OpenAI wrapper (PHI-free only)
-│   ├── tts_client.py        # ElevenLabs wrapper (PHI-free only)
-│   ├── twilio_utils.py      # TwiML generation helpers
-│   └── config.py            # Environment configuration
-├── pharmacy_bland_flow.json # Conversation flow definition
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
-```
-
-## 🚀 Setup
-
-### Prerequisites
-- Python 3.9+
-- Twilio account with phone number
-- OpenAI API key
-- ElevenLabs API key (optional, falls back to Twilio `<Say>`)
-- ngrok or similar for local testing
-
-### Installation
-
-1. **Clone and navigate to project:**
-   ```bash
-   cd "/Users/matthewmakh/PycharmProjects/Pharmacy_Bot/pythonProject1/HIPPA Flow"
-   ```
-
-2. **Create virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure environment variables:**
-   Create a `.env` file:
-   ```env
-   # Required
-   OPENAI_API_KEY=sk-your-openai-key
-   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   TWILIO_AUTH_TOKEN=your-twilio-auth-token
-   
-   # Optional but recommended
-   ELEVENLABS_API_KEY=your-elevenlabs-key
-   ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
-   
-   # For call transfers
-   TWILIO_PHARMACIST_NUMBER=+1234567890
-   
-   # When using ngrok locally
-   BASE_URL=https://your-ngrok-url.ngrok.io
-   ```
-
-5. **Run the application:**
-   ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
-6. **Expose locally with ngrok:**
-   ```bash
-   ngrok http 8000
-   ```
-
-7. **Configure Twilio webhook:**
-   - Go to your Twilio phone number settings
-   - Set "A CALL COMES IN" webhook to: `https://your-ngrok-url.ngrok.io/voice/incoming`
-   - Set method to `HTTP POST`
-
-## 🧪 Testing
-
-### Test the health endpoint:
 ```bash
-curl http://localhost:8000/
+# 1. Install deps
+cd server && npm install
+cd ../client && npm install
+
+# 2. Set up env
+cp .env.example .env
+# Fill in DATABASE_URL, ANTHROPIC_API_KEY, JWT_SECRET, vendor keys
+
+# 3. Push schema
+cd server && npx prisma db push && npx prisma generate
+
+# 4. Start (from repo root)
+npm run dev
+# Frontend: http://localhost:5173
+# Backend:  http://localhost:3001
 ```
 
-### Test with Twilio:
-Call your Twilio phone number and follow the bot's prompts.
+---
 
-### Check logs:
-The application logs will show:
-- Raw transcripts (PHI-bearing) - backend only
-- Sanitized transcripts (tokens)
-- Detected intents
-- Node transitions
+## Project layout
 
-## 🔐 Security Considerations
+```
+client/src/
+  pages/
+    Dashboard.tsx, NewCase.tsx, Login.tsx, Register.tsx
+    DebtorPortal.tsx        — public magic-link portal at /respond/:token
+    AttorneyPortal.tsx      — public magic-link portal at /attorney/:token
+    PayoutSettings.tsx      — Stripe Connect onboarding
+    WalkthroughPage.tsx     — DIY court filing wizard
+    case-detail/            — overview, strategy, evidence, letter, escalation, timeline, filing guide
 
-### Current Implementation (Development)
-- ✅ PHI sanitization before sending to external APIs
-- ✅ In-memory session storage
-- ✅ Validation checks on GPT input/output
-- ⚠️ HTTP endpoints (use ngrok for testing)
-
-### Production Recommendations
-
-1. **HTTPS Everywhere**
-   - Use proper SSL/TLS certificates
-   - Never expose HTTP endpoints
-
-2. **Persistent Storage**
-   ```python
-   # Replace in-memory SESSION_STORE with:
-   # - Redis with encryption at rest
-   # - PostgreSQL with encrypted columns
-   # - AWS RDS with encryption enabled
-   ```
-
-3. **Authentication**
-   - Add Twilio request validation
-   - Verify webhook signatures
-   - IP allowlisting
-
-4. **Audit Logging**
-   - Log all PHI access
-   - Implement audit trails
-   - Set up monitoring/alerts
-
-5. **BAA Coverage**
-   - Ensure Twilio BAA is signed
-   - Verify your hosting provider offers HIPAA-compliant infrastructure
-   - Document all PHI flows
-
-6. **Access Controls**
-   - Implement role-based access
-   - Encrypt PHI at rest and in transit
-   - Regular security audits
-
-7. **Data Retention**
-   - Define PHI retention policies
-   - Implement automatic purging
-   - Comply with HIPAA minimum necessary standard
-
-## 🔄 Conversation Flow
-
-The bot follows the conversation graph defined in `pharmacy_bland_flow.json`:
-
-1. **Greeting** - Initial welcome
-2. **Identity Confirmation** - Verify caller
-3. **Address Confirmation** - Verify delivery address
-4. **Medications Check** - Ask about other medications
-5. **Contact Collection** - Get phone/email
-6. **Insurance Info** - Offer secure upload link
-7. **Preferences** - SMS notifications consent
-8. **Wrap-up** - Thank and hang up
-
-At any point, user can request transfer to pharmacist.
-
-## 📝 Where to Plug In Production Services
-
-### Database (models.py)
-Replace `SESSION_STORE` dict with Redis:
-```python
-import redis
-r = redis.Redis(host='localhost', port=6379, db=0)
-# Store: r.set(f"session:{call_sid}", json.dumps(session))
-# Retrieve: r.get(f"session:{call_sid}")
+server/src/
+  routes/
+    auth.ts, cases.ts, documents.ts
+    portal.ts        — debtor portal API (no auth, magic link)
+    attorney.ts      — attorney portal API (no auth, magic link)
+    handoff.ts       — partner attorney handoff
+    walkthrough.ts   — DIY filing state machine
+    payouts.ts       — Stripe Connect onboarding
+    webhooks.ts      — Lob, Resend, Dropbox Sign, Stripe, Proof, InfoTrack
+  services/
+    claude.ts        — AI doc generation + judge verification
+    pdf.ts           — Puppeteer PDF rendering
+    lob.ts, resend.ts, dropboxSign.ts, stripe.ts, proof.ts, infoTrack.ts
+    postJudgmentDocs.ts  — info subpoena, restraining notice, executions
+    acris.ts, nycourts.ts, nysEntity.ts, nysUCC.ts, nycECB.ts, pacer.ts  — debtor research scrapers
+  jobs/
+    followUpScheduler.ts   — BullMQ per-strategy cadences
 ```
 
-### Cloud Storage (tts_client.py)
-Replace local file storage with S3:
-```python
-import boto3
-s3 = boto3.client('s3')
-# Upload: s3.put_object(Bucket='my-audio-bucket', Key=filename, Body=audio)
-# URL: s3.generate_presigned_url('get_object', Params={'Bucket': '...', 'Key': filename})
-```
+---
 
-### Monitoring
-Add application performance monitoring (APM):
-```python
-# DataDog, New Relic, or Sentry
-import sentry_sdk
-sentry_sdk.init(dsn="your-sentry-dsn")
-```
+## Branches
 
-## 🐛 Troubleshooting
+- **`main`** — stable / production
+- **`dev`** — integration branch (merge feature work here before promoting to main)
+- **`hardening`** — current feature branch; see `HARDENING.md` on that branch for the gap list closing the lawyer-judgment gap (intake hardening, collectibility score, leverage map, confession of judgment, SOL watchdog, etc.)
 
-### "Import openai could not be resolved"
-Make sure you're in the virtual environment and dependencies are installed:
-```bash
-source venv/bin/activate
-pip install -r requirements.txt
-```
+---
 
-### "Session not found"
-Session storage is in-memory and resets on server restart. In production, use Redis or database.
+## Active docs
 
-### TTS audio not playing
-- Verify `BASE_URL` in `.env` points to your public ngrok URL
-- Check audio files are being created in `/tmp/pharmacy_bot_audio`
-- Verify ElevenLabs API key is valid
+- **[`AUDIT.md`](./AUDIT.md)** — Legal workflow audit + business plan (3-phase roadmap, gap analysis, pricing model)
+- **[`IMPLEMENTATION_NOTES.md`](./IMPLEMENTATION_NOTES.md)** — Locked vendor + scope decisions from the audit review
+- **[`PHASE_A_TEST_PLAN.md`](./PHASE_A_TEST_PLAN.md)** — End-to-end test runbook for the send/sign/collect flow
+- **`HARDENING.md`** (on `hardening` branch) — Next build queue: closing the lawyer-judgment gap
 
-### GPT not detecting intent correctly
-- Check `app/gpt_client.py` system prompt
-- Verify OpenAI API key is valid
-- Review logs for sanitized transcripts sent to GPT
+---
 
-## 📚 Additional Resources
+## Pricing model
 
-- [Twilio Voice Webhooks](https://www.twilio.com/docs/voice/twiml)
-- [OpenAI API Documentation](https://platform.openai.com/docs)
-- [ElevenLabs API Documentation](https://elevenlabs.io/docs)
-- [HIPAA Compliance Guide](https://www.hhs.gov/hipaa/for-professionals/index.html)
-
-## 📄 License
-
-This is a reference implementation. Consult with legal and compliance teams before using in production with real PHI.
-
-## 👥 Support
-
-For questions or issues, please refer to the inline code comments or reach out to the development team.
+| Revenue line | Price | When earned |
+|---|---|---|
+| Pro subscription | $79/mo | Always |
+| Recovery fee | 12% of collected | Debtor pays via portal (Stripe escrow) |
+| Filing service | $200 + court fees | User picks paid filing path |
+| Notary / process serve | Cost + handling | Per transaction (Proof.com) |
+| Attorney referral | 20% of contingency | Case hands off to partner attorney |
