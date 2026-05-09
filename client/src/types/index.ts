@@ -213,6 +213,7 @@ export interface Case {
   amountCollectedCents: number | null;
   reclaimFeeCents: number | null;
   payoutToClaimantCents: number | null;
+  payoutTransferId: string | null;
   payoutCompletedAt: string | null;
   portalToken: string | null;
   portalTokenExpiresAt: string | null;
