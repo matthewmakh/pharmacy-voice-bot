@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import path from 'path';
 import fs from 'fs';
 import rateLimit from 'express-rate-limit';
@@ -8,12 +9,35 @@ import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
 import authRouter from './routes/auth';
 import prisma from './lib/prisma';
+import { storageHealthWarning } from './lib/storage';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
 app.set('trust proxy', 1);
+
+// ─── Security headers ───────────────────────────────────────────────────────────
+// CSP is tailored so it does not break the Vite SPA or the inline-styled legal
+// documents we render in blob tabs, while still blocking foreign scripts/frames.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'self'"],
+        baseUri: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }),
+);
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 // Strict limit for auth routes (prevents brute force)
@@ -73,6 +97,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 async function start() {
+  const warning = storageHealthWarning();
+  if (warning) console.warn(`\n⚠ ${warning}\n`);
+
   // Reset any cases left stuck in ANALYZING/GENERATING from a previous server crash or restart.
   // These cases will never self-recover because the error handler never ran.
   try {

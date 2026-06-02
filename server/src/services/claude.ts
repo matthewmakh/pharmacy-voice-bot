@@ -1,27 +1,41 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { anthropic as client, MODEL, systemCached, generateHTML } from '../lib/anthropic';
+import { countyForDocument } from '../lib/county';
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  maxRetries: 4,
-  timeout: 120000,
-});
+// ─── Shared helpers ─────────────────────────────────────────────────────────────
 
-const MODEL = 'claude-sonnet-4-6';
-
-// Extract JSON object from Claude response — handles markdown fences and preamble text
+// Extract a JSON object from a text response — handles markdown fences and preamble.
 function extractJson(raw: string): string {
-  // Try to find a JSON object by locating first { and last }
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) {
-    return raw.slice(start, end + 1);
-  }
-  // Fallback: strip markdown code fences
-  return raw
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/i, '')
-    .trim();
+  if (start !== -1 && end !== -1 && end > start) return raw.slice(start, end + 1);
+  return raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 }
+
+/** Throw on truncation so a half-written document/analysis is never persisted as complete. */
+function ensureComplete(resp: { stop_reason: string | null; usage?: { output_tokens?: number } | null }, label: string): void {
+  if (resp.stop_reason === 'max_tokens') {
+    throw new Error(`${label} truncated at max_tokens (out=${resp.usage?.output_tokens}) — raise the cap or reduce input`);
+  }
+}
+
+// Dates are rendered in Eastern Time because every court, deadline, and filing in
+// this product is New York. The server runs in UTC, so "today" could otherwise be a
+// day off late at night — which matters for filing/cure deadlines.
+function todayET(): string {
+  return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+}
+function currentYearET(): number {
+  return parseInt(new Date().toLocaleDateString('en-US', { year: 'numeric', timeZone: 'America/New_York' }), 10);
+}
+
+function paragraphsToHtml(text: string): string {
+  return `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
+    .split('\n\n')
+    .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .join('')}</div>`;
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────────
 
 export interface DocumentAnalysis {
   classification: string;
@@ -42,19 +56,10 @@ export interface CaseAssessment {
   primaryCauseOfAction: {
     theory: 'breach_of_written_contract' | 'breach_of_oral_contract' | 'account_stated' | 'quantum_meruit';
     reasoning: string;
-    elements: Array<{
-      element: string;
-      satisfied: boolean;
-      evidence: string | null;
-      gap: string | null;
-    }>;
+    elements: Array<{ element: string; satisfied: boolean; evidence: string | null; gap: string | null }>;
   };
   alternativeCauses: string[];
-  counterclaimRisk: {
-    level: 'low' | 'medium' | 'high';
-    reasoning: string;
-    signals: string[];
-  };
+  counterclaimRisk: { level: 'low' | 'medium' | 'high'; reasoning: string; signals: string[] };
   debtorEntityNotes: string | null;
   recommendedStrategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
   strategyReasoning: string;
@@ -71,28 +76,11 @@ export interface CaseSynthesis {
 }
 
 export type IntakeFieldName =
-  | 'claimantName'
-  | 'claimantBusiness'
-  | 'claimantAddress'
-  | 'claimantEmail'
-  | 'claimantPhone'
-  | 'debtorName'
-  | 'debtorBusiness'
-  | 'debtorAddress'
-  | 'debtorEmail'
-  | 'debtorPhone'
-  | 'debtorEntityType'
-  | 'amountOwed'
-  | 'amountPaid'
-  | 'serviceDescription'
-  | 'agreementDate'
-  | 'serviceStartDate'
-  | 'serviceEndDate'
-  | 'invoiceDate'
-  | 'paymentDueDate'
-  | 'hasWrittenContract'
-  | 'invoiceNumber'
-  | 'industry';
+  | 'claimantName' | 'claimantBusiness' | 'claimantAddress' | 'claimantEmail' | 'claimantPhone'
+  | 'debtorName' | 'debtorBusiness' | 'debtorAddress' | 'debtorEmail' | 'debtorPhone' | 'debtorEntityType'
+  | 'amountOwed' | 'amountPaid' | 'serviceDescription'
+  | 'agreementDate' | 'serviceStartDate' | 'serviceEndDate' | 'invoiceDate' | 'paymentDueDate'
+  | 'hasWrittenContract' | 'invoiceNumber' | 'industry';
 
 export interface IntakeFieldExtraction {
   value: string | number | boolean | null;
@@ -101,7 +89,63 @@ export interface IntakeFieldExtraction {
   sourceExcerpt: string | null;
 }
 
-export type IntakeAutofillResult = Record<IntakeFieldName, IntakeFieldExtraction>;
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  /** Why this matters for the case — shown to the user under the question. */
+  why: string;
+  /** Which intake field an answer should populate, if any. */
+  field: IntakeFieldName | null;
+  /** Optional suggested answers for quick selection. */
+  suggestions?: string[];
+}
+
+/**
+ * Enhanced "drop your evidence and we'll do the rest" result. In addition to the
+ * extracted fields it returns a plain-language summary of what was read and a short
+ * list of clarifying questions for the genuinely important gaps — so intake becomes a
+ * guided conversation instead of a silent best-guess.
+ */
+export interface IntakeAutofillResult {
+  fields: Record<IntakeFieldName, IntakeFieldExtraction>;
+  documentSummary: string;
+  clarifyingQuestions: ClarifyingQuestion[];
+}
+
+export interface DemandLetterResult {
+  text: string;
+  html: string;
+}
+
+export interface CourtFormResult {
+  html: string;
+  formType: string;
+  instructions: string[];
+}
+
+export interface VerificationCheck {
+  field: string;
+  status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
+  expected: string | null;
+  found: string | null;
+  note: string;
+}
+
+export interface CourtFormVerification {
+  overallStatus: 'verified' | 'review_needed' | 'issues_found';
+  checks: VerificationCheck[];
+  summary: string;
+  blankFields: string[];
+  verifiedAt: string;
+  didRetry?: boolean;
+  generationFailed?: boolean;
+}
+
+export interface StrategyAssessment {
+  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
+  reasoning: string;
+  keyFactors: string[];
+}
 
 const INTAKE_FIELD_NAMES: IntakeFieldName[] = [
   'claimantName', 'claimantBusiness', 'claimantAddress', 'claimantEmail', 'claimantPhone',
@@ -111,140 +155,19 @@ const INTAKE_FIELD_NAMES: IntakeFieldName[] = [
   'hasWrittenContract', 'invoiceNumber', 'industry',
 ];
 
-function emptyIntakeResult(): IntakeAutofillResult {
-  const result = {} as IntakeAutofillResult;
+function emptyFields(): Record<IntakeFieldName, IntakeFieldExtraction> {
+  const result = {} as Record<IntakeFieldName, IntakeFieldExtraction>;
   for (const name of INTAKE_FIELD_NAMES) {
     result[name] = { value: null, confidence: 'low', sourceDocId: null, sourceExcerpt: null };
   }
   return result;
 }
 
-export async function extractIntakeFromDocuments(
-  documents: Array<{ id: string; originalName: string; extractedText: string }>,
-): Promise<IntakeAutofillResult> {
-  if (documents.length === 0) return emptyIntakeResult();
+// ─── Per-document analysis (static instructions cached) ──────────────────────────
 
-  const docsContext = documents
-    .map(
-      (d, i) =>
-        `=== Document ${i + 1} (id: ${d.id}, filename: ${d.originalName}) ===
-${d.extractedText.slice(0, 12000)}`
-    )
-    .join('\n\n');
+const ANALYZE_DOC_SYSTEM = `You are a document analysis assistant for a New York B2B collections matter. Always respond with valid JSON only — no markdown, no code fences, no explanations.
 
-  const prompt = `You are pre-filling a New York B2B collections case intake form by extracting fields from the user's uploaded documents (contracts, invoices, emails, etc.). The user will review and edit your suggestions, so accuracy matters more than completeness — when in doubt, return null.
-
-CRITICAL RULES:
-1. Extract ONLY what is explicitly stated or strongly evidenced in the documents. NEVER invent or guess.
-2. Return value: null with confidence: "low" for any field not evidenced — do NOT fabricate plausible-sounding values.
-3. The CLAIMANT is the user's own business (the party owed money). The DEBTOR is the other party. Be careful not to swap them — the claimant is whoever issued the invoices and is suing/collecting; the debtor is the recipient who owes payment.
-4. claimantEmail and claimantPhone rarely appear in invoices the claimant sent — these are the user's own contact info. Return null unless the documents explicitly contain them (e.g., on the claimant's letterhead).
-5. Confidence rubric:
-   - "high" = stated verbatim in the document
-   - "medium" = clearly inferable from context (e.g., debtor address from the "Bill To" section)
-   - "low" = guess (prefer null over a low-confidence guess)
-6. sourceDocId: the document id (from the "id:" header) where you found this fact. null if not found.
-7. sourceExcerpt: a ≤20-word verbatim quote from the source document. null if not found.
-8. Dates must be ISO format (YYYY-MM-DD).
-9. amountOwed and amountPaid must be numbers (no currency symbol, no commas).
-10. hasWrittenContract is a boolean — true if a signed/executed written agreement exists in the documents.
-11. debtorEntityType must be one of: "LLC", "Corporation", "Sole Proprietor", "Partnership", "Individual", "Unknown".
-
-DOCUMENTS:
-${docsContext}
-
-Return a single JSON object with EXACTLY these fields. Each field MUST be an object of shape {"value": ..., "confidence": "high"|"medium"|"low", "sourceDocId": "..." or null, "sourceExcerpt": "..." or null}:
-
-{
-  "claimantName": { ... },
-  "claimantBusiness": { ... },
-  "claimantAddress": { ... },
-  "claimantEmail": { ... },
-  "claimantPhone": { ... },
-  "debtorName": { ... },
-  "debtorBusiness": { ... },
-  "debtorAddress": { ... },
-  "debtorEmail": { ... },
-  "debtorPhone": { ... },
-  "debtorEntityType": { ... },
-  "amountOwed": { ... },
-  "amountPaid": { ... },
-  "serviceDescription": { ... },
-  "agreementDate": { ... },
-  "serviceStartDate": { ... },
-  "serviceEndDate": { ... },
-  "invoiceDate": { ... },
-  "paymentDueDate": { ... },
-  "hasWrittenContract": { ... },
-  "invoiceNumber": { ... },
-  "industry": { ... }
-}
-
-Return ONLY valid JSON. No markdown, no explanation.`;
-
-  const promptBytes = Buffer.byteLength(prompt, 'utf8');
-  const intakeStart = Date.now();
-  console.log(`[claude] fn=extractIntakeFromDocuments docs=${documents.length} promptBytes=${promptBytes}`);
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: 'You are a document extraction assistant for a legal intake form. Always respond with valid JSON only. Never invent values — return null when uncertain.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  console.log(`[claude] fn=extractIntakeFromDocuments ms=${Date.now() - intakeStart} stopReason=${response.stop_reason} inputTokens=${response.usage?.input_tokens} outputTokens=${response.usage?.output_tokens}`);
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  let parsed: Partial<IntakeAutofillResult>;
-  try {
-    parsed = JSON.parse(extractJson(content.text)) as Partial<IntakeAutofillResult>;
-  } catch (err) {
-    console.error('Failed to parse intake autofill JSON:', content.text);
-    throw new Error(`Intake extraction returned invalid JSON: ${String(err)}`);
-  }
-
-  // Validate every field is present and has the right shape; fill in blanks defensively
-  const validDocIds = new Set(documents.map(d => d.id));
-  const result = emptyIntakeResult();
-  for (const name of INTAKE_FIELD_NAMES) {
-    const f = parsed[name];
-    if (f && typeof f === 'object' && 'value' in f) {
-      const conf = f.confidence === 'high' || f.confidence === 'medium' || f.confidence === 'low' ? f.confidence : 'low';
-      const sourceDocId = typeof f.sourceDocId === 'string' && validDocIds.has(f.sourceDocId) ? f.sourceDocId : null;
-      result[name] = {
-        value: f.value === undefined ? null : f.value,
-        confidence: conf,
-        sourceDocId,
-        sourceExcerpt: typeof f.sourceExcerpt === 'string' ? f.sourceExcerpt : null,
-      };
-    }
-  }
-  return result;
-}
-
-export interface DemandLetterResult {
-  text: string;
-  html: string;
-}
-
-export async function analyzeDocument(
-  extractedText: string,
-  filename: string,
-  mimeType: string
-): Promise<DocumentAnalysis> {
-  const prompt = `You are analyzing a business document as part of a collections/dispute case.
-
-Document name: ${filename}
-Document type: ${mimeType}
-Document text:
----
-${extractedText.slice(0, 15000)}
----
-
-Analyze this document and return a JSON object with exactly these fields:
+Return a JSON object with exactly these fields:
 {
   "classification": one of ["contract", "invoice", "proof_of_work", "communication", "payment_record", "business_record", "screenshot", "other"],
   "confidence": number 0-1 representing confidence in classification,
@@ -287,14 +210,25 @@ Analyze this document and return a JSON object with exactly these fields:
   "summary": "1-2 sentence summary of what this document is and what it shows for a collections claim"
 }
 
-Return ONLY valid JSON. No markdown, no explanation.`;
+Return ONLY valid JSON.`;
+
+export async function analyzeDocument(extractedText: string, filename: string, mimeType: string): Promise<DocumentAnalysis> {
+  const prompt = `Analyze this business document for a collections/dispute case.
+
+Document name: ${filename}
+Document type: ${mimeType}
+Document text:
+---
+${extractedText.slice(0, 15000)}
+---`;
 
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
-    system: 'You are a document analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    system: systemCached(ANALYZE_DOC_SYSTEM),
     messages: [{ role: 'user', content: prompt }],
   });
+  ensureComplete(response, 'analyzeDocument');
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -303,118 +237,146 @@ Return ONLY valid JSON. No markdown, no explanation.`;
     return JSON.parse(extractJson(content.text)) as DocumentAnalysis;
   } catch {
     console.error('Failed to parse Claude document analysis:', content.text);
-    return {
-      classification: 'other',
-      confidence: 0.3,
-      supportsTags: [],
-      extractedFacts: {},
-      summary: 'Document uploaded (analysis parsing error)',
-    };
+    return { classification: 'other', confidence: 0.3, supportsTags: [], extractedFacts: {}, summary: 'Document uploaded (analysis parsing error)' };
   }
 }
 
-export async function synthesizeCase(
-  documents: Array<{
-    originalName: string;
-    classification: string | null;
-    extractedFacts: Record<string, unknown> | null;
-    supportsTags: string[];
-    summary: string | null;
-  }>,
-  userProvidedFacts: Record<string, unknown>
-): Promise<CaseSynthesis> {
+// ─── Evidence-drop intake extraction (enhanced: summary + clarifying questions) ────
+
+const INTAKE_SYSTEM = `You are pre-filling a New York B2B collections case intake form by extracting fields from the user's uploaded documents (contracts, invoices, emails, etc.) and then asking a few smart clarifying questions. The user will review and edit everything, so accuracy matters more than completeness — when in doubt, return null and ask.
+
+EXTRACTION RULES:
+1. Extract ONLY what is explicitly stated or strongly evidenced. NEVER invent or guess.
+2. Return value null with confidence "low" for any field not evidenced — do not fabricate plausible-sounding values.
+3. The CLAIMANT is the user's own business (the party owed money). The DEBTOR is the other party. Never swap them — the claimant issued the invoices and is collecting; the debtor owes payment.
+4. claimantEmail and claimantPhone rarely appear in invoices the claimant sent — return null unless the documents explicitly contain them (e.g., on the claimant's letterhead).
+5. Confidence rubric: "high" = stated verbatim; "medium" = clearly inferable (e.g., debtor address from the "Bill To" block); "low" = guess (prefer null).
+6. sourceDocId: the document id (from the "id:" header) where the fact was found, else null.
+7. sourceExcerpt: a ≤20-word verbatim quote from the source document, else null.
+8. Dates must be ISO format (YYYY-MM-DD). amountOwed/amountPaid must be numbers (no symbols or commas). hasWrittenContract is a boolean. debtorEntityType must be one of: "LLC", "Corporation", "Sole Proprietor", "Partnership", "Individual", "Unknown".
+
+CLARIFYING QUESTIONS:
+Ask 2-5 short questions ONLY about information that materially affects the case and is missing or ambiguous. Prioritize, in order: payment due date (drives the statute of limitations), the debtor's exact legal name and entity type (drives service and enforcement), the outstanding amount if documents conflict, whether a signed contract exists, and the debtor's address (drives venue). Skip questions whose answers you already extracted with high confidence. Phrase each question for a non-lawyer and explain in one sentence why it matters. When useful, offer a few suggested answers.
+
+Return ONLY valid JSON of this exact shape:
+{
+  "documentSummary": "2-4 sentence plain-language summary of which documents you reviewed and what the dispute appears to be",
+  "fields": {
+    "claimantName": {"value": ..., "confidence": "high|medium|low", "sourceDocId": "..."|null, "sourceExcerpt": "..."|null},
+    "claimantBusiness": {...}, "claimantAddress": {...}, "claimantEmail": {...}, "claimantPhone": {...},
+    "debtorName": {...}, "debtorBusiness": {...}, "debtorAddress": {...}, "debtorEmail": {...}, "debtorPhone": {...}, "debtorEntityType": {...},
+    "amountOwed": {...}, "amountPaid": {...}, "serviceDescription": {...},
+    "agreementDate": {...}, "serviceStartDate": {...}, "serviceEndDate": {...}, "invoiceDate": {...}, "paymentDueDate": {...},
+    "hasWrittenContract": {...}, "invoiceNumber": {...}, "industry": {...}
+  },
+  "clarifyingQuestions": [
+    {"id": "short_id", "question": "...", "why": "...", "field": "<one of the field names above>"|null, "suggestions": ["...", "..."]}
+  ]
+}
+Return ONLY valid JSON. No markdown, no explanation.`;
+
+export async function extractIntakeFromDocuments(
+  documents: Array<{ id: string; originalName: string; extractedText: string }>,
+): Promise<IntakeAutofillResult> {
+  if (documents.length === 0) {
+    return { fields: emptyFields(), documentSummary: 'No documents were provided.', clarifyingQuestions: [] };
+  }
+
   const docsContext = documents
-    .map(
-      (d, i) =>
-        `Document ${i + 1}: ${d.originalName}
-Type: ${d.classification || 'unknown'}
-Summary: ${d.summary || 'N/A'}
-Supports: ${d.supportsTags.join(', ') || 'none identified'}
-Facts: ${JSON.stringify(d.extractedFacts || {}, null, 2)}`
-    )
-    .join('\n\n---\n\n');
+    .map((d, i) => `=== Document ${i + 1} (id: ${d.id}, filename: ${d.originalName}) ===\n${d.extractedText.slice(0, 12000)}`)
+    .join('\n\n');
 
-  const prompt = `You are a New York collections attorney synthesizing a B2B debt collection case from uploaded documents and user-provided facts. Your analysis will drive a legal workflow — be precise, honest, and grounded in the actual case data.
+  const intakeStart = Date.now();
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: systemCached(INTAKE_SYSTEM),
+    messages: [{ role: 'user', content: `DOCUMENTS:\n${docsContext}` }],
+  });
+  console.log(`[claude] fn=extractIntakeFromDocuments docs=${documents.length} ms=${Date.now() - intakeStart} stop=${response.stop_reason} cacheRead=${response.usage?.cache_read_input_tokens ?? 0}`);
+  ensureComplete(response, 'extractIntakeFromDocuments');
 
-USER-PROVIDED CASE FACTS:
-${JSON.stringify(userProvidedFacts, null, 2)}
+  const content = response.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-UPLOADED DOCUMENTS (${documents.length} total):
-${docsContext}
+  let parsed: { fields?: Partial<Record<IntakeFieldName, IntakeFieldExtraction>>; documentSummary?: string; clarifyingQuestions?: ClarifyingQuestion[] };
+  try {
+    parsed = JSON.parse(extractJson(content.text));
+  } catch (err) {
+    console.error('Failed to parse intake autofill JSON:', content.text);
+    throw new Error(`Intake extraction returned invalid JSON: ${String(err)}`);
+  }
+
+  const validDocIds = new Set(documents.map((d) => d.id));
+  const fields = emptyFields();
+  for (const name of INTAKE_FIELD_NAMES) {
+    const f = parsed.fields?.[name];
+    if (f && typeof f === 'object' && 'value' in f) {
+      const conf = f.confidence === 'high' || f.confidence === 'medium' || f.confidence === 'low' ? f.confidence : 'low';
+      const sourceDocId = typeof f.sourceDocId === 'string' && validDocIds.has(f.sourceDocId) ? f.sourceDocId : null;
+      fields[name] = {
+        value: f.value === undefined ? null : f.value,
+        confidence: conf,
+        sourceDocId,
+        sourceExcerpt: typeof f.sourceExcerpt === 'string' ? f.sourceExcerpt : null,
+      };
+    }
+  }
+
+  const fieldSet = new Set<string>(INTAKE_FIELD_NAMES);
+  const clarifyingQuestions: ClarifyingQuestion[] = Array.isArray(parsed.clarifyingQuestions)
+    ? parsed.clarifyingQuestions
+        .filter((q) => q && typeof q.question === 'string')
+        .slice(0, 5)
+        .map((q, i) => ({
+          id: typeof q.id === 'string' && q.id ? q.id : `q${i + 1}`,
+          question: q.question,
+          why: typeof q.why === 'string' ? q.why : '',
+          field: typeof q.field === 'string' && fieldSet.has(q.field) ? (q.field as IntakeFieldName) : null,
+          suggestions: Array.isArray(q.suggestions) ? q.suggestions.filter((s) => typeof s === 'string').slice(0, 4) : undefined,
+        }))
+    : [];
+
+  return {
+    fields,
+    documentSummary: typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
+    clarifyingQuestions,
+  };
+}
+
+// ─── Case synthesis (static guides cached) ───────────────────────────────────────
+
+const SYNTHESIZE_SYSTEM = `You are a New York collections attorney synthesizing a B2B debt collection case from uploaded documents and user-provided facts. Your analysis drives a legal workflow — be precise, honest, and grounded in the actual case data. Always respond with valid JSON only.
 
 Return a single JSON object with exactly these fields:
-
 {
-  "timeline": [
-    {"date": "ISO date string or 'unknown'", "event": "clear description of what happened", "source": "document name or 'user-provided'"}
-  ],
-
+  "timeline": [ {"date": "ISO date string or 'unknown'", "event": "clear description", "source": "document name or 'user-provided'"} ],
   "caseSummary": "2-3 paragraph plain-language summary of the dispute, what happened, and where things stand. Include the legal relationship, what was agreed, what was delivered, and what remains unpaid.",
-
   "caseStrength": "strong" | "moderate" | "weak",
-
   "extractedFacts": {
-    "claimantName": "best guess from all sources",
-    "claimantBusiness": "...",
-    "debtorName": "...",
-    "debtorBusiness": "...",
-    "debtorAddress": "...",
-    "amountOwed": number or null,
-    "amountPaid": number or null,
-    "serviceDescription": "...",
-    "agreementDate": "ISO date or null",
-    "invoiceDate": "ISO date or null",
-    "paymentDueDate": "ISO date or null",
-    "hasWrittenContract": boolean,
-    "invoiceNumber": "... or null"
+    "claimantName": "best guess from all sources", "claimantBusiness": "...", "debtorName": "...", "debtorBusiness": "...", "debtorAddress": "...",
+    "amountOwed": number or null, "amountPaid": number or null, "serviceDescription": "...",
+    "agreementDate": "ISO date or null", "invoiceDate": "ISO date or null", "paymentDueDate": "ISO date or null",
+    "hasWrittenContract": boolean, "invoiceNumber": "... or null"
   },
-
-  "evidenceSummary": {
-    "hasContract": boolean,
-    "hasInvoice": boolean,
-    "hasProofOfWork": boolean,
-    "hasCommunication": boolean,
-    "hasPaymentRecord": boolean,
-    "documentCount": number,
-    "strongestEvidence": "description of most compelling evidence"
-  },
-
-  "missingInfo": [
-    {
-      "item": "name of missing item, e.g. 'Written contract'",
-      "consequence": "specific legal consequence of this gap — what theory it weakens, what element it leaves unproven, how a defendant could exploit it",
-      "impact": "high" | "medium" | "low",
-      "workaround": "if a substitute or mitigation exists, describe it — otherwise omit this field"
-    }
-  ],
-
+  "evidenceSummary": { "hasContract": boolean, "hasInvoice": boolean, "hasProofOfWork": boolean, "hasCommunication": boolean, "hasPaymentRecord": boolean, "documentCount": number, "strongestEvidence": "description of most compelling evidence" },
+  "missingInfo": [ {"item": "name of missing item", "consequence": "specific legal consequence of this gap", "impact": "high" | "medium" | "low", "workaround": "substitute/mitigation if one exists — otherwise omit this field"} ],
   "caseAssessment": {
     "primaryCauseOfAction": {
-      "theory": one of: "breach_of_written_contract" | "breach_of_oral_contract" | "account_stated" | "quantum_meruit",
-      "reasoning": "1-2 sentences explaining why this is the strongest theory given the available evidence",
-      "elements": [
-        {
-          "element": "specific legal element, e.g. 'Valid written contract existed between the parties'",
-          "satisfied": true | false,
-          "evidence": "which document or fact satisfies this element, or null if not satisfied",
-          "gap": "what is missing if not satisfied, or null if satisfied"
-        }
-      ]
+      "theory": "breach_of_written_contract" | "breach_of_oral_contract" | "account_stated" | "quantum_meruit",
+      "reasoning": "1-2 sentences explaining why this is the strongest theory given the evidence",
+      "elements": [ {"element": "specific legal element", "satisfied": true|false, "evidence": "doc/fact that satisfies it, or null", "gap": "what is missing if not satisfied, or null"} ]
     },
-    "alternativeCauses": ["list of additional theories to plead in the alternative, e.g. 'Account stated', 'Quantum meruit / unjust enrichment'"],
-    "counterclaimRisk": {
-      "level": "low" | "medium" | "high",
-      "reasoning": "1-2 sentences explaining your assessment",
-      "signals": ["list of specific signals observed in the case data that informed this rating — both risk-elevating and risk-reducing"]
-    },
-    "debtorEntityNotes": "Based on the debtor entity type, explain the enforcement path after judgment: what tools are available (wage garnishment, bank levy, property lien), what is NOT available, and any practical notes about collecting from this type of entity. If entity type is unknown, flag this and recommend verification via NYS entity records.",
+    "alternativeCauses": ["additional theories to plead in the alternative"],
+    "counterclaimRisk": { "level": "low"|"medium"|"high", "reasoning": "1-2 sentences", "signals": ["specific signals observed — risk-elevating and risk-reducing"] },
+    "debtorEntityNotes": "Based on the debtor entity type, explain the post-judgment enforcement path: what tools are available (wage garnishment, bank levy, property lien), what is NOT, and practical notes. If entity type is unknown, flag it and recommend verification via NYS entity records.",
     "recommendedStrategy": "QUICK_ESCALATION" | "STANDARD_RECOVERY" | "GRADUAL_APPROACH",
-    "strategyReasoning": "1-2 sentences explaining why this strategy fits this specific case — reference the SOL position if payment due date is known, case strength, counterclaim risk, and debtor behavior signals"
+    "strategyReasoning": "1-2 sentences referencing SOL position if payment due date is known, case strength, counterclaim risk, and debtor behavior signals"
   }
 }
 
 CAUSE OF ACTION GUIDE (use to select primaryCauseOfAction):
-- breach_of_written_contract: Requires a signed/written agreement (contract, SOW, proposal, or email chain forming a contract). Elements: (1) valid written contract, (2) plaintiff performed, (3) defendant breached by non-payment, (4) damages.
+- breach_of_written_contract: Requires a signed/written agreement. Elements: (1) valid written contract, (2) plaintiff performed, (3) defendant breached by non-payment, (4) damages.
 - breach_of_oral_contract: For verbal or implied agreements with no written record. Same elements but harder to prove.
 - account_stated: Powerful when invoices were sent, received, and not disputed within a reasonable time. Elements: (1) prior business dealings, (2) invoice/statement sent, (3) defendant received and did not dispute, (4) balance unpaid. Does not require a formal contract.
 - quantum_meruit: Fallback when no contract exists. Elements: (1) services rendered in good faith, (2) defendant accepted the benefit, (3) failure to pay would unjustly enrich defendant. Damages = reasonable value of services.
@@ -422,61 +384,60 @@ In NY practice, plead all applicable theories in the alternative. Pick the stron
 
 COUNTERCLAIM RISK SIGNALS:
 Risk-elevating: explicit written dispute of invoice or work quality; fixed-price contract with vague/broad scope; no written acceptance or delivery confirmation; long delay between service completion and invoicing; communications suggesting debtor is unhappy with the work.
-Risk-reducing: partial payment by debtor (implies acceptance); detailed written SOW with specific deliverables; written delivery confirmation or sign-off; client references the work positively in communications; invoice went undisputed for an extended period.
+Risk-reducing: partial payment by debtor; detailed written SOW with specific deliverables; written delivery confirmation or sign-off; client references the work positively; invoice went undisputed for an extended period.
 
-INDUSTRY-SPECIFIC COUNTERCLAIM RISK MODIFIERS (apply if industry is known):
-These reflect real-world litigation patterns — adjust the base risk level accordingly and name the industry in your signals list:
-- Creative / Design / Marketing: elevate risk — "deliverables weren't what I envisioned" is the most common B2B defense in these disputes; subjective quality standards make it hard to prove complete performance
-- Technology / Software: elevate risk — same as creative; scope creep, bug disputes, and "it doesn't work as promised" are standard defenses
-- Construction / Contracting: elevate risk — delay claims, change orders, material substitutions, and "you didn't finish" defenses are common and often well-documented on the debtor's side
-- Professional Services (consulting, accounting, legal): baseline risk — engagement letters typically define scope clearly; harder for debtor to dispute what was delivered
-- Healthcare / Medical: lower risk — services are specific and documentable; denial of service receipt is unusual
-- Retail / Wholesale / Distribution: lower risk — goods delivered is a binary fact; disputes are about quantity/quality, not the transaction itself
-- Real Estate: baseline risk — varies widely by deal type
-- Transportation / Logistics: lower risk — delivery records are usually clear
-- Financial Services: baseline risk
+INDUSTRY-SPECIFIC COUNTERCLAIM RISK MODIFIERS (apply if industry is known; name the industry in your signals):
+- Creative / Design / Marketing: elevate — "deliverables weren't what I envisioned" is the most common B2B defense; subjective quality standards make complete performance hard to prove
+- Technology / Software: elevate — scope creep, bug disputes, "it doesn't work as promised"
+- Construction / Contracting: elevate — delay claims, change orders, material substitutions, "you didn't finish"
+- Professional Services (consulting, accounting, legal): baseline — engagement letters usually define scope clearly
+- Healthcare / Medical: lower — services are specific and documentable
+- Retail / Wholesale / Distribution: lower — goods delivered is a binary fact
+- Real Estate: baseline — varies by deal type
+- Transportation / Logistics: lower — delivery records are usually clear
+- Financial Services: baseline
 
-PRIOR COURT CASE MODIFIERS (apply if priorCourtCases data is available in userProvidedFacts):
-If the debtor has prior court cases as defendant: mention this in signals; if 3+ prior cases as defendant, this is a meaningful risk-elevating signal — serial litigants often file reflexive counterclaims; also elevates QUICK_ESCALATION preference.
-If the debtor has prior judgments paid: slightly risk-reducing — they can be collected from.
-If the debtor has multiple active cases as defendant: consider noting possible insolvency risk in strategyReasoning.
+PRIOR COURT CASE MODIFIERS (apply if priorCourtCases data is present in userProvidedFacts):
+If the debtor has prior court cases as defendant: mention in signals; 3+ as defendant is a meaningful risk-elevating signal (serial litigants file reflexive counterclaims) and elevates QUICK_ESCALATION preference. Prior judgments paid: slightly risk-reducing. Multiple active cases as defendant: consider noting insolvency risk in strategyReasoning.
 
 ENTITY ENFORCEMENT GUIDE:
-- Individual / Sole Proprietor: wage garnishment (10% gross wages, CPLR §5231), bank levy, property lien — all tools available
-- LLC: bank levy (business accounts only), lien on business real property — wage garnishment NOT applicable; cannot touch personal assets without piercing the veil; post-judgment disclosure (§5224 subpoena) is often needed to locate bank accounts
-- Corporation: same as LLC enforcement; note that piercing the corporate veil requires showing fraud or complete domination
-- LLP / Partnership: similar to LLC for enforcement; individual partners may have personal liability depending on partnership structure — flag for attorney review
-- Unknown entity: flag for verification via NYS entity records at apps.dos.ny.gov; enforcement path cannot be fully assessed until entity type is confirmed
+- Individual / Sole Proprietor: wage garnishment (10% gross wages, CPLR §5231), bank levy, property lien — all available
+- LLC: bank levy (business accounts only), lien on business real property — wage garnishment NOT applicable; cannot touch personal assets without piercing the veil; post-judgment disclosure (§5224 subpoena) often needed
+- Corporation: same as LLC; piercing the corporate veil requires showing fraud or complete domination
+- LLP / Partnership: similar to LLC; individual partners may have personal liability depending on structure — flag for attorney review
+- Unknown entity: flag for verification via NYS entity records at apps.dos.ny.gov; enforcement path cannot be fully assessed until confirmed
 
 STRATEGY SELECTION GUIDE:
-- QUICK_ESCALATION: SOL approaching (under 1 year remaining), debtor appears defunct or unresponsive, strong case with clear docs, debtor has 3+ prior suits as defendant, or time is clearly of the essence
-- STANDARD_RECOVERY: Typical case — clear claim, some uncertainty about debtor's willingness to engage, no urgency signals
-- GRADUAL_APPROACH: Ongoing business relationship worth preserving, dispute risk is elevated, partial payments suggest good faith, or claim is weak and negotiation is preferable
+- QUICK_ESCALATION: SOL approaching (under 1 year), debtor appears defunct/unresponsive, strong case with clear docs, debtor has 3+ prior suits as defendant, or time is of the essence
+- STANDARD_RECOVERY: Typical case — clear claim, some uncertainty about willingness to engage, no urgency signals
+- GRADUAL_APPROACH: Ongoing business relationship worth preserving, dispute risk elevated, partial payments suggest good faith, or claim is weak and negotiation is preferable
 
 MISSING INFO IMPACT GUIDE:
 - high: case theory is fundamentally weakened or a required element cannot be proven
-- medium: evidence is weakened but case is still viable; defendant has ammunition to challenge
-- low: minor gap; unlikely to affect outcome significantly
+- medium: evidence is weakened but the case is still viable; defendant has ammunition to challenge
+- low: minor gap; unlikely to affect outcome
 
 Sort timeline chronologically. Return ONLY valid JSON.`;
 
-  const promptBytes = Buffer.byteLength(prompt, 'utf8');
-  const synthStart = Date.now();
-  console.log(`[claude] fn=synthesizeCase docs=${documents.length} promptBytes=${promptBytes}`);
+export async function synthesizeCase(
+  documents: Array<{ originalName: string; classification: string | null; extractedFacts: Record<string, unknown> | null; supportsTags: string[]; summary: string | null }>,
+  userProvidedFacts: Record<string, unknown>,
+): Promise<CaseSynthesis> {
+  const docsContext = documents
+    .map((d, i) => `Document ${i + 1}: ${d.originalName}\nType: ${d.classification || 'unknown'}\nSummary: ${d.summary || 'N/A'}\nSupports: ${d.supportsTags.join(', ') || 'none identified'}\nFacts: ${JSON.stringify(d.extractedFacts || {}, null, 2)}`)
+    .join('\n\n---\n\n');
 
+  const prompt = `USER-PROVIDED CASE FACTS:\n${JSON.stringify(userProvidedFacts, null, 2)}\n\nUPLOADED DOCUMENTS (${documents.length} total):\n${docsContext}`;
+
+  const synthStart = Date.now();
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 12288,
-    system: 'You are a legal case analysis assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    system: systemCached(SYNTHESIZE_SYSTEM),
     messages: [{ role: 'user', content: prompt }],
   });
-
-  console.log(`[claude] fn=synthesizeCase ms=${Date.now() - synthStart} stopReason=${response.stop_reason} inputTokens=${response.usage?.input_tokens} outputTokens=${response.usage?.output_tokens}`);
-
-  // Fail loud on truncation: persisting a half-parsed synthesis as if it were valid is worse than re-running.
-  if (response.stop_reason === 'max_tokens') {
-    throw new Error(`synthesizeCase output truncated at max_tokens (input=${response.usage?.input_tokens} output=${response.usage?.output_tokens}) — case too complex for current cap`);
-  }
+  console.log(`[claude] fn=synthesizeCase docs=${documents.length} ms=${Date.now() - synthStart} stop=${response.stop_reason} cacheRead=${response.usage?.cache_read_input_tokens ?? 0}`);
+  ensureComplete(response, 'synthesizeCase');
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -485,29 +446,67 @@ Sort timeline chronologically. Return ONLY valid JSON.`;
     return JSON.parse(extractJson(content.text)) as CaseSynthesis;
   } catch (e) {
     console.error('Failed to parse Claude case synthesis. Raw response:', content.text);
-    console.error('Parse error:', e);
-    // No silent fallback — a hardcoded "STANDARD_RECOVERY / breach_of_written_contract" placeholder
-    // would persist as if it were a real analysis and mislead downstream code. Throw so the
-    // background job's catch reverts to ASSEMBLING and the user can re-run.
     throw new Error(`synthesizeCase returned unparseable JSON: ${String(e)}`);
   }
 }
 
+// ─── Case synthesis verification (subjective grounding check, flag-only) ──────────
+
+const SYNTH_VERIFY_SYSTEM = `You are an adversarial reviewer checking an AI-generated legal case analysis for logical consistency and factual grounding. Flag conclusions not supported by the underlying evidence. Always respond with valid JSON only.
+
+Check each of the following:
+- caseStrength: if "strong", verify a written contract or strong documentary evidence exists; flag if assessed strong with only oral/weak evidence
+- primaryCauseOfAction.theory: if "breach_of_written_contract", verify hasWrittenContract is true OR a contract document exists; flag otherwise
+- elements[].satisfied = true: each satisfied element must have a non-null evidence field; flag satisfied elements with null evidence
+- counterclaimRisk.signals: each signal must trace to documents or userFacts; flag invented signals
+- caseSummary: must not assert facts absent from userFacts and documents
+- recommendedStrategy: if caseStrength "weak" and strategy QUICK_ESCALATION with no asset evidence, flag as potentially aggressive
+
+For each check: "ok" (grounded), "missing" (required evidence absent), "mismatch" (analysis contradicts evidence), or "hallucinated" (fact not present in inputs).
+
+Return JSON:
+{ "overallStatus": "verified"|"review_needed"|"issues_found", "checks": [{"field":"...","status":"...","expected":"...","found":"...","note":"..."}], "summary": "1-2 sentence summary of whether the analysis is well-grounded", "blankFields": [] }
+Return ONLY valid JSON.`;
+
+export async function verifyCaseSynthesis(
+  synthesis: CaseSynthesis,
+  documents: Array<{ classification: string | null; supportsTags: string[]; summary: string | null; extractedFacts: Record<string, unknown> | null }>,
+  userFacts: Record<string, unknown>,
+): Promise<CourtFormVerification> {
+  const prompt = `USER-PROVIDED FACTS (ground truth):\n${JSON.stringify(userFacts, null, 2)}\n\nDOCUMENTS SUBMITTED (evidence base):\n${JSON.stringify(documents.map((d) => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary })), null, 2)}\n\nAI-GENERATED CASE ANALYSIS:\n${JSON.stringify(synthesis, null, 2)}`;
+
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: systemCached(SYNTH_VERIFY_SYSTEM),
+    messages: [{ role: 'user', content: prompt }],
+  });
+  ensureComplete(resp, 'verifyCaseSynthesis');
+
+  const content = resp.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
+
+  try {
+    const result = JSON.parse(extractJson(content.text)) as CourtFormVerification;
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  } catch {
+    return { overallStatus: 'review_needed', checks: [], summary: 'Analysis verification could not be completed automatically.', blankFields: [], verifiedAt: new Date().toISOString() };
+  }
+}
+
+// ─── Demand letter ──────────────────────────────────────────────────────────────
+
 export async function generateDemandLetter(
   caseData: Record<string, unknown>,
-  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH'
+  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH',
 ): Promise<DemandLetterResult> {
   const strategyDescriptions = {
-    QUICK_ESCALATION:
-      'Firm and urgent. Deadline of 7 days. Strong language about legal consequences. Professional but direct.',
-    STANDARD_RECOVERY:
-      'Professional and firm. Deadline of 14 days. Standard legal consequence language. Balanced tone.',
-    GRADUAL_APPROACH:
-      'Professional and measured. Deadline of 21 days. Softer language about next steps. Cooperative tone.',
+    QUICK_ESCALATION: 'Firm and urgent. Deadline of 7 days. Strong language about legal consequences. Professional but direct.',
+    STANDARD_RECOVERY: 'Professional and firm. Deadline of 14 days. Standard legal consequence language. Balanced tone.',
+    GRADUAL_APPROACH: 'Professional and measured. Deadline of 21 days. Softer language about next steps. Cooperative tone.',
   };
-
-  const deadline =
-    strategy === 'QUICK_ESCALATION' ? 7 : strategy === 'STANDARD_RECOVERY' ? 14 : 21;
+  const deadline = strategy === 'QUICK_ESCALATION' ? 7 : strategy === 'STANDARD_RECOVERY' ? 14 : 21;
 
   const prompt = `You are drafting a professional business demand letter for a collections matter in New York.
 
@@ -520,7 +519,7 @@ ${JSON.stringify(caseData, null, 2)}
 
 Write a complete, professional demand letter. Use these modular sections:
 
-1. DATE AND HEADER (today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })})
+1. DATE AND HEADER (today's date: ${todayET()})
 2. RECIPIENT ADDRESS BLOCK
 3. RE: LINE (clear subject line with amount and matter description)
 4. FORMAL SALUTATION
@@ -541,18 +540,12 @@ Important rules:
 - For New York matters, you may reference potential litigation in small claims or civil court as appropriate
 
 Return a JSON object with:
-{
-  "text": "plain text version of the full letter",
-  "html": "HTML version with proper formatting (use <p>, <br>, <strong>, <address> tags)"
-}
+{ "text": "plain text version of the full letter", "html": "HTML version with proper formatting (use <p>, <br>, <strong>, <address> tags)" }
 
 Return ONLY valid JSON.`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  const response = await client.messages.create({ model: MODEL, max_tokens: 4096, messages: [{ role: 'user', content: prompt }] });
+  ensureComplete(response, 'generateDemandLetter');
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -560,27 +553,18 @@ Return ONLY valid JSON.`;
   try {
     return JSON.parse(extractJson(content.text)) as DemandLetterResult;
   } catch {
-    // If JSON parse fails, try to extract the text directly
     const text = content.text;
-    return {
-      text,
-      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
-        .split('\n\n')
-        .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-        .join('')}</div>`,
-    };
+    return { text, html: paragraphsToHtml(text) };
   }
 }
 
+// ─── Pre-filing notice ──────────────────────────────────────────────────────────
+
 export async function generateFinalNotice(
   caseData: Record<string, unknown>,
-  context: {
-    demandLetterDate: string | null;
-    courtName: string;
-    filingDate: string;
-  }
+  context: { demandLetterDate: string | null; courtName: string; filingDate: string },
 ): Promise<DemandLetterResult> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const today = todayET();
   const outstanding = (parseFloat(String(caseData.amountOwed || '0')) - parseFloat(String(caseData.amountPaid || '0'))).toFixed(2);
   const priorDemand = context.demandLetterDate
     ? `Our demand letter dated ${context.demandLetterDate} has gone unanswered.`
@@ -612,18 +596,12 @@ Write the notice with exactly these components, in this order:
 Total word count: 100–150 words. No background. No explanation of the dispute. No pleasantries.
 
 Return JSON:
-{
-  "text": "plain text version",
-  "html": "HTML version — date and address block flush left, header and subheader centered and bold, body paragraphs left-aligned, signature block left-aligned. Use <p>, <strong>, <div style='text-align:center'> tags. No external CSS classes."
-}
+{ "text": "plain text version", "html": "HTML version — date and address block flush left, header and subheader centered and bold, body paragraphs left-aligned, signature block left-aligned. Use <p>, <strong>, <div style='text-align:center'> tags. No external CSS classes." }
 
 Return ONLY valid JSON.`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  const response = await client.messages.create({ model: MODEL, max_tokens: 2048, messages: [{ role: 'user', content: prompt }] });
+  ensureComplete(response, 'generateFinalNotice');
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -632,83 +610,25 @@ Return ONLY valid JSON.`;
     return JSON.parse(extractJson(content.text)) as DemandLetterResult;
   } catch {
     const text = content.text;
-    return {
-      text,
-      html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
-        .split('\n\n')
-        .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-        .join('')}</div>`,
-    };
+    return { text, html: paragraphsToHtml(text) };
   }
 }
 
-export interface CourtFormResult {
-  html: string;
-  formType: string;
-  instructions: string[];
-}
-
-// ── Verified courthouse address lookup ─────────────────────────────────────────
-// Source: NYC Courts official website. Verify at nycourts.gov if fees or locations change.
-
-function deriveCounty(debtorAddress: string | null | undefined): string {
-  if (!debtorAddress) return 'Queens';
-  const a = debtorAddress.toLowerCase();
-  if (a.includes('manhattan') || a.includes(', ny 100') || a.includes('new york, ny 100') || a.includes('midtown') || a.includes('tribeca') || a.includes('soho') || a.includes('harlem') || a.includes('upper east') || a.includes('upper west') || a.includes('lower east') || a.includes('lower west') || a.includes('greenwich village') || a.includes('chelsea, ny') || a.includes('hell\'s kitchen')) return 'New York';
-  if (a.includes('brooklyn') || a.includes('kings county') || a.includes(' ny 112') || a.includes('flatbush') || a.includes('bay ridge') || a.includes('park slope') || a.includes('bed-stuy') || a.includes('williamsburg') || a.includes('bushwick') || a.includes('bensonhurst') || a.includes('crown heights') || a.includes('cobble hill') || a.includes('carroll gardens')) return 'Kings';
-  if (a.includes('bronx') || a.includes(', ny 104')) return 'Bronx';
-  if (a.includes('staten island') || a.includes('richmond county') || a.includes(', ny 103')) return 'Richmond';
-  // Queens neighborhoods / zip patterns
-  if (a.includes('queens') || a.includes('jamaica') || a.includes('flushing') || a.includes('astoria') || a.includes('long island city') || a.includes('glendale') || a.includes('forest hills') || a.includes('bayside') || a.includes('ridgewood') || a.includes('rego park') || a.includes('jackson heights') || a.includes('corona') || a.includes('howard beach') || a.includes('ozone park') || a.includes(', ny 113') || a.includes(', ny 114') || a.includes(', ny 116')) return 'Queens';
-  return 'Queens'; // default for NYC-area unknowns
-}
-
-const CIVIL_COURT_ADDRESSES: Record<string, { address: string; borough: string }> = {
-  'New York': { address: '111 Centre Street, Room 410, New York, NY 10013', borough: 'Manhattan' },
-  'Kings':    { address: '141 Livingston Street, Brooklyn, NY 11201', borough: 'Brooklyn' },
-  'Queens':   { address: '89-17 Sutphin Boulevard, Jamaica, NY 11435', borough: 'Queens' },
-  'Bronx':    { address: '851 Grand Concourse, Bronx, NY 10451', borough: 'Bronx' },
-  'Richmond': { address: '927 Castleton Avenue, Staten Island, NY 10310', borough: 'Staten Island' },
-};
-
-const SUPREME_COURT_ADDRESSES: Record<string, { address: string; borough: string }> = {
-  'New York': { address: '60 Centre Street, New York, NY 10007', borough: 'Manhattan' },
-  'Kings':    { address: '360 Adams Street, Brooklyn, NY 11201', borough: 'Brooklyn' },
-  'Queens':   { address: '88-11 Sutphin Boulevard, Jamaica, NY 11435', borough: 'Queens' },
-  'Bronx':    { address: '851 Grand Concourse, Bronx, NY 10451', borough: 'Bronx' },
-  'Richmond': { address: '18 Richmond Terrace, Staten Island, NY 10301', borough: 'Staten Island' },
-};
+// ─── Court form (3 tracks) ──────────────────────────────────────────────────────
 
 export async function generateCourtForm(
   caseData: Record<string, unknown>,
-  track: 'commercial' | 'civil' | 'supreme'
+  track: 'commercial' | 'civil' | 'supreme',
 ): Promise<CourtFormResult> {
   const formMeta = {
-    commercial: {
-      formType: 'Commercial Claims Court — CIV-SC-70',
-      fee: '$25',
-      office: 'NYC Civil Court Commercial Claims Clerk',
-      maxAmount: '$10,000',
-    },
-    civil: {
-      formType: 'NYC Civil Court — Pro Se Summons & Complaint',
-      fee: '$45',
-      office: 'NYC Civil Court Clerk',
-      maxAmount: '$50,000',
-    },
-    supreme: {
-      formType: 'Supreme Court of the State of New York — Summons with Notice',
-      fee: '$210 (Index Number)',
-      office: 'County Clerk (Supreme Court)',
-      maxAmount: 'Unlimited',
-    },
+    commercial: { formType: 'Commercial Claims Court — CIV-SC-70', fee: '$25', office: 'NYC Civil Court Commercial Claims Clerk', maxAmount: '$10,000' },
+    civil: { formType: 'NYC Civil Court — Pro Se Summons & Complaint', fee: '$45', office: 'NYC Civil Court Clerk', maxAmount: '$50,000' },
+    supreme: { formType: 'Supreme Court of the State of New York — Summons with Notice', fee: '$210 (Index Number)', office: 'County Clerk (Supreme Court)', maxAmount: 'Unlimited' },
   }[track];
 
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const year = new Date().getFullYear();
-  const county = deriveCounty(caseData.debtorAddress as string | null);
-  const civilAddr = CIVIL_COURT_ADDRESSES[county] ?? CIVIL_COURT_ADDRESSES['Queens'];
-  const supremeAddr = SUPREME_COURT_ADDRESSES[county] ?? SUPREME_COURT_ADDRESSES['Queens'];
+  const today = todayET();
+  const year = currentYearET();
+  const { county, civilAddr, supremeAddr, venue } = countyForDocument(caseData.debtorAddress as string | null);
 
   const trackPrompts = {
     commercial: `You are filling out NYC Commercial Claims Court form CIV-SC-70.
@@ -716,7 +636,7 @@ export async function generateCourtForm(
 TODAY'S DATE: ${today}
 CURRENT YEAR: ${year}
 FILING COUNTY: ${county} County
-COURTHOUSE (verified — do not change): ${civilAddr.address}
+COURTHOUSE (verified — do not change): ${civilAddr}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -727,7 +647,7 @@ CRITICAL RULES:
 - Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Amount claimed = outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
 - Filing county is ${county} County — use this, do not re-derive
-- Courthouse address is ${civilAddr.address} — use this exactly, do not change or guess
+- Courthouse address is ${civilAddr} — use this exactly, do not change or guess
 - Leave any court-assigned fields (index number, return date) as blank underscores
 
 SECTION 1 — CLAIMANT INFORMATION:
@@ -750,7 +670,7 @@ SECTION 3 — CLAIM DETAILS:
 SECTION 4 — CERTIFICATION (pre-filled boilerplate):
 "I hereby certify that I have made a good-faith attempt to resolve this dispute prior to bringing this claim, that no other action has been filed or is pending in any court for this claim, and that the above information is true to the best of my knowledge."
 
-Signature line + "Dated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}" (pre-filled with today's date — do NOT leave blank)
+Signature line + "Dated: ${today}" (pre-filled with today's date — do NOT leave blank)
 
 Format as clean HTML:
 - Header: "CIVIL COURT OF THE CITY OF NEW YORK — COMMERCIAL CLAIMS PART"
@@ -760,13 +680,9 @@ Format as clean HTML:
 - Print-friendly styling (max-width 700px, serif font)
 
 Return JSON:
-{
-  "html": "complete HTML string",
-  "formType": "Commercial Claims Court — CIV-SC-70",
-  "instructions": ["5 specific steps"]
-}
+{ "html": "complete HTML string", "formType": "Commercial Claims Court — CIV-SC-70", "instructions": ["5 specific steps"] }
 
-Instructions must use the exact courthouse address already provided: ${civilAddr.address} (${county} County Commercial Claims). Include: filing fee ($25 + postage), bring 2 copies of this form + proof that a demand letter was sent, filing cap is 5 commercial claims per month per claimant, the court handles notice to the defendant — no process server required.
+Instructions must use the exact courthouse address already provided: ${civilAddr} (${county} County Commercial Claims). Include: filing fee ($25 + postage), bring 2 copies of this form + proof that a demand letter was sent, filing cap is 5 commercial claims per month per claimant, the court handles notice to the defendant — no process server required.
 Return ONLY valid JSON.`,
 
     civil: `You are filling out an NYC Civil Court Pro Se Summons and Complaint.
@@ -774,7 +690,7 @@ Return ONLY valid JSON.`,
 TODAY'S DATE: ${today}
 CURRENT YEAR: ${year}
 FILING COUNTY: ${county} County
-COURTHOUSE (verified — do not change): ${civilAddr.address}
+COURTHOUSE (verified — do not change): ${civilAddr}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -811,7 +727,7 @@ In the complaint body, always state dates as a single specific date ("On [date],
 CRITICAL RULES:
 - Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Filing county is ${county} County — use this, do not re-derive
-- Courthouse address is ${civilAddr.address} — use this exactly, do not change or guess
+- Courthouse address is ${civilAddr} — use this exactly, do not change or guess
 - In the signature block, the location must match the county/city of filing — NOT "New York, New York" generically. Use the city derived from the claimant's address or the court's county
 - Leave index number and date lines as blank underscores for handwriting
 - The Verification block must say "State of New York" and the county of the plaintiff's address (not defendant's)
@@ -823,7 +739,7 @@ SUMMONS SECTION:
 - Plaintiff box: use the Plaintiff format defined above + full address + phone + email
 - Defendant box: use the Defendant format defined above + full address + phone
 - Summons notice: "YOU ARE HEREBY SUMMONED to appear at the Civil Court of the City of New York at the courthouse in the County listed above. If you fail to appear, judgment may be taken against you by default for the relief demanded in the complaint. You must respond to this complaint within the time period prescribed by law (20 days after personal service; 30 days if service is by other means). Failure to appear or respond may result in a default judgment being entered against you for the amount demanded, together with interest, costs, and disbursements."
-- Courthouse address: ${civilAddr.address} — use this exactly
+- Courthouse address: ${civilAddr} — use this exactly
 
 COMPLAINT SECTION:
 - Header: "Plaintiff [use Plaintiff format defined above], appearing Pro Se, alleges as follows:"
@@ -856,13 +772,9 @@ Format as print-ready HTML (max-width 750px, serif font, court-document style, 1
 Include disclaimer banner at top: "⚠ DISCLAIMER: This document was pre-filled from your case data. Have an attorney review before filing if possible. Fields marked [UNKNOWN — VERIFY BEFORE FILING] require your attention before submission."
 
 Return JSON:
-{
-  "html": "complete HTML string",
-  "formType": "NYC Civil Court — Pro Se Summons & Complaint",
-  "instructions": ["5 specific numbered steps"]
-}
+{ "html": "complete HTML string", "formType": "NYC Civil Court — Pro Se Summons & Complaint", "instructions": ["5 specific numbered steps"] }
 
-Instructions must use the exact courthouse address already provided: ${civilAddr.address} (${county} County Civil Court). Include: filing fee (~$45), bring 3 copies, you must hire a licensed NY process server to serve the defendant within 120 days of filing, file the notarized Affidavit of Service with the clerk after service, calendar the defendant's answer deadline (20 days after personal service, 30 days after other service methods).
+Instructions must use the exact courthouse address already provided: ${civilAddr} (${county} County Civil Court). Include: filing fee (~$45), bring 3 copies, you must hire a licensed NY process server to serve the defendant within 120 days of filing, file the notarized Affidavit of Service with the clerk after service, calendar the defendant's answer deadline (20 days after personal service, 30 days after other service methods).
 Return ONLY valid JSON.`,
 
     supreme: `You are filling out a New York Supreme Court Summons with Notice.
@@ -870,7 +782,7 @@ Return ONLY valid JSON.`,
 TODAY'S DATE: ${today}
 CURRENT YEAR: ${year}
 FILING COUNTY: ${county} County
-COURTHOUSE (verified — do not change): ${supremeAddr.address}
+COURTHOUSE (verified — do not change): ${supremeAddr}
 
 CASE DATA:
 ${JSON.stringify(caseData, null, 2)}
@@ -881,7 +793,7 @@ CRITICAL RULES:
 - Use CURRENT YEAR (${year}) everywhere — never write a past year
 - Relief sought must use outstandingBalance (amountOwed minus amountPaid), not the full amountOwed
 - Filing county is ${county} County — use this, do not re-derive
-- Courthouse address is ${supremeAddr.address} — use this exactly, do not change or guess
+- Courthouse address is ${supremeAddr} — use this exactly, do not change or guess
 - Signature block location must match the city from claimant's address, not generically "New York, New York"
 - Nature of Action: choose all that apply from — BREACH OF CONTRACT (if agreement exists), ACCOUNT STATED (if invoice was sent and not disputed), QUANTUM MERUIT (if no written contract but services were rendered and accepted)
 
@@ -889,7 +801,7 @@ DOCUMENT STRUCTURE:
 
 HEADER (all caps, centered):
 "SUPREME COURT OF THE STATE OF NEW YORK
-COUNTY OF [county derived from debtorAddress]"
+COUNTY OF ${county}"
 
 CAPTION (two-column):
 Left: Plaintiff(s) full name(s) + address(es) + label "Plaintiff"
@@ -918,23 +830,19 @@ Format as official court document HTML (max-width 750px, serif font, 1.5 line sp
 Include banner at top: "⚠ IMPORTANT: This Summons with Notice was pre-filled from your case data. Review every field before filing. Have an attorney review if possible. This is a legal pleading."
 
 Return JSON:
-{
-  "html": "complete HTML string",
-  "formType": "Supreme Court of the State of New York — Summons with Notice",
-  "instructions": ["5 specific steps"]
-}
+{ "html": "complete HTML string", "formType": "Supreme Court of the State of New York — Summons with Notice", "instructions": ["5 specific steps"] }
 
-Instructions must use the exact courthouse address already provided: ${supremeAddr.address} (${county} County Supreme Court). Include: purchase an index number from the County Clerk ($210) before filing, file the Summons with Notice, serve the defendant within 120 days via a licensed process server (CPLR Article 3), file the notarized Affidavit of Service with the clerk promptly after service, file an RJI (Request for Judicial Intervention) within 60 days of the first filing to get a judge assigned.
+Instructions must use the exact courthouse address already provided: ${supremeAddr} (${county} County Supreme Court). Include: purchase an index number from the County Clerk ($210) before filing, file the Summons with Notice, serve the defendant within 120 days via a licensed process server (CPLR Article 3), file the notarized Affidavit of Service with the clerk promptly after service, file an RJI (Request for Judicial Intervention) within 60 days of the first filing to get a judge assigned.
 Return ONLY valid JSON.`,
   };
 
-  // ── Pass 1: Generate ────────────────────────────────────────────────────────
   const genResponse = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
+    system: systemCached('You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.'),
     messages: [{ role: 'user', content: trackPrompts[track] }],
   });
+  ensureComplete(genResponse, 'generateCourtForm');
 
   const genContent = genResponse.content[0];
   if (genContent.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -943,134 +851,28 @@ Return ONLY valid JSON.`,
   try {
     result = JSON.parse(extractJson(genContent.text)) as CourtFormResult;
     result.formType = result.formType || formMeta.formType;
+    if (!Array.isArray(result.instructions)) result.instructions = [];
   } catch {
     result = {
       html: `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;"><h2>${formMeta.formType}</h2><p>Form generation failed. Please try again.</p></div>`,
       formType: formMeta.formType,
-      instructions: [
-        `File at: ${formMeta.office}`,
-        `Filing fee: ${formMeta.fee}`,
-        'Bring 3 copies of all documents',
-        'Bring a valid government-issued ID',
-        'Review all fields before submitting',
-      ],
+      instructions: [`File at: ${formMeta.office}`, `Filing fee: ${formMeta.fee}`, 'Bring 3 copies of all documents', 'Bring a valid government-issued ID', 'Review all fields before submitting'],
     };
+  }
+
+  // When venue could not be confidently resolved, lead the instructions with a warning
+  // instead of silently filing in a possibly-wrong county.
+  if (venue.confidence !== 'high') {
+    result.instructions = [`⚠ VENUE: ${venue.note}`, ...result.instructions];
   }
 
   return result;
 }
 
-// Exported separately so the route can orchestrate: generate → verify → retry if needed → verify retry
-export async function retryCourtForm(
-  originalHtml: string,
-  verification: CourtFormVerification,
-  caseData: Record<string, unknown>,
-  track: 'commercial' | 'civil' | 'supreme',
-  formType: string
-): Promise<CourtFormResult> {
-  const issues = verification.checks.filter(c => c.status !== 'ok');
-  const verified = verification.checks.filter(c => c.status === 'ok');
+// ─── Default judgment, affidavit, settlement, payment plan (raw HTML) ─────────────
 
-  const issueList = issues
-    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Verifier note: ${c.note}`)
-    .join('\n\n');
-
-  const verifiedList = verified
-    .map(c => `✓ ${c.field}: "${c.found}"`)
-    .join('\n');
-
-  const county = deriveCounty(caseData.debtorAddress as string | null);
-  const civilAddr = CIVIL_COURT_ADDRESSES[county] ?? CIVIL_COURT_ADDRESSES['Queens'];
-  const supremeAddr = SUPREME_COURT_ADDRESSES[county] ?? SUPREME_COURT_ADDRESSES['Queens'];
-  const reinjectedAddr = track === 'supreme' ? supremeAddr : civilAddr;
-
-  const retryPrompt = `You previously generated a court form. An adversarial verification pass found issues. Your job is to regenerate the form with corrections — but read these rules carefully before acting.
-
-═══════════════════════════════════════════════════
-VERIFICATION SUMMARY FROM CHECKER:
-${verification.summary}
-═══════════════════════════════════════════════════
-
-SOURCE CASE DATA (absolute ground truth — always wins over the verifier):
-${JSON.stringify(caseData, null, 2)}
-
-HARDCODED VERIFIED COURTHOUSE ADDRESSES (do not change, do not remove — injected from verified lookup table, not from AI):
-- Filing county: ${county} County
-- Courthouse address for this case: ${reinjectedAddr.address} (${reinjectedAddr.borough})
-- If the verifier flagged these as wrong or hallucinated, ignore that — they are correct. Do not replace them with different addresses.
-
-TODAY'S DATE (explicitly provided — not a hallucination): ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-CURRENT YEAR: ${new Date().getFullYear()}
-
-═══════════════════════════════════════════════════
-FIELDS VERIFIED AS CORRECT — DO NOT CHANGE THESE:
-${verifiedList || '(none)'}
-═══════════════════════════════════════════════════
-
-ISSUES FLAGGED BY VERIFIER (${issues.length}) — evaluate each one carefully before acting:
-${issueList}
-
-═══════════════════════════════════════════════════
-HOW TO HANDLE EACH ISSUE TYPE:
-
-FOR MISMATCH (a field contradicts the case data):
-→ Fix it. The case data is ground truth. No exceptions.
-
-FOR HALLUCINATED (a specific fact not derivable from case data):
-→ Distinguish between two subtypes:
-  a) Party names, amounts, dates, addresses, invoice numbers that contradict or add to case data → Remove or correct using case data.
-  b) Procedural/legal facts derived from your legal knowledge (courthouse addresses from county, statutory boilerplate, service deadlines, filing fees) → These are ACCEPTABLE to keep. Add a note "Verify independently" next to them rather than removing them. Do not replace them with [UNKNOWN].
-
-→ IMPORTANT: Today's date and the year ${new Date().getFullYear()} are NOT hallucinations — they were explicitly provided in the generation prompt. If the verifier flagged them as hallucinated, ignore that finding.
-
-FOR MISSING (field left blank or marked UNKNOWN):
-→ Fill it if the data exists in the case data above.
-→ If the data genuinely does not exist in the case data, leave it as [UNKNOWN — VERIFY BEFORE FILING]. Do not invent it to satisfy the verifier.
-
-FOR VERIFIER FALSE POSITIVES:
-→ If the verifier flagged something as wrong but the case data clearly supports what you wrote, keep your version. You may push back, but only when the case data is on your side.
-→ If the verifier contradicts itself (says "mismatch" but its own note says the value is actually correct), treat it as verified and do not change it.
-
-═══════════════════════════════════════════════════
-ORIGINAL FORM (your previous output, for reference):
-${originalHtml.slice(0, 4000)}
-
-═══════════════════════════════════════════════════
-
-Generate the corrected form. Return JSON:
-{
-  "html": "complete corrected HTML string — full document, not just the changed sections",
-  "formType": "${formType}",
-  "instructions": ["same 5 filing steps unless corrections require changes"]
-}
-
-Return ONLY valid JSON.`;
-
-  const retryResponse = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. You have legal knowledge and can derive procedural facts (courthouse addresses, filing fees, service deadlines) from that knowledge. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: retryPrompt }],
-  });
-
-  const retryContent = retryResponse.content[0];
-  if (retryContent.type !== 'text') throw new Error('Unexpected response type from Claude on retry');
-
-  try {
-    const retryResult = JSON.parse(extractJson(retryContent.text)) as CourtFormResult;
-    retryResult.formType = retryResult.formType || formType;
-    return retryResult;
-  } catch {
-    // Retry parse failed — return original rather than an error state
-    return { html: originalHtml, formType, instructions: [] };
-  }
-}
-
-export async function generateDefaultJudgment(
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
+export async function generateDefaultJudgment(caseData: Record<string, unknown>): Promise<DemandLetterResult> {
+  const today = todayET();
   const prompt = `You are preparing a Motion for Default Judgment for a New York collections matter. The defendant was served but failed to appear or answer within the required time period.
 
 CASE FACTS:
@@ -1098,257 +900,19 @@ Generate a Motion for Default Judgment package. Include these sections:
    - Who served what document, on what date, by what method, at what address
    - For completion by process server or plaintiff
 
+Use the outstanding balance (amountOwed minus amountPaid) as the judgment amount, NOT the full amountOwed.
 Use [UNKNOWN — VERIFY BEFORE FILING] for any missing fields.
 
 Return ONLY a complete HTML document — no JSON, no markdown, no code fences, no explanations.
 Use inline styles only (no external CSS). Use single quotes for all HTML attribute values.
 Use serif font, proper court caption formatting, numbered paragraphs, and signature lines.`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no commentary.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  // Strip any accidental markdown fences
-  const html = content.text
-    .replace(/^```(?:html)?\s*/i, '')
-    .replace(/\s*```\s*$/i, '')
-    .trim();
-
+  const html = await generateHTML({ system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no commentary.', prompt, maxTokens: 8192, label: 'generateDefaultJudgment' });
   return { text: html, html };
 }
 
-export interface VerificationCheck {
-  field: string;
-  status: 'ok' | 'missing' | 'mismatch' | 'hallucinated';
-  expected: string | null;
-  found: string | null;
-  note: string;
-}
-
-export interface CourtFormVerification {
-  overallStatus: 'verified' | 'review_needed' | 'issues_found';
-  checks: VerificationCheck[];
-  summary: string;
-  blankFields: string[];
-  verifiedAt: string;
-}
-
-export async function verifyCourtForm(
-  formHtml: string,
-  caseData: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const currentYear = new Date().getFullYear();
-
-  const prompt = `You are an adversarial reviewer checking a pre-filled court form for accuracy. Your job is to catch genuinely wrong facts, missing required fields, and values that contradict the source case data.
-
-SOURCE CASE DATA (ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-EXPLICITLY PROVIDED CONTEXT (these were given to the generator — do NOT flag as hallucinated):
-- Today's date: ${today}
-- Current year: ${currentYear}
-- Courthouse addresses derived from county (e.g. Queens Civil Court at 89-17 Sutphin Blvd) are derived from legal knowledge, not case data — mark as "ok" with a note to verify independently, not as hallucinated
-- Statutory boilerplate language (CPLR summons text, certification language, verification oath) is legal knowledge — mark as "ok"
-- Filing fees, service deadlines, and procedural requirements are legal knowledge — mark as "ok"
-
-GENERATED COURT FORM HTML:
-${formHtml.slice(0, 20000)}
-
-Check each of the following fields if they appear in the document:
-- Plaintiff/claimant name and business name
-- Plaintiff address, phone, email
-- Defendant/debtor name and business name
-- Defendant address, phone
-- Amount claimed (must equal outstandingBalance = amountOwed minus amountPaid, NOT the full amountOwed)
-- Invoice number
-- Agreement date / transaction date
-- Payment due date
-- Service description / nature of claim
-- County of filing (derived from defendant's address — verify the borough/county mapping is correct)
-- Courthouse name and address (mark "ok" if correct for the county, note to verify independently)
-- Document date (today's date ${today} is correct and expected — mark "ok")
-- Year references (${currentYear} is correct — mark "ok")
-- Signature block city/location (must derive from plaintiff's address)
-- Whether hasWrittenContract: ${caseData.hasWrittenContract} is reflected appropriately in the cause of action
-
-For each check, determine:
-- "ok": correct — either matches case data, or is a valid legal/procedural derivation
-- "missing": field was needed but left blank or marked UNKNOWN when the data exists in case data
-- "mismatch": the form contains a value that directly contradicts the case data (wrong name, wrong amount, wrong address that's in the data)
-- "hallucinated": a specific party fact (name, amount, invoice number, address) invented and not derivable from case data or legal knowledge — do NOT use this for courthouse addresses, dates, statutory text, or procedural facts
-
-If you find yourself saying a field is both wrong AND correct in your note, mark it "ok" — do not report a false positive.
-
-Return a JSON object:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [
-    {
-      "field": "field name",
-      "status": "ok" | "missing" | "mismatch" | "hallucinated",
-      "expected": "what the case data says, or null if this is a legal derivation",
-      "found": "what appears in the generated form, or null if absent",
-      "note": "brief explanation — if ok, this can be empty string"
-    }
-  ],
-  "summary": "1-2 sentence plain-language summary focused on genuine issues only",
-  "blankFields": ["field names that are blank or marked UNKNOWN where data was available"]
-}
-
-Status rules:
-- "verified": all party/financial facts match case data, no genuine hallucinations, courthouse/procedural facts are reasonable derivations
-- "review_needed": 1-2 missing fields where data wasn't available, or minor uncertainty — no clear errors
-- "issues_found": any genuine mismatch (wrong party name, wrong amount), any invented party facts, or 3+ fields missing where data existed in case data
-
-Return ONLY valid JSON.`;
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const verifyContent = response.content[0];
-  if (verifyContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    const result = JSON.parse(extractJson(verifyContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
-  } catch {
-    return {
-      overallStatus: 'review_needed',
-      checks: [],
-      summary: 'Verification could not be completed automatically. Please review the form manually before filing.',
-      blankFields: [],
-      verifiedAt: new Date().toISOString(),
-    };
-  }
-}
-
-// ─── Strategy assessment with debtor research ──────────────────────────────────
-
-export interface StrategyAssessment {
-  strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
-  reasoning: string;
-  keyFactors: string[];
-}
-
-/**
- * Re-assess strategy using persisted debtor research results.
- * Reasons like a collections attorney: bankruptcy → entity type → assets → history.
- */
-export async function assessStrategyWithResearch(
-  caseData: Record<string, unknown>,
-  lookupResults: {
-    acris?: Record<string, unknown> | null;
-    courts?: Record<string, unknown> | null;
-    entity?: Record<string, unknown> | null;
-    ucc?: Record<string, unknown> | null;
-    ecb?: Record<string, unknown> | null;
-    pacer?: Record<string, unknown> | null;
-  }
-): Promise<StrategyAssessment> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  const prompt = `You are a New York collections attorney advising a client on collection strategy. You have the case facts and the results of public records research on the debtor. Reason through this systematically and recommend the best strategy.
-
-TODAY: ${today}
-
-CASE FACTS:
-${JSON.stringify(caseData, null, 2)}
-
-DEBTOR RESEARCH RESULTS:
-${JSON.stringify(lookupResults, null, 2)}
-
-Reason through the following factors in this exact order:
-
-1. BANKRUPTCY (highest priority — stops everything)
-   - Check pacer result: if activeCases > 0 and automaticStayActive = true → strategy is irrelevant, flag this immediately in keyFactors
-   - If PACER not yet run, note this as a gap
-
-2. ENTITY TYPE (determines enforcement tools after judgment)
-   - LLC/Corp → no wage garnishment, only bank levy and property lien; getting money requires knowing their bank accounts
-   - Sole prop / individual → wage garnishment available (10% gross), bank levy, property lien — all tools
-   - Check entity result: does it confirm entity type? Does it conflict with what the case says?
-
-3. NYC PROPERTY (ACRIS)
-   - Property owner → judgment lien is a powerful post-judgment tool (prevents sale/refi); if acrisResult shows asGrantee > asGrantor → debtor likely owns NYC property
-   - More property → more aggressive strategy is justified
-   - No property → lien is not available; bank levy requires knowing the bank
-
-4. SENIOR CREDITORS (UCC)
-   - Active UCC filings from MCA (merchant cash advance) lenders or banks with blanket liens → your judgment will be behind them in priority
-   - Multiple active UCCs → debtor may be asset-stripped; be realistic about recovery
-   - No active UCCs → clean priority position after judgment
-
-5. COURT HISTORY
-   - 3+ prior cases as defendant → serial debtor, knows the system, likely to fight or default; escalate fast or cut losses
-   - Prior defaults unpaid → judgment-proof signals
-   - Prior judgments paid → can be collected from
-
-6. ECB VIOLATIONS
-   - High outstanding ECB balance (>$50k) → debtor who doesn't pay the city probably won't pay you either
-   - Zero balance → neutral signal
-
-7. CASE STRENGTH (from case data)
-   - Strong evidence + clear contract → support aggressive stance
-   - Weak evidence + ongoing relationship → support gradual approach
-
-Based on all of the above, recommend one of:
-- QUICK_ESCALATION: SOL pressure, strong evidence, good assets (property/bank), or serial debtor
-- STANDARD_RECOVERY: Typical case, some uncertainty, no urgent signals
-- GRADUAL_APPROACH: Active relationship, weak evidence, judgment-proof signals, or debtor showing some cooperation
-
-Return JSON:
-{
-  "strategy": "QUICK_ESCALATION" | "STANDARD_RECOVERY" | "GRADUAL_APPROACH",
-  "reasoning": "2-3 paragraph explanation of your analysis, written in plain English for a non-lawyer client. Explain what the research shows, what enforcement tools are available after judgment, and why this strategy fits.",
-  "keyFactors": ["bullet 1 — most important factor", "bullet 2", "bullet 3", "bullet 4 (if relevant)", "bullet 5 (if relevant)"]
-}
-
-Return ONLY valid JSON.`;
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: 'You are a New York collections attorney. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(content.text)) as StrategyAssessment;
-  } catch {
-    return {
-      strategy: 'STANDARD_RECOVERY',
-      reasoning: 'Could not complete analysis. Please review research results manually and select a strategy.',
-      keyFactors: ['Analysis could not be completed — re-run or select strategy manually'],
-    };
-  }
-}
-
-// ─── New pre-trial documents ──────────────────────────────────────────────────
-
-/**
- * Generate a blank Affidavit of Service template pre-filled with case parties.
- * The process server fills in date/time/method blanks by hand.
- */
-export async function generateAffidavitOfService(
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
+export async function generateAffidavitOfService(caseData: Record<string, unknown>): Promise<DemandLetterResult> {
+  const today = todayET();
   const prompt = `You are preparing an Affidavit of Service for a New York civil matter. This document is signed by the process server after they serve the summons, NOT by the plaintiff.
 
 TODAY'S DATE: ${today}
@@ -1368,9 +932,9 @@ Generate a complete, properly formatted Affidavit of Service. The document must:
    - "1. I am over 18 years of age, not a party to this action, and am a licensed process server in the State of New York (License No.: _______________)."
    - "2. On _____________, 20____, at approximately _______ (AM/PM), I served the Summons [and Complaint] in the above-captioned action upon [defendant name from case data] at the following address: [debtorAddress from case data]."
    - "3. I served the above-named defendant by the following method (check one):"
-     - "☐ Personal Service — I delivered the documents directly to the above-named defendant."
-     - "☐ Substituted Service — I delivered the documents to ___________________________, a person of suitable age and discretion who resides/works at the above address, and also mailed a copy to the defendant's last known address."
-     - "☐ Nail and Mail — After two (2) prior failed attempts on _____________ and _____________, I affixed the documents to the door of the above address and mailed copies to the defendant."
+     - "[ ] Personal Service — I delivered the documents directly to the above-named defendant."
+     - "[ ] Substituted Service — I delivered the documents to ___________________________, a person of suitable age and discretion who resides/works at the above address, and also mailed a copy to the defendant's last known address."
+     - "[ ] Nail and Mail — After two (2) prior failed attempts on _____________ and _____________, I affixed the documents to the door of the above address and mailed copies to the defendant."
    - "4. A description of the person served (if applicable): Sex: _______ Approximate Age: _______ Height: _______ Weight: _______ Hair Color: _______"
    - "5. I declare under penalty of perjury that the foregoing is true and correct."
 
@@ -1391,40 +955,14 @@ CRITICAL RULES:
 - Do NOT pre-fill: server name, date/time of service, method of service, or description of person served
 - Use the debtorAddress from case data as the service address
 
-Return JSON:
-{
-  "text": "plain text version",
-  "html": "HTML version — serif font, court-document style, max-width 750px, proper caption formatting, checkbox symbols for service method options"
+Return ONLY a complete HTML document — serif font, court-document style, max-width 750px, proper caption formatting. Use inline styles only and single quotes for HTML attributes. No JSON, no markdown, no code fences.`;
+
+  const html = await generateHTML({ system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.', prompt, maxTokens: 3072, label: 'generateAffidavitOfService' });
+  return { text: html, html };
 }
 
-Return ONLY valid JSON.`;
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 3072,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    const text = content.text;
-    return { text, html: `<div style="font-family: serif; max-width: 750px; margin: 0 auto; padding: 2rem;">${text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` };
-  }
-}
-
-/**
- * Generate a Stipulation of Settlement — signed by both parties to document any
- * payment agreement reached before or after filing.
- */
-export async function generateStipulationOfSettlement(
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+export async function generateStipulationOfSettlement(caseData: Record<string, unknown>): Promise<DemandLetterResult> {
+  const today = todayET();
   const amountOwed = Number(caseData.amountOwed ?? 0);
   const amountPaid = Number(caseData.amountPaid ?? 0);
   const outstanding = amountOwed - amountPaid;
@@ -1480,28 +1018,12 @@ Include a header disclaimer: "⚠ DISCLAIMER: This Stipulation of Settlement was
 
 Return only raw HTML — no JSON, no markdown, no code fences, no explanations. Start directly with the HTML content.`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  const html = content.text.trim();
+  const html = await generateHTML({ system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.', prompt, maxTokens: 8192, label: 'generateStipulationOfSettlement' });
   return { text: html, html };
 }
 
-/**
- * Generate a standalone Payment Plan Agreement — for installment arrangements
- * made outside a formal settlement, or as an exhibit to one.
- */
-export async function generatePaymentPlanAgreement(
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+export async function generatePaymentPlanAgreement(caseData: Record<string, unknown>): Promise<DemandLetterResult> {
+  const today = todayET();
   const amountOwed = Number(caseData.amountOwed ?? 0);
   const amountPaid = Number(caseData.amountPaid ?? 0);
   const outstanding = amountOwed - amountPaid;
@@ -1529,7 +1051,7 @@ Generate a complete Payment Plan Agreement with these sections:
    - Total Amount: $${outstanding.toFixed(2)}
    - Down Payment (if any): $[AMOUNT] due upon signing — leave this as a blank for the parties to fill in
    - Installment Amount: $[INSTALLMENT AMOUNT] — leave as blank
-   - Frequency: ☐ Weekly  ☐ Bi-weekly  ☐ Monthly
+   - Frequency: [ ] Weekly  [ ] Bi-weekly  [ ] Monthly
    - First Payment Due: [DATE] — leave as blank
    - Subsequent Payments Due: The [DAY] of each [week/month] thereafter
    - Final Payment Due: [FINAL DATE] — calculated from installments
@@ -1560,581 +1082,49 @@ Include disclaimer: "⚠ DISCLAIMER: This Payment Plan Agreement was prepared fr
 
 Return only raw HTML — no JSON, no markdown, no code fences, no explanations. Start directly with the HTML content.`;
 
+  const html = await generateHTML({ system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.', prompt, maxTokens: 8192, label: 'generatePaymentPlanAgreement' });
+  return { text: html, html };
+}
+
+// ─── Strategy assessment with debtor research (static reasoning guide cached) ──────
+
+const STRATEGY_SYSTEM = `You are a New York collections attorney advising a client on collection strategy. You have the case facts and the results of public records research on the debtor. Reason systematically and recommend the best strategy. Always respond with valid JSON only.
+
+Reason through these factors in this exact order:
+1. BANKRUPTCY (highest priority — stops everything): if pacer shows activeCases > 0 and automaticStayActive = true → strategy is irrelevant, flag immediately in keyFactors. If PACER not run, note this gap.
+2. ENTITY TYPE (determines post-judgment enforcement): LLC/Corp → no wage garnishment, only bank levy and property lien; Sole prop/individual → wage garnishment (10% gross), bank levy, property lien. Check the entity result; flag conflicts with the case.
+3. NYC PROPERTY (ACRIS): property owner → judgment lien is powerful; asGrantee > asGrantor suggests current ownership; no property → lien unavailable.
+4. SENIOR CREDITORS (UCC): active MCA/bank blanket liens → your judgment is behind them; multiple active UCCs → debtor may be asset-stripped.
+5. COURT HISTORY: 3+ prior cases as defendant → serial debtor; prior defaults unpaid → judgment-proof signals; prior judgments paid → collectible.
+6. ECB VIOLATIONS: high outstanding (>$50k) → won't pay you either; zero balance → neutral.
+7. CASE STRENGTH: strong evidence + clear contract → aggressive; weak + ongoing relationship → gradual.
+
+Recommend one of: QUICK_ESCALATION (SOL pressure, strong evidence, good assets, or serial debtor), STANDARD_RECOVERY (typical, some uncertainty), GRADUAL_APPROACH (active relationship, weak evidence, judgment-proof signals, or cooperation).
+
+Return JSON:
+{ "strategy": "QUICK_ESCALATION"|"STANDARD_RECOVERY"|"GRADUAL_APPROACH", "reasoning": "2-3 paragraph plain-English explanation of the analysis, the available enforcement tools after judgment, and why this strategy fits", "keyFactors": ["most important factor", "...", "..."] }
+Return ONLY valid JSON.`;
+
+export async function assessStrategyWithResearch(
+  caseData: Record<string, unknown>,
+  lookupResults: { acris?: Record<string, unknown> | null; courts?: Record<string, unknown> | null; entity?: Record<string, unknown> | null; ucc?: Record<string, unknown> | null; ecb?: Record<string, unknown> | null; pacer?: Record<string, unknown> | null },
+): Promise<StrategyAssessment> {
+  const prompt = `TODAY: ${todayET()}\n\nCASE FACTS:\n${JSON.stringify(caseData, null, 2)}\n\nDEBTOR RESEARCH RESULTS:\n${JSON.stringify(lookupResults, null, 2)}`;
+
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
+    max_tokens: 2048,
+    system: systemCached(STRATEGY_SYSTEM),
     messages: [{ role: 'user', content: prompt }],
   });
+  ensureComplete(response, 'assessStrategyWithResearch');
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  const html = content.text.trim();
-  return { text: html, html };
-}
-
-// ─── Demand Letter Verification ──────────────────────────────────────────────
-
-export async function verifyDemandLetter(
-  html: string,
-  caseData: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const outstandingBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-
-  const strategyDeadlines: Record<string, number> = {
-    QUICK_ESCALATION: 7,
-    STANDARD_RECOVERY: 14,
-    GRADUAL_APPROACH: 21,
-  };
-  const expectedDays = strategyDeadlines[String(caseData.strategy ?? '')] ?? null;
-
-  const dlPrompt = `You are an adversarial reviewer checking a pre-filled demand letter for factual accuracy. Your job is to catch genuinely wrong facts, missing required fields, and values that contradict the source case data.
-
-SOURCE CASE DATA (ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-COMPUTED VALUES (treat as ground truth):
-- outstandingBalance: $${outstandingBalance} (= amountOwed minus amountPaid)
-- Strategy: ${caseData.strategy ?? 'unknown'}
-- Expected response deadline: ${expectedDays !== null ? `${expectedDays} days` : 'unknown (strategy not set)'}
-
-GENERATED DEMAND LETTER HTML:
-${html.slice(0, 20000)}
-
-Check each of the following:
-- Plaintiff/claimant name and business name
-- Defendant/debtor name and business name
-- Defendant address
-- Amount demanded (must equal outstandingBalance $${outstandingBalance}, NOT full amountOwed)
-- Invoice number
-- Invoice date
-- Payment due date
-- Agreement/service date
-- Response deadline days (QUICK_ESCALATION=7, STANDARD_RECOVERY=14, GRADUAL_APPROACH=21)
-- No facts asserted that are absent from case data
-- Tone appropriate for strategy (QUICK=firm/urgent, STANDARD=professional, GRADUAL=cooperative)
-
-For each check:
-- "ok": correct or valid legal statement
-- "missing": required field blank when data exists
-- "mismatch": directly contradicts case data
-- "hallucinated": specific party fact invented and not in case data
-
-Return JSON:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [{ "field": "...", "status": "ok|missing|mismatch|hallucinated", "expected": "...", "found": "...", "note": "..." }],
-  "summary": "1-2 sentence summary of genuine issues only",
-  "blankFields": []
-}
-
-Status rules:
-- "verified": all facts match, deadline matches strategy
-- "review_needed": 1-2 missing fields where data wasn't available
-- "issues_found": wrong amount, wrong party name, invented fact, or wrong deadline
-
-Return ONLY valid JSON.`;
-
-  const dlResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: dlPrompt }],
-  });
-
-  const dlContent = dlResp.content[0];
-  if (dlContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
   try {
-    const result = JSON.parse(extractJson(dlContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
+    return JSON.parse(extractJson(content.text)) as StrategyAssessment;
   } catch {
-    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Please review the letter manually.', blankFields: [], verifiedAt: new Date().toISOString() };
+    return { strategy: 'STANDARD_RECOVERY', reasoning: 'Could not complete analysis. Please review research results manually and select a strategy.', keyFactors: ['Analysis could not be completed — re-run or select strategy manually'] };
   }
-}
-
-export async function retryDemandLetter(
-  originalHtml: string,
-  verification: CourtFormVerification,
-  caseData: Record<string, unknown>,
-  strategy: string
-): Promise<DemandLetterResult> {
-  const dlIssues = verification.checks.filter(c => c.status !== 'ok');
-  const dlVerified = verification.checks.filter(c => c.status === 'ok');
-  const dlBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-  const dlDeadlines: Record<string, number> = { QUICK_ESCALATION: 7, STANDARD_RECOVERY: 14, GRADUAL_APPROACH: 21 };
-  const dlExpectedDays = dlDeadlines[strategy] ?? 14;
-
-  const dlIssueList = dlIssues
-    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
-    .join('\n\n');
-  const dlVerifiedList = dlVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
-
-  const dlRetryPrompt = `You previously generated a demand letter. Verification found issues. Regenerate with only the flagged errors corrected — keep all other content unchanged.
-
-VERIFICATION SUMMARY: ${verification.summary}
-
-SOURCE CASE DATA (absolute ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-- outstandingBalance: $${dlBalance} (use this as the demand amount)
-- Strategy: ${strategy}
-- Required response deadline: ${dlExpectedDays} days
-
-FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
-${dlVerifiedList || '(none)'}
-
-ISSUES TO FIX (${dlIssues.length}):
-${dlIssueList}
-
-ORIGINAL LETTER HTML:
-${originalHtml.slice(0, 8000)}
-
-Rules: Fix only flagged issues. Amount must be $${dlBalance}. Deadline must be ${dlExpectedDays} days. If verifier contradicts case data, follow case data.
-
-Return JSON: { "text": "plain text", "html": "complete corrected HTML" }
-Return ONLY valid JSON.`;
-
-  const dlRetryResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: 'You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: dlRetryPrompt }],
-  });
-
-  const dlRetryContent = dlRetryResp.content[0];
-  if (dlRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(dlRetryContent.text)) as DemandLetterResult;
-  } catch {
-    return { text: originalHtml, html: originalHtml };
-  }
-}
-
-// ─── Case Analysis Verification (flag-only, no retry) ─────────────────────────
-
-export async function verifyCaseSynthesis(
-  synthesis: CaseSynthesis,
-  documents: Array<{
-    classification: string | null;
-    supportsTags: string[];
-    summary: string | null;
-    extractedFacts: Record<string, unknown> | null;
-  }>,
-  userFacts: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const synthPrompt = `You are an adversarial reviewer checking an AI-generated legal case analysis for logical consistency and factual grounding. Flag conclusions not supported by the underlying evidence.
-
-USER-PROVIDED FACTS (ground truth):
-${JSON.stringify(userFacts, null, 2)}
-
-DOCUMENTS SUBMITTED (evidence base):
-${JSON.stringify(documents.map(d => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary })), null, 2)}
-
-AI-GENERATED CASE ANALYSIS:
-${JSON.stringify(synthesis, null, 2)}
-
-Check each of the following:
-- caseStrength: if "strong", verify written contract or strong documentary evidence exists; flag if assessed strong with only oral/weak evidence
-- primaryCauseOfAction.theory: if "breach_of_written_contract", verify hasWrittenContract is true OR a contract document exists; flag otherwise
-- elements[].satisfied = true: each satisfied element must have a non-null evidence field; flag satisfied elements with null evidence
-- counterclaimRisk.signals: each signal must trace to documents or userFacts; flag invented signals
-- caseSummary: must not assert facts absent from userFacts and documents
-- recommendedStrategy: if caseStrength "weak" and strategy QUICK_ESCALATION with no asset evidence, flag as potentially aggressive
-
-For each check:
-- "ok": grounded in evidence
-- "missing": required evidence absent
-- "mismatch": analysis contradicts evidence
-- "hallucinated": fact not present in userFacts or documents
-
-Return JSON:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
-  "summary": "1-2 sentence summary of whether analysis is well-grounded",
-  "blankFields": []
-}
-
-Return ONLY valid JSON.`;
-
-  const verifyPromptBytes = Buffer.byteLength(synthPrompt, 'utf8');
-  const verifyStart = Date.now();
-  console.log(`[claude] fn=verifyCaseSynthesis docs=${documents.length} promptBytes=${verifyPromptBytes}`);
-
-  const synthResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: synthPrompt }],
-  });
-
-  console.log(`[claude] fn=verifyCaseSynthesis ms=${Date.now() - verifyStart} stopReason=${synthResp.stop_reason} inputTokens=${synthResp.usage?.input_tokens} outputTokens=${synthResp.usage?.output_tokens}`);
-
-  const synthContent = synthResp.content[0];
-  if (synthContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    const result = JSON.parse(extractJson(synthContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
-  } catch {
-    return { overallStatus: 'review_needed', checks: [], summary: 'Analysis verification could not be completed automatically.', blankFields: [], verifiedAt: new Date().toISOString() };
-  }
-}
-
-// ─── Default Judgment Verification ───────────────────────────────────────────
-
-export async function verifyDefaultJudgment(
-  html: string,
-  caseData: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const djBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-  const djBalanceNum = parseFloat(djBalance);
-  const djExpectedCourt = djBalanceNum < 10000
-    ? 'Commercial Claims Court'
-    : djBalanceNum < 50000
-    ? 'Civil Court of the City of New York'
-    : 'Supreme Court of the State of New York';
-
-  const djVerifyPrompt = `You are an adversarial reviewer checking a Motion for Default Judgment for accuracy before court filing.
-
-SOURCE CASE DATA (ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-COMPUTED VALUES:
-- outstandingBalance: $${djBalance}
-- Expected court: ${djExpectedCourt}
-- Service: ${caseData.serviceInitiatedDate ? `initiated ${caseData.serviceInitiatedDate}` : 'not in case data'}
-
-GENERATED DEFAULT JUDGMENT HTML:
-${html.slice(0, 20000)}
-
-Check:
-- Plaintiff/claimant name (must match exactly)
-- Defendant name (must match exactly)
-- Dollar amount (must equal $${djBalance}, not full amountOwed)
-- Court name (should match ${djExpectedCourt})
-- County (derive from debtor address)
-- Service date (must match case data if available; flag [UNKNOWN] if data exists)
-- All 3 sections present: Notice of Motion, Affidavit in Support, Proposed Order/Judgment
-- No [UNKNOWN — VERIFY BEFORE FILING] for fields that ARE in case data
-- No facts absent from case data
-
-For each check: "ok" | "missing" | "mismatch" | "hallucinated"
-
-Return JSON:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
-  "summary": "1-2 sentence summary",
-  "blankFields": ["fields [UNKNOWN] where data was available"]
-}
-
-Return ONLY valid JSON.`;
-
-  const djResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: djVerifyPrompt }],
-  });
-
-  const djContent = djResp.content[0];
-  if (djContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    const result = JSON.parse(extractJson(djContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
-  } catch {
-    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before filing.', blankFields: [], verifiedAt: new Date().toISOString() };
-  }
-}
-
-export async function retryDefaultJudgment(
-  originalHtml: string,
-  verification: CourtFormVerification,
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const djRetryIssues = verification.checks.filter(c => c.status !== 'ok');
-  const djRetryVerified = verification.checks.filter(c => c.status === 'ok');
-  const djRetryBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-
-  const djIssueList = djRetryIssues
-    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
-    .join('\n\n');
-  const djVerifiedList = djRetryVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
-
-  const djRetryPrompt = `You previously generated a Motion for Default Judgment. Verification found issues. Regenerate the full document with only the flagged errors corrected.
-
-VERIFICATION SUMMARY: ${verification.summary}
-
-SOURCE CASE DATA (absolute ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-- outstandingBalance: $${djRetryBalance} (correct judgment amount)
-
-FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
-${djVerifiedList || '(none)'}
-
-ISSUES TO FIX (${djRetryIssues.length}):
-${djIssueList}
-
-ORIGINAL DOCUMENT HTML:
-${originalHtml.slice(0, 8000)}
-
-Rules: Keep all 3 sections. Amount must be $${djRetryBalance}. Return complete corrected HTML.
-
-Return ONLY raw HTML. No JSON, no markdown, no code fences.`;
-
-  const djRetryResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no commentary.',
-    messages: [{ role: 'user', content: djRetryPrompt }],
-  });
-
-  const djRetryContent = djRetryResp.content[0];
-  if (djRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  const djHtml = djRetryContent.text
-    .replace(/^```(?:html)?\s*/i, '')
-    .replace(/\s*```\s*$/i, '')
-    .trim();
-
-  return { text: djHtml, html: djHtml };
-}
-
-// ─── Settlement Verification ──────────────────────────────────────────────────
-
-export async function verifySettlement(
-  html: string,
-  caseData: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const stlFullOwed = parseFloat(String(caseData.amountOwed ?? '0')).toFixed(2);
-
-  const stlVerifyPrompt = `You are an adversarial reviewer checking a Stipulation of Settlement for accuracy.
-
-SOURCE CASE DATA (ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-COMPUTED VALUES:
-- Full amount owed (original debt): $${stlFullOwed} — should appear in default/acceleration clause
-- Settlement amount: must be BLANK PLACEHOLDER (to be negotiated) — flag as hallucinated if pre-filled
-
-GENERATED SETTLEMENT HTML:
-${html.slice(0, 20000)}
-
-Check:
-- Plaintiff/creditor name and business (must match exactly)
-- Defendant/debtor name and business (must match exactly)
-- Original debt in default/acceleration clause (must be $${stlFullOwed})
-- Settlement amount (must be blank or "TO BE NEGOTIATED" — flag as hallucinated if pre-filled)
-- Governing law (must be New York)
-- Signature blocks present for both parties
-- No facts absent from case data
-
-For each check: "ok" | "missing" | "mismatch" | "hallucinated"
-
-Return JSON:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
-  "summary": "1-2 sentence summary",
-  "blankFields": []
-}
-
-Return ONLY valid JSON.`;
-
-  const stlResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: stlVerifyPrompt }],
-  });
-
-  const stlContent = stlResp.content[0];
-  if (stlContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    const result = JSON.parse(extractJson(stlContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
-  } catch {
-    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before signing.', blankFields: [], verifiedAt: new Date().toISOString() };
-  }
-}
-
-export async function retrySettlement(
-  originalHtml: string,
-  verification: CourtFormVerification,
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const stlIssues = verification.checks.filter(c => c.status !== 'ok');
-  const stlVerified = verification.checks.filter(c => c.status === 'ok');
-  const stlFullOwed = parseFloat(String(caseData.amountOwed ?? '0')).toFixed(2);
-
-  const stlIssueList = stlIssues
-    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
-    .join('\n\n');
-  const stlVerifiedList = stlVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
-
-  const stlRetryPrompt = `You previously generated a Stipulation of Settlement. Verification found issues. Regenerate with only flagged errors corrected.
-
-VERIFICATION SUMMARY: ${verification.summary}
-
-SOURCE CASE DATA: ${JSON.stringify(caseData, null, 2)}
-
-- Full debt for default clause: $${stlFullOwed}
-- Settlement amount must remain blank — do NOT fill it in
-
-FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
-${stlVerifiedList || '(none)'}
-
-ISSUES TO FIX (${stlIssues.length}): ${stlIssueList}
-
-ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
-
-Return only raw HTML with corrections applied. No JSON, no markdown, no code fences.`;
-
-  const stlRetryResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: stlRetryPrompt }],
-  });
-
-  const stlRetryContent = stlRetryResp.content[0];
-  if (stlRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  const stlHtml = stlRetryContent.text.trim() || originalHtml;
-  return { text: stlHtml, html: stlHtml };
-}
-
-// ─── Payment Plan Verification ────────────────────────────────────────────────
-
-export async function verifyPaymentPlan(
-  html: string,
-  caseData: Record<string, unknown>
-): Promise<CourtFormVerification> {
-  const ppBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-
-  const ppVerifyPrompt = `You are an adversarial reviewer checking a Payment Plan Agreement for accuracy.
-
-SOURCE CASE DATA (ground truth):
-${JSON.stringify(caseData, null, 2)}
-
-COMPUTED VALUES:
-- outstandingBalance: $${ppBalance} (= amountOwed minus amountPaid)
-
-GENERATED PAYMENT PLAN HTML:
-${html.slice(0, 20000)}
-
-Check:
-- Plaintiff/creditor name and business (must match exactly)
-- Defendant/debtor name and business (must match exactly)
-- Total amount (must equal $${ppBalance})
-- Interest rate (must be 9% per annum — New York statutory rate)
-- Acceleration clause present
-- Acknowledgment of debt present (for SOL reset)
-- Governing law is New York
-- Math: if installment amount AND payments AND total all have specific numbers, verify installment × payments ≈ total; skip if any is a blank placeholder
-
-For each check: "ok" | "missing" | "mismatch" | "hallucinated"
-
-Return JSON:
-{
-  "overallStatus": "verified" | "review_needed" | "issues_found",
-  "checks": [{ "field": "...", "status": "...", "expected": "...", "found": "...", "note": "..." }],
-  "summary": "1-2 sentence summary",
-  "blankFields": []
-}
-
-Return ONLY valid JSON.`;
-
-  const ppResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: 'You are an adversarial document reviewer. Always respond with valid JSON only. No markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: ppVerifyPrompt }],
-  });
-
-  const ppContent = ppResp.content[0];
-  if (ppContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    const result = JSON.parse(extractJson(ppContent.text)) as CourtFormVerification;
-    result.verifiedAt = new Date().toISOString();
-    return result;
-  } catch {
-    return { overallStatus: 'review_needed', checks: [], summary: 'Verification could not be completed automatically. Review before signing.', blankFields: [], verifiedAt: new Date().toISOString() };
-  }
-}
-
-export async function retryPaymentPlan(
-  originalHtml: string,
-  verification: CourtFormVerification,
-  caseData: Record<string, unknown>
-): Promise<DemandLetterResult> {
-  const ppIssues = verification.checks.filter(c => c.status !== 'ok');
-  const ppVerified = verification.checks.filter(c => c.status === 'ok');
-  const ppBalance = (
-    parseFloat(String(caseData.amountOwed ?? '0')) -
-    parseFloat(String(caseData.amountPaid ?? '0'))
-  ).toFixed(2);
-
-  const ppIssueList = ppIssues
-    .map(c => `[${c.status.toUpperCase()}] ${c.field}\n  Expected: ${c.expected ?? '(not in case data)'}\n  Found: ${c.found ?? '(missing)'}\n  Note: ${c.note}`)
-    .join('\n\n');
-  const ppVerifiedList = ppVerified.map(c => `✓ ${c.field}: "${c.found}"`).join('\n');
-
-  const ppRetryPrompt = `You previously generated a Payment Plan Agreement. Verification found issues. Regenerate with only flagged errors corrected.
-
-VERIFICATION SUMMARY: ${verification.summary}
-
-SOURCE CASE DATA: ${JSON.stringify(caseData, null, 2)}
-
-- outstandingBalance: $${ppBalance}
-- Interest rate: 9% per annum (NY statutory — do not change)
-
-FIELDS VERIFIED AS CORRECT — DO NOT CHANGE:
-${ppVerifiedList || '(none)'}
-
-ISSUES TO FIX (${ppIssues.length}): ${ppIssueList}
-
-ORIGINAL HTML: ${originalHtml.slice(0, 8000)}
-
-Return only raw HTML with corrections applied. No JSON, no markdown, no code fences.`;
-
-  const ppRetryResp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: 'You are a legal document preparation assistant. Return only raw HTML. No JSON, no markdown, no code fences, no explanations.',
-    messages: [{ role: 'user', content: ppRetryPrompt }],
-  });
-
-  const ppRetryContent = ppRetryResp.content[0];
-  if (ppRetryContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  const ppHtml = ppRetryContent.text.trim() || originalHtml;
-  return { text: ppHtml, html: ppHtml };
 }

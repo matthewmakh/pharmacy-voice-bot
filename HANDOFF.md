@@ -428,14 +428,21 @@ Reusable pieces (all in `case-detail/shared/`):
 
 ```
 DATABASE_URL          — PostgreSQL connection string
-JWT_SECRET            — JWT signing secret
+JWT_SECRET            — JWT signing secret (REQUIRED in production — server refuses to boot without it)
 ANTHROPIC_API_KEY     — Claude API key
-TWO_CAPTCHA_API_KEY   — For UCC lookup CAPTCHA
+CAPTCHA_API_KEY       — For UCC lookup CAPTCHA (2captcha.com). NOTE: the code reads CAPTCHA_API_KEY, not TWO_CAPTCHA_API_KEY
 PACER_USERNAME        — tyenyllc
 PACER_PASSWORD        — (set in Railway)
-NYC_OPEN_DATA_APP_TOKEN — Reduces rate limiting on ACRIS/ECB
+NYC_OPEN_DATA_TOKEN   — Reduces rate limiting on ACRIS/ECB (code reads NYC_OPEN_DATA_TOKEN)
 NODE_ENV              — production
+STORAGE_DRIVER        — 'local' (ephemeral!) or 's3'. Use 's3' in production.
+S3_BUCKET / S3_REGION / S3_ENDPOINT / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY — required when STORAGE_DRIVER=s3 (S3_ENDPOINT for Cloudflare R2)
 ```
+
+> **Note on documents (changed):** uploads now go through a pluggable storage layer
+> (`server/src/lib/storage.ts`). On `local` they are ephemeral; set `STORAGE_DRIVER=s3`
+> with a bucket for durable storage. The `Document.path` column now holds an opaque
+> storage key rather than an absolute filesystem path.
 
 ---
 

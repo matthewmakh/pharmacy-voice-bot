@@ -1,22 +1,22 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
 import prisma from '../lib/prisma';
 import { upload } from '../middleware/upload';
-import { extractTextFromFile, extractTextFromImage } from '../services/fileProcessor';
+import { extractText } from '../services/fileProcessor';
 import { analyzeDocument } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
+import { storage } from '../lib/storage';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
 
-// Run async tasks with a concurrency cap. Errors from individual tasks are caught
-// and logged so one failed doc doesn't stop the others.
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<void>
-): Promise<void> {
+// MIME types we are willing to render inline in the browser. Everything else is forced
+// to download, so an attacker cannot get an uploaded HTML/SVG payload to execute
+// same-origin (there are no security headers stripping this risk otherwise).
+const INLINE_SAFE = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+// Run async tasks with a concurrency cap so a 20-file upload doesn't fire 20 Claude
+// calls at once and trip Anthropic's per-minute budget.
+async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let nextIndex = 0;
   const worker = async () => {
     while (nextIndex < items.length) {
@@ -28,28 +28,20 @@ async function runWithConcurrency<T>(
       }
     }
   };
-  const workerCount = Math.min(limit, items.length);
-  await Promise.all(Array.from({ length: workerCount }, worker));
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-// Verify the case belongs to the authenticated user
 async function verifyOwnership(caseId: string, userId: string): Promise<boolean> {
   const c = await prisma.case.findUnique({ where: { id: caseId, userId }, select: { id: true } });
   return !!c;
 }
 
-// Run Claude analysis on a document in the background — fire and forget
-async function analyzeDocumentInBackground(docId: string, filePath: string, mimeType: string, originalName: string) {
+// Fire-and-forget per-document analysis with one retry on transient failure.
+async function analyzeDocumentInBackground(docId: string, key: string, mimeType: string, originalName: string) {
   const attempt = async () => {
-    let extractedText: string;
-    if (mimeType.startsWith('image/')) {
-      extractedText = await extractTextFromImage(filePath);
-    } else {
-      extractedText = await extractTextFromFile(filePath, mimeType, originalName);
-    }
-
+    const buffer = await storage.getBuffer(key);
+    const extractedText = await extractText(buffer, mimeType, originalName);
     const analysis = await analyzeDocument(extractedText, originalName, mimeType);
-
     await prisma.document.update({
       where: { id: docId },
       data: {
@@ -68,90 +60,74 @@ async function analyzeDocumentInBackground(docId: string, filePath: string, mime
     await attempt();
   } catch (firstErr) {
     console.error(`Background analysis attempt 1 failed for doc ${docId}:`, firstErr);
-    // Wait 10s then retry once — handles transient Claude timeouts
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
     try {
       await attempt();
     } catch (secondErr) {
       console.error(`Background analysis attempt 2 failed for doc ${docId}:`, secondErr);
-      await prisma.document.update({
-        where: { id: docId },
-        data: { analysisError: true },
-      }).catch(() => {});
+      await prisma.document.update({ where: { id: docId }, data: { analysisError: true } }).catch(() => {});
     }
   }
 }
 
-// POST /api/cases/:caseId/documents — save files immediately, analyze in background
-router.post(
-  '/',
-  upload.array('files', 20),
-  async (req: Request, res: Response) => {
-    try {
-      const { caseId } = req.params;
-
-      const caseRecord = await prisma.case.findUnique({ where: { id: caseId, userId: req.user!.id } });
-      if (!caseRecord) {
-        res.status(404).json({ error: 'Case not found' });
-        return;
-      }
-
-      const files = req.files as Express.Multer.File[];
-      if (!files || files.length === 0) {
-        res.status(400).json({ error: 'No files provided' });
-        return;
-      }
-
-      // Save all records immediately so the response is fast
-      const docs = await Promise.all(
-        files.map((file) =>
-          prisma.document.create({
-            data: {
-              caseId,
-              filename: file.filename,
-              originalName: file.originalname,
-              mimeType: file.mimetype,
-              size: file.size,
-              path: file.path,
-              // classification null = still being analyzed
-            },
-          })
-        )
-      );
-
-      // Log upload action
-      await prisma.caseAction.create({
-        data: {
-          caseId,
-          type: 'DOCUMENTS_UPLOADED',
-          status: 'COMPLETED',
-          label: `${files.length} document${files.length > 1 ? 's' : ''} uploaded`,
-          metadata: { count: files.length },
-        },
-      });
-
-      // Respond immediately — analysis continues in background
-      res.status(201).json(docs);
-
-      // Kick off background analysis with a concurrency cap of 3.
-      // Without a cap, a 20-file upload fires 20 concurrent Claude calls and saturates
-      // Anthropic's per-minute token/request budget — which then makes downstream
-      // /autofill and /analyze calls hit 429s and silently retry inside the SDK.
-      const tasks = files.map((file, i) => ({ file, doc: docs[i] }));
-      void runWithConcurrency(tasks, 3, async ({ file, doc }) => {
-        await analyzeDocumentInBackground(doc.id, file.path, file.mimetype, file.originalname);
-      });
-    } catch (err) {
-      console.error('Upload error:', err);
-      res.status(500).json({ error: 'Upload failed', details: String(err) });
+// POST /api/cases/:caseId/documents — persist to durable storage, analyze in background
+router.post('/', upload.array('files', 20), async (req: Request, res: Response) => {
+  try {
+    const { caseId } = req.params;
+    if (!(await verifyOwnership(caseId, req.user!.id))) {
+      res.status(404).json({ error: 'Case not found' });
+      return;
     }
+
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      res.status(400).json({ error: 'No files provided' });
+      return;
+    }
+
+    // Move each staged temp file into durable storage; the key is the generated filename.
+    const docs = await Promise.all(
+      files.map(async (file) => {
+        await storage.putFromPath(file.path, file.filename, file.mimetype);
+        return prisma.document.create({
+          data: {
+            caseId,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            size: file.size,
+            path: file.filename, // storage key, not an absolute path
+          },
+        });
+      }),
+    );
+
+    await prisma.caseAction.create({
+      data: {
+        caseId,
+        type: 'DOCUMENTS_UPLOADED',
+        status: 'COMPLETED',
+        label: `${files.length} document${files.length > 1 ? 's' : ''} uploaded`,
+        metadata: { count: files.length },
+      },
+    });
+
+    res.status(201).json(docs);
+
+    const tasks = files.map((file, i) => ({ file, doc: docs[i] }));
+    void runWithConcurrency(tasks, 3, async ({ file, doc }) => {
+      await analyzeDocumentInBackground(doc.id, doc.path, file.mimetype, file.originalname);
+    });
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Upload failed', details: String(err) });
   }
-);
+});
 
 // GET /api/cases/:caseId/documents
 router.get('/', async (req: Request, res: Response) => {
   try {
-    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
@@ -169,26 +145,16 @@ router.get('/', async (req: Request, res: Response) => {
 // DELETE /api/cases/:caseId/documents/:docId
 router.delete('/:docId', async (req: Request, res: Response) => {
   try {
-    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
-
-    const doc = await prisma.document.findFirst({
-      where: { id: req.params.docId, caseId: req.params.caseId },
-    });
-
+    const doc = await prisma.document.findFirst({ where: { id: req.params.docId, caseId: req.params.caseId } });
     if (!doc) {
       res.status(404).json({ error: 'Document not found' });
       return;
     }
-
-    try {
-      if (fs.existsSync(doc.path)) fs.unlinkSync(doc.path);
-    } catch (fsErr) {
-      console.warn('Could not delete file from disk:', fsErr);
-    }
-
+    await storage.delete(doc.path).catch((e) => console.warn('Could not delete object from storage:', e));
     await prisma.document.delete({ where: { id: doc.id } });
     res.json({ success: true });
   } catch (err) {
@@ -197,85 +163,48 @@ router.delete('/:docId', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/cases/:caseId/documents/:docId/view — serve inline for preview
-router.get('/:docId/view', async (req: Request, res: Response) => {
-  try {
-    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
-      res.status(404).json({ error: 'File not found' });
-      return;
-    }
-
-    const doc = await prisma.document.findFirst({
-      where: { id: req.params.docId, caseId: req.params.caseId },
-    });
-
-    if (!doc || !fs.existsSync(doc.path)) {
-      res.status(404).json({ error: 'File not found' });
-      return;
-    }
-
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.originalName)}"`);
-    res.setHeader('Content-Type', doc.mimeType);
-    res.sendFile(path.resolve(doc.path));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to view file' });
+// Shared handler for view (inline) and download (attachment).
+async function serveFile(req: Request, res: Response, mode: 'inline' | 'attachment') {
+  if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
+    res.status(404).json({ error: 'File not found' });
+    return;
   }
-});
-
-// GET /api/cases/:caseId/documents/:docId/download
-router.get('/:docId/download', async (req: Request, res: Response) => {
-  try {
-    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
-      res.status(404).json({ error: 'File not found' });
-      return;
-    }
-
-    const doc = await prisma.document.findFirst({
-      where: { id: req.params.docId, caseId: req.params.caseId },
-    });
-
-    if (!doc || !fs.existsSync(doc.path)) {
-      res.status(404).json({ error: 'File not found' });
-      return;
-    }
-
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.originalName)}"`);
-    res.setHeader('Content-Type', doc.mimeType);
-    res.sendFile(path.resolve(doc.path));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to download file' });
+  const doc = await prisma.document.findFirst({ where: { id: req.params.docId, caseId: req.params.caseId } });
+  if (!doc || !(await storage.exists(doc.path))) {
+    res.status(404).json({ error: 'File not found' });
+    return;
   }
-});
+  // Never let the browser sniff a different content type, and only render known-safe
+  // types inline — anything else is forced to download.
+  const disposition = mode === 'inline' && INLINE_SAFE.has(doc.mimeType) ? 'inline' : 'attachment';
+  const buffer = await storage.getBuffer(doc.path);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', INLINE_SAFE.has(doc.mimeType) ? doc.mimeType : 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(doc.originalName)}"`);
+  res.send(buffer);
+}
 
-// POST /api/cases/:caseId/documents/:docId/reanalyze — re-trigger analysis for a failed document
+router.get('/:docId/view', (req, res) => serveFile(req, res, 'inline').catch((err) => { console.error(err); res.status(500).json({ error: 'Failed to view file' }); }));
+router.get('/:docId/download', (req, res) => serveFile(req, res, 'attachment').catch((err) => { console.error(err); res.status(500).json({ error: 'Failed to download file' }); }));
+
+// POST /api/cases/:caseId/documents/:docId/reanalyze
 router.post('/:docId/reanalyze', async (req: Request, res: Response) => {
   try {
-    if (!await verifyOwnership(req.params.caseId, req.user!.id)) {
+    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
-
-    const doc = await prisma.document.findFirst({
-      where: { id: req.params.docId, caseId: req.params.caseId },
-    });
-
+    const doc = await prisma.document.findFirst({ where: { id: req.params.docId, caseId: req.params.caseId } });
     if (!doc) {
       res.status(404).json({ error: 'Document not found' });
       return;
     }
-
-    // Reset error state so the UI shows "Analyzing..." again
     const updated = await prisma.document.update({
       where: { id: doc.id },
       data: { analysisError: false, classification: null },
     });
-
     res.json(updated);
-
-    // Fire off analysis again — same pattern as original upload
-    analyzeDocumentInBackground(doc.id, doc.path, doc.mimeType, doc.originalName);
+    void analyzeDocumentInBackground(doc.id, doc.path, doc.mimeType, doc.originalName);
   } catch (err) {
     console.error('Reanalyze error:', err);
     res.status(500).json({ error: 'Failed to queue reanalysis' });

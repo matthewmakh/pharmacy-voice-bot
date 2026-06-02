@@ -170,7 +170,10 @@ export async function fillCIVSC70(data: CIVFormData): Promise<Buffer> {
     const isSelected = (data.county ?? 'New York') === county;
     page.drawRectangle({ x: cx, y: y - 3, width: 10, height: 10, borderColor: rgb(0.3, 0.3, 0.3), borderWidth: 0.8, color: isSelected ? rgb(0, 0, 0) : rgb(1, 1, 1) });
     if (isSelected) {
-      page.drawText('✓', { x: cx + 1, y: y - 1, size: 9, font: bold, color: rgb(1, 1, 1) });
+      // Use an 'X' (WinAnsi-encodable) — the standard Helvetica fonts cannot encode a
+      // U+2713 check mark and pdf-lib throws at draw time, which previously crashed
+      // every commercial-claims PDF download.
+      page.drawText('X', { x: cx + 2, y: y - 1, size: 8, font: bold, color: rgb(1, 1, 1) });
     }
     page.drawText(county, { x: cx + 14, y, size: 8, font, color: rgb(0, 0, 0) });
     cx += county.length * 5.5 + 22;
@@ -334,36 +337,56 @@ export async function fillCIVSC70(data: CIVFormData): Promise<Buffer> {
 
 // ─── htmlToPDF ────────────────────────────────────────────────────────────────
 
+// Reuse one browser across requests. Launching Chromium per PDF (the previous behavior)
+// cost 1–3s and a memory spike every time and could OOM a small container under load.
+let browserPromise: Promise<import('puppeteer').Browser> | null = null;
+
+async function getBrowser(): Promise<import('puppeteer').Browser> {
+  if (!browserPromise) {
+    browserPromise = puppeteer.launch({
+      headless: true,
+      protocolTimeout: 60_000,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // prevents Chrome crash in containers with small /dev/shm
+        '--disable-gpu',
+        '--disable-extensions',
+        '--single-process',
+      ],
+    });
+  }
+  let browser = await browserPromise;
+  if (!browser.connected) {
+    // Crashed/disconnected — relaunch.
+    browserPromise = null;
+    return getBrowser();
+  }
+  return browser;
+}
+
 /**
- * Converts Claude-generated HTML to a CPLR-compliant PDF.
- * Uses Puppeteer's bundled Chromium with container-safe launch flags.
+ * Converts Claude-generated HTML to a CPLR-compliant PDF (Letter, 1in margins, serif).
+ * Uses a shared Puppeteer browser with explicit timeouts so a stuck render can't hang
+ * the request indefinitely.
  */
 export async function htmlToPDF(html: string): Promise<Buffer> {
   const wrapped = wrapWithPrintCSS(html);
-
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',   // Critical: prevents Chrome crash in containers with small /dev/shm
-      '--disable-gpu',
-      '--disable-extensions',
-      '--single-process',
-    ],
-  });
-
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
-    await page.setContent(wrapped, { waitUntil: 'networkidle0' });
+    // 'load' (not 'networkidle0') — generated documents use inline styles only, so we
+    // never wait on external resources that may never settle.
+    await page.setContent(wrapped, { waitUntil: 'load', timeout: 30_000 });
     const pdf = await page.pdf({
       format: 'Letter',
       margin: { top: '1in', right: '1in', bottom: '1in', left: '1in' },
       printBackground: true,
+      timeout: 30_000,
     });
     return Buffer.from(pdf);
   } finally {
-    await browser.close();
+    await page.close().catch(() => {});
   }
 }
 
