@@ -1,22 +1,7 @@
-import { anthropic as client, MODEL, systemCached, generateHTML } from '../lib/anthropic';
+import { generateHTML, generateJSON } from '../lib/anthropic';
 import { countyForDocument } from '../lib/county';
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────────
-
-// Extract a JSON object from a text response — handles markdown fences and preamble.
-function extractJson(raw: string): string {
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) return raw.slice(start, end + 1);
-  return raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-}
-
-/** Throw on truncation so a half-written document/analysis is never persisted as complete. */
-function ensureComplete(resp: { stop_reason: string | null; usage?: { output_tokens?: number } | null }, label: string): void {
-  if (resp.stop_reason === 'max_tokens') {
-    throw new Error(`${label} truncated at max_tokens (out=${resp.usage?.output_tokens}) — raise the cap or reduce input`);
-  }
-}
 
 // Dates are rendered in Eastern Time because every court, deadline, and filing in
 // this product is New York. The server runs in UTC, so "today" could otherwise be a
@@ -26,13 +11,6 @@ function todayET(): string {
 }
 function currentYearET(): number {
   return parseInt(new Date().toLocaleDateString('en-US', { year: 'numeric', timeZone: 'America/New_York' }), 10);
-}
-
-function paragraphsToHtml(text: string): string {
-  return `<div style="font-family: serif; max-width: 700px; margin: 0 auto; padding: 2rem;">${text
-    .split('\n\n')
-    .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-    .join('')}</div>`;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -222,22 +200,27 @@ Document text:
 ${extractedText.slice(0, 15000)}
 ---`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: systemCached(ANALYZE_DOC_SYSTEM),
-    messages: [{ role: 'user', content: prompt }],
-  });
-  ensureComplete(response, 'analyzeDocument');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
   try {
-    return JSON.parse(extractJson(content.text)) as DocumentAnalysis;
-  } catch {
-    console.error('Failed to parse Claude document analysis:', content.text);
-    return { classification: 'other', confidence: 0.3, supportsTags: [], extractedFacts: {}, summary: 'Document uploaded (analysis parsing error)' };
+    return await generateJSON<DocumentAnalysis>({
+      system: ANALYZE_DOC_SYSTEM,
+      prompt,
+      schema: {
+        type: 'object',
+        properties: {
+          classification: { type: 'string' },
+          confidence: { type: 'number' },
+          supportsTags: { type: 'array', items: { type: 'string' } },
+          extractedFacts: { type: 'object' },
+          summary: { type: 'string' },
+        },
+        required: ['classification', 'summary'],
+      },
+      maxTokens: 2048,
+      label: 'analyzeDocument',
+    });
+  } catch (err) {
+    console.error('Document analysis failed:', err);
+    return { classification: 'other', confidence: 0.3, supportsTags: [], extractedFacts: {}, summary: 'Document uploaded (analysis error)' };
   }
 }
 
@@ -286,26 +269,21 @@ export async function extractIntakeFromDocuments(
     .map((d, i) => `=== Document ${i + 1} (id: ${d.id}, filename: ${d.originalName}) ===\n${d.extractedText.slice(0, 12000)}`)
     .join('\n\n');
 
-  const intakeStart = Date.now();
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: systemCached(INTAKE_SYSTEM),
-    messages: [{ role: 'user', content: `DOCUMENTS:\n${docsContext}` }],
+  const parsed = await generateJSON<{ fields?: Partial<Record<IntakeFieldName, IntakeFieldExtraction>>; documentSummary?: string; clarifyingQuestions?: ClarifyingQuestion[] }>({
+    system: INTAKE_SYSTEM,
+    prompt: `DOCUMENTS:\n${docsContext}`,
+    schema: {
+      type: 'object',
+      properties: {
+        documentSummary: { type: 'string' },
+        fields: { type: 'object' },
+        clarifyingQuestions: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['fields'],
+    },
+    maxTokens: 4096,
+    label: 'extractIntakeFromDocuments',
   });
-  console.log(`[claude] fn=extractIntakeFromDocuments docs=${documents.length} ms=${Date.now() - intakeStart} stop=${response.stop_reason} cacheRead=${response.usage?.cache_read_input_tokens ?? 0}`);
-  ensureComplete(response, 'extractIntakeFromDocuments');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  let parsed: { fields?: Partial<Record<IntakeFieldName, IntakeFieldExtraction>>; documentSummary?: string; clarifyingQuestions?: ClarifyingQuestion[] };
-  try {
-    parsed = JSON.parse(extractJson(content.text));
-  } catch (err) {
-    console.error('Failed to parse intake autofill JSON:', content.text);
-    throw new Error(`Intake extraction returned invalid JSON: ${String(err)}`);
-  }
 
   const validDocIds = new Set(documents.map((d) => d.id));
   const fields = emptyFields();
@@ -429,25 +407,35 @@ export async function synthesizeCase(
 
   const prompt = `USER-PROVIDED CASE FACTS:\n${JSON.stringify(userProvidedFacts, null, 2)}\n\nUPLOADED DOCUMENTS (${documents.length} total):\n${docsContext}`;
 
-  const synthStart = Date.now();
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 12288,
-    system: systemCached(SYNTHESIZE_SYSTEM),
-    messages: [{ role: 'user', content: prompt }],
+  return generateJSON<CaseSynthesis>({
+    system: SYNTHESIZE_SYSTEM,
+    prompt,
+    schema: {
+      type: 'object',
+      properties: {
+        timeline: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, event: { type: 'string' }, source: { type: 'string' } } } },
+        caseSummary: { type: 'string' },
+        caseStrength: { type: 'string', enum: ['strong', 'moderate', 'weak'] },
+        extractedFacts: { type: 'object' },
+        evidenceSummary: { type: 'object' },
+        missingInfo: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, consequence: { type: 'string' }, impact: { type: 'string', enum: ['high', 'medium', 'low'] }, workaround: { type: 'string' } } } },
+        caseAssessment: {
+          type: 'object',
+          properties: {
+            primaryCauseOfAction: { type: 'object', properties: { theory: { type: 'string', enum: ['breach_of_written_contract', 'breach_of_oral_contract', 'account_stated', 'quantum_meruit'] }, reasoning: { type: 'string' }, elements: { type: 'array', items: { type: 'object', properties: { element: { type: 'string' }, satisfied: { type: 'boolean' }, evidence: { type: ['string', 'null'] }, gap: { type: ['string', 'null'] } } } } } },
+            alternativeCauses: { type: 'array', items: { type: 'string' } },
+            counterclaimRisk: { type: 'object', properties: { level: { type: 'string', enum: ['low', 'medium', 'high'] }, reasoning: { type: 'string' }, signals: { type: 'array', items: { type: 'string' } } } },
+            debtorEntityNotes: { type: ['string', 'null'] },
+            recommendedStrategy: { type: 'string', enum: ['QUICK_ESCALATION', 'STANDARD_RECOVERY', 'GRADUAL_APPROACH'] },
+            strategyReasoning: { type: 'string' },
+          },
+        },
+      },
+      required: ['caseSummary', 'caseStrength', 'extractedFacts', 'evidenceSummary', 'caseAssessment'],
+    },
+    maxTokens: 12288,
+    label: 'synthesizeCase',
   });
-  console.log(`[claude] fn=synthesizeCase docs=${documents.length} ms=${Date.now() - synthStart} stop=${response.stop_reason} cacheRead=${response.usage?.cache_read_input_tokens ?? 0}`);
-  ensureComplete(response, 'synthesizeCase');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(content.text)) as CaseSynthesis;
-  } catch (e) {
-    console.error('Failed to parse Claude case synthesis. Raw response:', content.text);
-    throw new Error(`synthesizeCase returned unparseable JSON: ${String(e)}`);
-  }
 }
 
 // ─── Case synthesis verification (subjective grounding check, flag-only) ──────────
@@ -475,19 +463,23 @@ export async function verifyCaseSynthesis(
 ): Promise<CourtFormVerification> {
   const prompt = `USER-PROVIDED FACTS (ground truth):\n${JSON.stringify(userFacts, null, 2)}\n\nDOCUMENTS SUBMITTED (evidence base):\n${JSON.stringify(documents.map((d) => ({ classification: d.classification, supportsTags: d.supportsTags, summary: d.summary })), null, 2)}\n\nAI-GENERATED CASE ANALYSIS:\n${JSON.stringify(synthesis, null, 2)}`;
 
-  const resp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: systemCached(SYNTH_VERIFY_SYSTEM),
-    messages: [{ role: 'user', content: prompt }],
-  });
-  ensureComplete(resp, 'verifyCaseSynthesis');
-
-  const content = resp.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
   try {
-    const result = JSON.parse(extractJson(content.text)) as CourtFormVerification;
+    const result = await generateJSON<CourtFormVerification>({
+      system: SYNTH_VERIFY_SYSTEM,
+      prompt,
+      schema: {
+        type: 'object',
+        properties: {
+          overallStatus: { type: 'string', enum: ['verified', 'review_needed', 'issues_found'] },
+          checks: { type: 'array', items: { type: 'object', properties: { field: { type: 'string' }, status: { type: 'string', enum: ['ok', 'missing', 'mismatch', 'hallucinated'] }, expected: { type: ['string', 'null'] }, found: { type: ['string', 'null'] }, note: { type: 'string' } } } },
+          summary: { type: 'string' },
+          blankFields: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['overallStatus', 'summary'],
+      },
+      maxTokens: 4096,
+      label: 'verifyCaseSynthesis',
+    });
     result.verifiedAt = new Date().toISOString();
     return result;
   } catch {
@@ -544,18 +536,13 @@ Return a JSON object with:
 
 Return ONLY valid JSON.`;
 
-  const response = await client.messages.create({ model: MODEL, max_tokens: 4096, messages: [{ role: 'user', content: prompt }] });
-  ensureComplete(response, 'generateDemandLetter');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    const text = content.text;
-    return { text, html: paragraphsToHtml(text) };
-  }
+  return generateJSON<DemandLetterResult>({
+    system: 'You are a legal document preparation assistant for New York collections matters.',
+    prompt,
+    schema: { type: 'object', properties: { text: { type: 'string' }, html: { type: 'string' } }, required: ['text', 'html'] },
+    maxTokens: 4096,
+    label: 'generateDemandLetter',
+  });
 }
 
 // ─── Pre-filing notice ──────────────────────────────────────────────────────────
@@ -600,18 +587,13 @@ Return JSON:
 
 Return ONLY valid JSON.`;
 
-  const response = await client.messages.create({ model: MODEL, max_tokens: 2048, messages: [{ role: 'user', content: prompt }] });
-  ensureComplete(response, 'generateFinalNotice');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
-  try {
-    return JSON.parse(extractJson(content.text)) as DemandLetterResult;
-  } catch {
-    const text = content.text;
-    return { text, html: paragraphsToHtml(text) };
-  }
+  return generateJSON<DemandLetterResult>({
+    system: 'You are a legal document preparation assistant for New York collections matters.',
+    prompt,
+    schema: { type: 'object', properties: { text: { type: 'string' }, html: { type: 'string' } }, required: ['text', 'html'] },
+    maxTokens: 2048,
+    label: 'generateFinalNotice',
+  });
 }
 
 // ─── Court form (3 tracks) ──────────────────────────────────────────────────────
@@ -836,20 +818,15 @@ Instructions must use the exact courthouse address already provided: ${supremeAd
 Return ONLY valid JSON.`,
   };
 
-  const genResponse = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    system: systemCached('You are a legal document preparation assistant. Always respond with valid JSON only. No markdown, no code fences, no explanations.'),
-    messages: [{ role: 'user', content: trackPrompts[track] }],
-  });
-  ensureComplete(genResponse, 'generateCourtForm');
-
-  const genContent = genResponse.content[0];
-  if (genContent.type !== 'text') throw new Error('Unexpected response type from Claude');
-
   let result: CourtFormResult;
   try {
-    result = JSON.parse(extractJson(genContent.text)) as CourtFormResult;
+    result = await generateJSON<CourtFormResult>({
+      system: 'You are a legal document preparation assistant.',
+      prompt: trackPrompts[track],
+      schema: { type: 'object', properties: { html: { type: 'string' }, formType: { type: 'string' }, instructions: { type: 'array', items: { type: 'string' } } }, required: ['html'] },
+      maxTokens: 8192,
+      label: 'generateCourtForm',
+    });
     result.formType = result.formType || formMeta.formType;
     if (!Array.isArray(result.instructions)) result.instructions = [];
   } catch {
@@ -1111,19 +1088,14 @@ export async function assessStrategyWithResearch(
 ): Promise<StrategyAssessment> {
   const prompt = `TODAY: ${todayET()}\n\nCASE FACTS:\n${JSON.stringify(caseData, null, 2)}\n\nDEBTOR RESEARCH RESULTS:\n${JSON.stringify(lookupResults, null, 2)}`;
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: systemCached(STRATEGY_SYSTEM),
-    messages: [{ role: 'user', content: prompt }],
-  });
-  ensureComplete(response, 'assessStrategyWithResearch');
-
-  const content = response.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
-
   try {
-    return JSON.parse(extractJson(content.text)) as StrategyAssessment;
+    return await generateJSON<StrategyAssessment>({
+      system: STRATEGY_SYSTEM,
+      prompt,
+      schema: { type: 'object', properties: { strategy: { type: 'string', enum: ['QUICK_ESCALATION', 'STANDARD_RECOVERY', 'GRADUAL_APPROACH'] }, reasoning: { type: 'string' }, keyFactors: { type: 'array', items: { type: 'string' } } }, required: ['strategy', 'reasoning'] },
+      maxTokens: 2048,
+      label: 'assessStrategyWithResearch',
+    });
   } catch {
     return { strategy: 'STANDARD_RECOVERY', reasoning: 'Could not complete analysis. Please review research results manually and select a strategy.', keyFactors: ['Analysis could not be completed — re-run or select strategy manually'] };
   }

@@ -32,7 +32,7 @@ export interface JsonCallOpts {
   /** Dynamic, case-specific prompt. */
   prompt: string;
   /** JSON schema describing the tool input the model must return. */
-  schema: Anthropic.Messages.Tool.InputSchema;
+  schema: Record<string, unknown>;
   maxTokens: number;
   label: string;
   toolName?: string;
@@ -46,7 +46,7 @@ export async function generateJSON<T>(opts: JsonCallOpts): Promise<T> {
     model: MODEL,
     max_tokens: opts.maxTokens,
     system: systemCached(opts.system),
-    tools: [{ name: toolName, description: 'Return the structured result for this task.', input_schema: opts.schema }],
+    tools: [{ name: toolName, description: 'Return the structured result for this task.', input_schema: opts.schema as Anthropic.Messages.Tool.InputSchema }],
     tool_choice: { type: 'tool', name: toolName },
     messages: [{ role: 'user', content: opts.prompt }],
   });
