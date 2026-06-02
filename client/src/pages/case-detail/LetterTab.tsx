@@ -1,16 +1,13 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileText, Copy, Mail, Eye, Send } from 'lucide-react';
-import {
-  generateLetter,
-  logAction,
-  getPdfDownloadUrl,
-} from '../../lib/api';
+import { generateLetter, logAction } from '../../lib/api';
 import type { Case } from '../../types';
 import SectionCard from '../../components/ui/SectionCard';
 import EmptyState from '../../components/ui/EmptyState';
 import { RotatingFact } from './shared/RotatingFact';
 import { VerificationPanel } from './shared/VerificationPanel';
+import { PdfDownloadButton } from './shared/PdfDownloadButton';
 import { openHtmlInTab } from './shared/openHtmlInTab';
 
 export default function LetterTab({ caseData }: { caseData: Case }) {
@@ -44,7 +41,10 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
     try {
       await logAction(caseData.id, 'EMAIL_SENT', `Demand letter emailed to ${caseData.debtorEmail}`);
       queryClient.invalidateQueries({ queryKey: ['case', caseData.id] });
-    } catch { /* non-blocking */ }
+    } catch (err) {
+      // The mail client opened regardless; just note the timeline log didn't persist.
+      console.error('Failed to log EMAIL_SENT action:', err);
+    }
   };
 
   if (!caseData.demandLetterHtml && !isGenerating) {
@@ -94,13 +94,7 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
           >
             <Eye className="w-4 h-4" /> View
           </button>
-          <a
-            href={getPdfDownloadUrl(caseData.id, 'demand-letter')}
-            download="demand-letter.pdf"
-            className="btn-primary text-sm"
-          >
-            <FileText className="w-4 h-4" /> Download PDF
-          </a>
+          <PdfDownloadButton caseId={caseData.id} type="demand-letter" filename="demand-letter.pdf" />
           <button
             onClick={() => generateMutation.mutate()}
             disabled={generateMutation.isPending}

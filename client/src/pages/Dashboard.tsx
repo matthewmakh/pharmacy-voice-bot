@@ -65,7 +65,13 @@ export default function Dashboard() {
   const { data: allCases = [], isLoading, error } = useQuery({
     queryKey: ['cases'],
     queryFn: getCases,
-    refetchInterval: 10000,
+    // Only poll while something is actually in progress — otherwise the dashboard
+    // refetched every 10s indefinitely (battery/quota drain during office hours).
+    refetchInterval: (query) => {
+      const data = query.state.data ?? [];
+      const busy = data.some((c) => c.status === 'ANALYZING' || c.status === 'GENERATING');
+      return busy ? 5000 : false;
+    },
   });
 
   // Hide unfinished drafts (cases the user started uploading to but never submitted).

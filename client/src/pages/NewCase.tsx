@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Sparkles, FileText, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Sparkles, FileText, AlertTriangle, Check, HelpCircle } from 'lucide-react';
 import {
   createCase,
   createDraftCase,
@@ -9,13 +9,14 @@ import {
   autofillFromDocuments,
   submitDraftCase,
   getCase,
+  getErrorMessage,
 } from '../lib/api';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import SectionCard from '../components/ui/SectionCard';
 import UploadZone from '../components/evidence/UploadZone';
 import { RotatingFact } from './case-detail/shared/RotatingFact';
-import type { CreateCaseInput, IntakeAutofillResult, IntakeFieldName, Document } from '../types';
+import type { CreateCaseInput, IntakeAutofillResult, IntakeFieldName, ClarifyingQuestion, Document } from '../types';
 
 const ENTITY_TYPES = ['LLC', 'Corporation', 'Sole Proprietor', 'Partnership', 'Individual', 'Unknown'];
 
@@ -42,6 +43,9 @@ export default function NewCase() {
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<Date | null>(null);
   const [autofillError, setAutofillError] = useState<string | null>(null);
   const [autofillSummary, setAutofillSummary] = useState<{ filled: number; total: number } | null>(null);
+  const [docSummary, setDocSummary] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<ClarifyingQuestion[]>([]);
+  const [answeredIds, setAnsweredIds] = useState<Set<string>>(new Set());
 
   const [form, setForm] = useState<FormValues>(EMPTY_FORM);
   const [aiFilled, setAiFilled] = useState<Map<IntakeFieldName, { sourceDocId: string | null; sourceExcerpt: string | null; confidence: 'high' | 'medium' | 'low' }>>(new Map());
@@ -51,6 +55,16 @@ export default function NewCase() {
     for (const d of docs) m.set(d.id, d.originalName);
     return m;
   }, [docs]);
+
+  // Fields most users should fill before creating a case — used for a gentle pre-submit nudge.
+  const missingRecommended = useMemo(() => {
+    const m: string[] = [];
+    if (!form.debtorName && !form.debtorBusiness) m.push('Debtor name');
+    if (!form.serviceDescription) m.push('Description of services');
+    if (!form.paymentDueDate) m.push('Payment due date (drives the filing deadline)');
+    if (!form.debtorAddress) m.push('Debtor address (drives which court)');
+    return m;
+  }, [form.debtorName, form.debtorBusiness, form.serviceDescription, form.paymentDueDate, form.debtorAddress]);
 
   const submitMut = useMutation({
     mutationFn: async () => {
@@ -92,7 +106,6 @@ export default function NewCase() {
       setDocs(updated.documents);
       setUploading(false);
 
-      // Auto-trigger autofill
       setAnalyzing(true);
       setAnalyzeStartedAt(new Date());
       try {
@@ -101,10 +114,7 @@ export default function NewCase() {
         const refreshed = await getCase(workingCaseId);
         setDocs(refreshed.documents);
       } catch (err: unknown) {
-        const msg = (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
-          || (err as { message?: string })?.message
-          || 'Autofill failed';
-        setAutofillError(msg);
+        setAutofillError(getErrorMessage(err, 'Autofill failed'));
       } finally {
         setAnalyzing(false);
         setAnalyzeStartedAt(null);
@@ -122,13 +132,12 @@ export default function NewCase() {
     let filledCount = 0;
     let totalNonNull = 0;
 
-    (Object.keys(result) as IntakeFieldName[]).forEach((name) => {
-      const f = result[name];
+    (Object.keys(result.fields) as IntakeFieldName[]).forEach((name) => {
+      const f = result.fields[name];
       if (f.value === null || f.value === undefined || f.value === '') return;
       if (f.confidence === 'low') return;
       totalNonNull++;
 
-      // Coerce values into the form's expected shape
       if (name === 'amountOwed' || name === 'amountPaid') {
         const num = typeof f.value === 'number' ? f.value : parseFloat(String(f.value));
         if (!Number.isFinite(num)) return;
@@ -139,18 +148,38 @@ export default function NewCase() {
         (next as Record<string, unknown>)[name] = String(f.value);
       }
 
-      newAiFilled.set(name, {
-        sourceDocId: f.sourceDocId,
-        sourceExcerpt: f.sourceExcerpt,
-        confidence: f.confidence,
-      });
+      newAiFilled.set(name, { sourceDocId: f.sourceDocId, sourceExcerpt: f.sourceExcerpt, confidence: f.confidence });
       filledCount++;
     });
 
     setForm(next);
     setAiFilled(newAiFilled);
     setAutofillSummary({ filled: filledCount, total: totalNonNull });
+    setDocSummary(result.documentSummary || null);
+    setQuestions(result.clarifyingQuestions || []);
+    setAnsweredIds(new Set());
   }
+
+  function answerQuestion(q: ClarifyingQuestion, value: string) {
+    const v = value.trim();
+    if (!v) return;
+    if (q.field) {
+      if (q.field === 'amountOwed' || q.field === 'amountPaid') {
+        const num = parseFloat(v.replace(/[$,]/g, ''));
+        if (Number.isFinite(num)) setField(q.field, num);
+      } else if (q.field === 'hasWrittenContract') {
+        setField('hasWrittenContract', /^(y|yes|true)/i.test(v));
+      } else {
+        setField(q.field, v);
+      }
+    } else {
+      // No target field — fold the answer into notes so it isn't lost.
+      setForm((prev) => ({ ...prev, notes: `${prev.notes ? `${prev.notes}\n` : ''}${q.question} ${v}` }));
+    }
+    setAnsweredIds((prev) => new Set(prev).add(q.id));
+  }
+
+  const openQuestions = questions.filter((q) => !answeredIds.has(q.id));
 
   // ─── Render helpers ─────────────────────────────────────────────────────────
 
@@ -160,9 +189,7 @@ export default function NewCase() {
     const filename = meta.sourceDocId ? docNameById.get(meta.sourceDocId) : null;
     const tooltip = filename
       ? `Extracted from: ${filename}${meta.sourceExcerpt ? `\n\n"${meta.sourceExcerpt}"` : ''}`
-      : meta.sourceExcerpt
-      ? `"${meta.sourceExcerpt}"`
-      : 'AI-suggested — review and edit if needed';
+      : meta.sourceExcerpt ? `"${meta.sourceExcerpt}"` : 'AI-suggested — review and edit if needed';
     const tone = meta.confidence === 'high' ? 'info' : 'neutral';
     return (
       <Badge tone={tone} size="sm" title={tooltip} className="cursor-help">
@@ -181,15 +208,10 @@ export default function NewCase() {
     );
   }
 
-  // ─── Form sections ──────────────────────────────────────────────────────────
-
   return (
     <div className="min-h-screen p-4 lg:p-8">
       <div className="max-w-3xl mx-auto">
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors"
-        >
+        <button onClick={() => navigate('/')} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors">
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
@@ -197,7 +219,7 @@ export default function NewCase() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-slate-900">New Collections Case</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Upload your contracts, invoices, and emails — we'll auto-fill the form for you to review.
+            Drop in your contracts, invoices, and emails — we'll read them, pre-fill the form, and ask a couple of quick questions.
           </p>
         </div>
 
@@ -206,7 +228,7 @@ export default function NewCase() {
           <div className="flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-blue-500" />
             <h2 className="text-base font-semibold text-slate-900">Auto-fill from documents</h2>
-            <span className="text-xs text-slate-400 font-normal">(optional)</span>
+            <span className="text-xs text-slate-400 font-normal">(recommended)</span>
           </div>
           <p className="text-sm text-slate-500 mb-4">
             Drop your case documents here. We'll read them and pre-fill the form below — you can edit anything.
@@ -224,19 +246,44 @@ export default function NewCase() {
         {/* Analyzing loader */}
         {analyzing && analyzeStartedAt && (
           <div className="mb-5">
-            <RotatingFact
-              label="Reading your documents…"
-              startedAt={analyzeStartedAt}
-              estimatedSeconds={45}
-            />
+            <RotatingFact label="Reading your documents…" startedAt={analyzeStartedAt} estimatedSeconds={45} />
           </div>
         )}
 
-        {/* Autofill summary */}
-        {autofillSummary && !analyzing && (
+        {/* What we found */}
+        {docSummary && !analyzing && (
           <div className="mb-5">
-            <Alert tone="info" title={`Pre-filled ${autofillSummary.filled} field${autofillSummary.filled !== 1 ? 's' : ''} from your documents`}>
-              Review everything below — edit anything that's wrong. Fields we couldn't find are blank for you to fill in.
+            <SectionCard title={<div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-blue-500" />What we found in your documents</div>} defaultOpen>
+              <p className="text-sm text-slate-600 leading-relaxed">{docSummary}</p>
+              {autofillSummary && (
+                <p className="text-xs text-slate-400 mt-3">
+                  Pre-filled {autofillSummary.filled} field{autofillSummary.filled !== 1 ? 's' : ''}. Review everything below — fields we couldn't find are blank for you to complete.
+                </p>
+              )}
+            </SectionCard>
+          </div>
+        )}
+
+        {/* Clarifying questions */}
+        {openQuestions.length > 0 && !analyzing && (
+          <div className="mb-5">
+            <SectionCard
+              title={<div className="flex items-center gap-2"><HelpCircle className="w-4 h-4 text-amber-500" />A few quick questions ({openQuestions.length})</div>}
+              description="Answering these strengthens your case. Each answer fills the form for you."
+              defaultOpen
+            >
+              <div className="space-y-4">
+                {openQuestions.map((q) => (
+                  <QuestionItem key={q.id} q={q} onAnswer={(v) => answerQuestion(q, v)} />
+                ))}
+              </div>
+            </SectionCard>
+          </div>
+        )}
+        {questions.length > 0 && openQuestions.length === 0 && !analyzing && (
+          <div className="mb-5">
+            <Alert tone="success" title="Thanks — that's everything we needed">
+              You can still edit any answer in the form below.
             </Alert>
           </div>
         )}
@@ -250,15 +297,10 @@ export default function NewCase() {
           </div>
         )}
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            submitMut.mutate();
-          }}
-        >
+        <form onSubmit={(e) => { e.preventDefault(); submitMut.mutate(); }}>
           {/* ─── Your Business ───────────────────────────────────────────── */}
           <SectionCard title="Your Business (Claimant)" description="The party that is owed money" defaultOpen className="mb-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <FieldLabel name="claimantName">Your Name</FieldLabel>
                 <input className="input" placeholder="John Smith" value={form.claimantName ?? ''} onChange={(e) => setField('claimantName', e.target.value)} />
@@ -272,7 +314,7 @@ export default function NewCase() {
               <FieldLabel name="claimantAddress">Business Address</FieldLabel>
               <input className="input" placeholder="123 Main St, New York, NY 10001" value={form.claimantAddress ?? ''} onChange={(e) => setField('claimantAddress', e.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <div>
                 <FieldLabel name="claimantEmail">Email</FieldLabel>
                 <input className="input" type="email" placeholder="you@yourbusiness.com" value={form.claimantEmail ?? ''} onChange={(e) => setField('claimantEmail', e.target.value)} />
@@ -286,7 +328,7 @@ export default function NewCase() {
 
           {/* ─── Debtor ─────────────────────────────────────────────────── */}
           <SectionCard title="Debtor" description="The party that owes you money" defaultOpen className="mb-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <FieldLabel name="debtorName">Contact Name</FieldLabel>
                 <input className="input" placeholder="Jane Doe" value={form.debtorName ?? ''} onChange={(e) => setField('debtorName', e.target.value)} />
@@ -307,7 +349,7 @@ export default function NewCase() {
               <FieldLabel name="debtorAddress">Address</FieldLabel>
               <input className="input" placeholder="456 Client Ave, New York, NY 10002" value={form.debtorAddress ?? ''} onChange={(e) => setField('debtorAddress', e.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <div>
                 <FieldLabel name="debtorEmail">Email</FieldLabel>
                 <input className="input" type="email" placeholder="contact@theircorp.com" value={form.debtorEmail ?? ''} onChange={(e) => setField('debtorEmail', e.target.value)} />
@@ -321,7 +363,7 @@ export default function NewCase() {
 
           {/* ─── Claim Details ──────────────────────────────────────────── */}
           <SectionCard title="Claim Details" description="The amount owed and what was provided" defaultOpen className="mb-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <FieldLabel name="amountOwed">Amount Owed ($) <span className="text-red-500">*</span></FieldLabel>
                 <input className="input" type="number" step="0.01" min="0" placeholder="5000.00" required value={form.amountOwed === '' ? '' : String(form.amountOwed ?? '')} onChange={(e) => setField('amountOwed', e.target.value === '' ? '' : parseFloat(e.target.value))} />
@@ -331,6 +373,9 @@ export default function NewCase() {
                 <input className="input" type="number" step="0.01" min="0" placeholder="0.00" value={form.amountPaid === '' ? '' : String(form.amountPaid ?? '')} onChange={(e) => setField('amountPaid', e.target.value === '' ? '' : parseFloat(e.target.value))} />
               </div>
             </div>
+            {typeof form.amountOwed === 'number' && typeof form.amountPaid === 'number' && form.amountPaid > form.amountOwed && (
+              <p className="text-xs text-amber-600 mt-2">Amount paid is greater than amount owed — double-check these figures.</p>
+            )}
             <div className="mt-4">
               <FieldLabel name="invoiceNumber">Invoice / Reference Number</FieldLabel>
               <input className="input" placeholder="INV-2024-001" value={form.invoiceNumber ?? ''} onChange={(e) => setField('invoiceNumber', e.target.value)} />
@@ -339,7 +384,7 @@ export default function NewCase() {
               <FieldLabel name="serviceDescription">Description of Services or Work Performed</FieldLabel>
               <textarea className="input min-h-[100px] resize-y" placeholder="E.g. Website redesign and development completed per the agreed scope of work…" value={form.serviceDescription ?? ''} onChange={(e) => setField('serviceDescription', e.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <div>
                 <FieldLabel name="serviceStartDate">Service Start Date</FieldLabel>
                 <input className="input" type="date" value={form.serviceStartDate ?? ''} onChange={(e) => setField('serviceStartDate', e.target.value)} />
@@ -349,7 +394,7 @@ export default function NewCase() {
                 <input className="input" type="date" value={form.serviceEndDate ?? ''} onChange={(e) => setField('serviceEndDate', e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <div>
                 <FieldLabel name="invoiceDate">Invoice Date</FieldLabel>
                 <input className="input" type="date" value={form.invoiceDate ?? ''} onChange={(e) => setField('invoiceDate', e.target.value)} />
@@ -373,12 +418,7 @@ export default function NewCase() {
             </div>
             <div className="mt-4">
               <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  checked={Boolean(form.hasWrittenContract)}
-                  onChange={(e) => setField('hasWrittenContract', e.target.checked)}
-                />
+                <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" checked={Boolean(form.hasWrittenContract)} onChange={(e) => setField('hasWrittenContract', e.target.checked)} />
                 <span className="text-sm text-slate-700 font-medium">There is a written contract or formal agreement</span>
                 {aiBadgeFor('hasWrittenContract')}
               </label>
@@ -392,12 +432,12 @@ export default function NewCase() {
           {submitMut.isError && (
             <div className="mb-4">
               <Alert tone="danger" title="Failed to create case">
-                {(submitMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Please check your input and try again.'}
+                {getErrorMessage(submitMut.error, 'Please check your input and try again.')}
               </Alert>
             </div>
           )}
 
-          {!form.amountOwed && (
+          {!form.amountOwed ? (
             <div className="mb-4">
               <Alert tone="neutral">
                 <div className="flex items-center gap-2 text-sm">
@@ -406,28 +446,55 @@ export default function NewCase() {
                 </div>
               </Alert>
             </div>
-          )}
+          ) : missingRecommended.length > 0 ? (
+            <div className="mb-4">
+              <Alert tone="info" title="You can create the case now, but these will make it stronger">
+                <ul className="list-disc list-inside text-sm mt-1 space-y-0.5">
+                  {missingRecommended.map((m) => <li key={m}>{m}</li>)}
+                </ul>
+              </Alert>
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-end gap-3 pb-12">
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className="btn-secondary"
-              disabled={submitMut.isPending}
-            >
+            <button type="button" onClick={() => navigate('/')} className="btn-secondary" disabled={submitMut.isPending}>
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={submitMut.isPending || !form.amountOwed || analyzing || uploading}
-              className="btn-primary btn-lg"
-            >
+            <button type="submit" disabled={submitMut.isPending || !form.amountOwed || analyzing || uploading} className="btn-primary btn-lg">
               {submitMut.isPending ? 'Creating Case…' : 'Create Case'}
               {!submitMut.isPending && <ArrowRight className="w-4 h-4" />}
             </button>
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function QuestionItem({ q, onAnswer }: { q: ClarifyingQuestion; onAnswer: (v: string) => void }) {
+  const [value, setValue] = useState('');
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="text-sm font-medium text-slate-800">{q.question}</div>
+      {q.why && <div className="text-xs text-slate-500 mt-1">{q.why}</div>}
+      {q.suggestions && q.suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {q.suggestions.map((s) => (
+            <button key={s} type="button" onClick={() => onAnswer(s)} className="px-3 py-1 rounded-full border border-slate-300 text-xs text-slate-700 hover:bg-slate-50">
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        className="flex items-center gap-2 mt-3"
+        onSubmit={(e) => { e.preventDefault(); onAnswer(value); }}
+      >
+        <input className="input flex-1" placeholder="Type your answer…" value={value} onChange={(e) => setValue(e.target.value)} />
+        <button type="submit" disabled={!value.trim()} className="btn-secondary text-sm">
+          <Check className="w-4 h-4" /> Save
+        </button>
+      </form>
     </div>
   );
 }

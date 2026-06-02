@@ -13,7 +13,7 @@ import Alert from '../../components/ui/Alert';
 import Badge from '../../components/ui/Badge';
 import { RotatingFact } from './shared/RotatingFact';
 import { VerificationPanel } from './shared/VerificationPanel';
-import { computeSOL, SOL_STATUS_TONE } from './shared/sol';
+import { solForCase, SOL_STATUS_TONE } from './shared/sol';
 import AcrisLookup from './strategy/AcrisLookup';
 import CourtHistoryLookup from './strategy/CourtHistoryLookup';
 import NysEntityLookup from './strategy/NysEntityLookup';
@@ -82,7 +82,7 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
   const analysisEstimatedSeconds = 20 + caseData.documents.length * 12;
 
   const a = caseData.caseAssessment as CaseAssessment | null;
-  const sol = computeSOL(caseData.paymentDueDate);
+  const sol = solForCase(caseData);
 
   return (
     <div className="space-y-6">

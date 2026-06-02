@@ -5,7 +5,7 @@ import type { Case } from '../../types';
 import SectionCard from '../../components/ui/SectionCard';
 import Alert from '../../components/ui/Alert';
 import Badge from '../../components/ui/Badge';
-import { computeSOL, SOL_STATUS_TONE } from './shared/sol';
+import { solForCase, SOL_STATUS_TONE } from './shared/sol';
 import { buildSteps, type CourtTrack, type StepItem } from './filing/filingSteps';
 
 const COURT_INFO: Record<CourtTrack, { name: string; range: string; fee: string; rep: string; note: string }> = {
@@ -55,7 +55,7 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
   const outstanding = parseFloat(caseData.amountOwed || '0') - parseFloat(caseData.amountPaid || '0');
   const track: CourtTrack = outstanding <= 10000 ? 'commercial' : outstanding <= 50000 ? 'civil' : 'supreme';
   const info = COURT_INFO[track];
-  const sol = computeSOL(caseData.paymentDueDate);
+  const sol = solForCase(caseData);
   const steps: StepItem[] = buildSteps(track, !!caseData.demandLetter);
 
   const checklist = [

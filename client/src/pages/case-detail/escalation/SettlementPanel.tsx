@@ -1,11 +1,12 @@
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, FileText } from 'lucide-react';
-import { generateSettlement, generatePaymentPlan, getPdfDownloadUrl } from '../../../lib/api';
+import { CheckCircle2, Eye } from 'lucide-react';
+import { generateSettlement, generatePaymentPlan } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import { InlineProgress } from '../shared/InlineProgress';
 import { VerificationPanel } from '../shared/VerificationPanel';
+import { PdfDownloadButton } from '../shared/PdfDownloadButton';
 import { openHtmlInTab } from '../shared/openHtmlInTab';
 
 export default function SettlementPanel({ caseData }: { caseData: Case }) {
@@ -44,9 +45,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 <button onClick={() => openHtmlInTab(caseData.settlementHtml!, 'Stipulation of Settlement')} className="btn-secondary text-xs">
                   <Eye className="w-3.5 h-3.5" /> View
                 </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
+                <PdfDownloadButton caseId={caseData.id} type="settlement" filename="stipulation-of-settlement.pdf" size="xs" />
                 <button onClick={() => settlementMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
               {caseData.settlementVerification && <VerificationPanel verification={caseData.settlementVerification} />}
@@ -70,9 +69,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 <button onClick={() => openHtmlInTab(caseData.paymentPlanHtml!, 'Payment Plan Agreement')} className="btn-secondary text-xs">
                   <Eye className="w-3.5 h-3.5" /> View
                 </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
+                <PdfDownloadButton caseId={caseData.id} type="payment-plan" filename="payment-plan-agreement.pdf" size="xs" />
                 <button onClick={() => paymentPlanMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
               {caseData.paymentPlanVerification && <VerificationPanel verification={caseData.paymentPlanVerification} />}

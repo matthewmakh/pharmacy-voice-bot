@@ -19,6 +19,24 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// On an expired/invalid session, log the user out cleanly instead of surfacing a
+// generic "failed to load" error. AuthContext listens for this event.
+api.interceptors.response.use(
+  (resp) => resp,
+  (error) => {
+    if (error?.response?.status === 401) {
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+    return Promise.reject(error);
+  },
+);
+
+/** Pull a human-readable message out of an Axios error (or anything). */
+export function getErrorMessage(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  const e = err as { response?: { data?: { error?: string } }; message?: string };
+  return e?.response?.data?.error || e?.message || fallback;
+}
+
 // ─── Cases ────────────────────────────────────────────────────────────────────
 
 export const getCases = async (): Promise<CaseListItem[]> => {
@@ -124,9 +142,22 @@ export const reanalyzeDocument = async (caseId: string, docId: string): Promise<
   return data;
 };
 
-export const getDocumentViewUrl = (caseId: string, docId: string): string => {
-  const token = localStorage.getItem('token');
-  return `/api/cases/${caseId}/documents/${docId}/view?token=${token}`;
+// File access goes through the authenticated axios instance (Authorization header)
+// and is handed to the browser as a short-lived blob URL — the auth token never
+// appears in a URL, browser history, or referrer header.
+async function fetchBlobUrl(path: string): Promise<string> {
+  const { data } = await api.get(path, { responseType: 'blob' });
+  return URL.createObjectURL(data as Blob);
+}
+
+/** Object URL for previewing an uploaded document inline. Caller should revoke it. */
+export const getDocumentBlobUrl = (caseId: string, docId: string): Promise<string> =>
+  fetchBlobUrl(`/cases/${caseId}/documents/${docId}/view`);
+
+/** Download an uploaded document to disk. */
+export const downloadDocument = async (caseId: string, docId: string, filename: string): Promise<void> => {
+  const url = await fetchBlobUrl(`/cases/${caseId}/documents/${docId}/download`);
+  triggerDownload(url, filename);
 };
 
 export const lookupCourtHistory = async (caseId: string): Promise<{
@@ -267,11 +298,23 @@ export const generatePaymentPlan = async (caseId: string): Promise<Case> => {
   return data;
 };
 
-/** Returns the URL for a PDF download (authenticated via token in query string) */
-export const getPdfDownloadUrl = (caseId: string, type: 'demand-letter' | 'final-notice' | 'court-form' | 'default-judgment' | 'affidavit-of-service' | 'settlement' | 'payment-plan'): string => {
-  const token = localStorage.getItem('token');
-  return `/api/cases/${caseId}/${type}-pdf?token=${token}`;
+export type PdfType = 'demand-letter' | 'final-notice' | 'court-form' | 'default-judgment' | 'affidavit-of-service' | 'settlement' | 'payment-plan';
+
+/** Download a server-generated PDF (authenticated via header, not a query-string token). */
+export const downloadPdf = async (caseId: string, type: PdfType, filename: string): Promise<void> => {
+  const url = await fetchBlobUrl(`/cases/${caseId}/${type}-pdf`);
+  triggerDownload(url, filename);
 };
+
+function triggerDownload(objectUrl: string, filename: string) {
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
 
 export const lookupECBViolations = async (caseId: string): Promise<{
   found: boolean;

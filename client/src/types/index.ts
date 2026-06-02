@@ -205,7 +205,19 @@ export interface IntakeFieldExtraction {
   sourceExcerpt: string | null;
 }
 
-export type IntakeAutofillResult = Record<IntakeFieldName, IntakeFieldExtraction>;
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  why: string;
+  field: IntakeFieldName | null;
+  suggestions?: string[];
+}
+
+export interface IntakeAutofillResult {
+  fields: Record<IntakeFieldName, IntakeFieldExtraction>;
+  documentSummary: string;
+  clarifyingQuestions: ClarifyingQuestion[];
+}
 
 export interface CreateCaseInput {
   title?: string;

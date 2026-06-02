@@ -7,7 +7,7 @@ import type { Case, MissingInfoItem } from '../../types';
 import SectionCard from '../../components/ui/SectionCard';
 import Alert from '../../components/ui/Alert';
 import Badge, { type Tone } from '../../components/ui/Badge';
-import { computeSOL, SOL_STATUS_TONE } from './shared/sol';
+import { solForCase, SOL_STATUS_TONE } from './shared/sol';
 
 const IMPACT_TONE: Record<'high' | 'medium' | 'low', Tone> = {
   high: 'danger',
@@ -75,7 +75,13 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
     </div>
   );
 
-  const sol = computeSOL(caseData.paymentDueDate);
+  const sol = solForCase(caseData);
+
+  const isDirty = JSON.stringify(form) !== JSON.stringify(makeForm(caseData));
+  const handleCancel = () => {
+    if (isDirty && !window.confirm('Discard your unsaved changes?')) return;
+    setEditing(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -147,7 +153,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Inline edit form */}
       {editing && (
         <SectionCard title="Edit Case Details" padding="lg">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
             <div className="space-y-3">
               <div className="kbd-label mb-1">Claimant</div>
               {field('Name', 'claimantName')}
@@ -202,7 +208,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-4">
             {field('Amount Owed', 'amountOwed', 'number')}
             {field('Amount Paid', 'amountPaid', 'number')}
             {field('Invoice Number', 'invoiceNumber')}
@@ -216,7 +222,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
               Has Written Contract
             </label>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-4">
             {field('Agreement Date', 'agreementDate', 'date')}
             {field('Invoice Date', 'invoiceDate', 'date')}
             {field('Payment Due Date', 'paymentDueDate', 'date')}
@@ -236,7 +242,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
               {updateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               Save Changes
             </button>
-            <button onClick={() => setEditing(false)} className="btn-secondary">
+            <button onClick={handleCancel} className="btn-secondary">
               Cancel
             </button>
           </div>
@@ -248,7 +254,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
 
       {/* Parties */}
       {!editing && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <PartyCard label="Claimant (You)" party={{
             business: caseData.claimantBusiness,
             name: caseData.claimantName,

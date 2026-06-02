@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
@@ -36,11 +37,13 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
-          <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
-          <Route path="/*" element={<ProtectedRoutes />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+            <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );
