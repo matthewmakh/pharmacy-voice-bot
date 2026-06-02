@@ -1100,3 +1100,73 @@ export async function assessStrategyWithResearch(
     return { strategy: 'STANDARD_RECOVERY', reasoning: 'Could not complete analysis. Please review research results manually and select a strategy.', keyFactors: ['Analysis could not be completed — re-run or select strategy manually'] };
   }
 }
+
+// ─── Apply intake clarifying-question answers (proposed, reviewable updates) ───────
+
+export interface ProposedFieldUpdate {
+  field: IntakeFieldName;
+  value: string | number | boolean | null;
+  reasoning: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface ApplyAnswersResult {
+  updates: ProposedFieldUpdate[];
+  notes: string;
+}
+
+const APPLY_ANSWERS_SYSTEM = `You are finalizing a New York B2B collections intake. Earlier you extracted fields from the user's documents and asked clarifying questions; the user has now answered them. Their answers are AUTHORITATIVE — they override your earlier guesses and the documents wherever they conflict.
+
+Propose updates to ONLY the intake fields the answers actually bear on. Rules:
+1. Do NOT re-extract the whole form. Leave fields the answers don't affect — and values the user clearly set — alone. Only return a field if an answer changes it.
+2. When an answer implies a CALCULATION, do the arithmetic and put the full computation in "reasoning" so the user can check it (e.g. "base $4,000 + 3 months late × $250 = $750 late fees; nothing further paid → amountOwed $4,750"). Show each term.
+3. Each update needs concrete "reasoning" that cites the user's answer (and any document figure you used). Use confidence "high" only when the answer states it plainly or the math is unambiguous.
+4. amountOwed/amountPaid are numbers (no symbols or commas). Dates are ISO YYYY-MM-DD. hasWrittenContract is boolean. Use only the fixed intake field names.
+5. "notes": 1–3 sentences summarizing what you changed and any assumption you had to make, so the user can correct it.
+
+Return ONLY JSON: { "notes": "...", "updates": [ { "field": "<intake field>", "value": <new value>, "reasoning": "...", "confidence": "high|medium|low" } ] }`;
+
+export async function applyIntakeAnswers(
+  documents: Array<{ id: string; originalName: string; extractedText: string }>,
+  currentFields: Record<string, unknown>,
+  answers: Array<{ question: string; answer: string; field: string | null }>,
+): Promise<ApplyAnswersResult> {
+  const docsContext = documents.length
+    ? documents.map((d, i) => `=== Document ${i + 1} (${d.originalName}) ===\n${d.extractedText.slice(0, 8000)}`).join('\n\n')
+    : '(no documents on file)';
+
+  const prompt = `CURRENT INTAKE VALUES (the user may have edited these — treat as their input):
+${JSON.stringify(currentFields, null, 2)}
+
+THE USER'S ANSWERS TO YOUR CLARIFYING QUESTIONS (authoritative):
+${answers.map((a) => `Q: ${a.question}${a.field ? ` [relates to: ${a.field}]` : ''}\nA: ${a.answer}`).join('\n\n')}
+
+SUPPORTING DOCUMENTS (for figures such as rates):
+${docsContext}`;
+
+  const result = await generateJSON<ApplyAnswersResult>({
+    system: APPLY_ANSWERS_SYSTEM,
+    prompt,
+    schema: {
+      type: 'object',
+      properties: {
+        notes: { type: 'string' },
+        updates: { type: 'array', items: { type: 'object', properties: { field: { type: 'string' }, value: {}, reasoning: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } }, required: ['field', 'value', 'reasoning'] } },
+      },
+      required: ['updates'],
+    },
+    maxTokens: 2048,
+    label: 'applyIntakeAnswers',
+  });
+
+  const valid = new Set<string>(INTAKE_FIELD_NAMES);
+  const updates: ProposedFieldUpdate[] = (Array.isArray(result.updates) ? result.updates : [])
+    .filter((u) => u && valid.has(u.field as string))
+    .map((u) => ({
+      field: u.field as IntakeFieldName,
+      value: (u.value as string | number | boolean | null) ?? null,
+      reasoning: typeof u.reasoning === 'string' ? u.reasoning : '',
+      confidence: u.confidence === 'high' || u.confidence === 'medium' || u.confidence === 'low' ? u.confidence : 'medium',
+    }));
+  return { updates, notes: typeof result.notes === 'string' ? result.notes : '' };
+}

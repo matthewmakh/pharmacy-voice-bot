@@ -1,5 +1,16 @@
 import axios from 'axios';
-import type { Case, CaseListItem, CreateCaseInput, Document, IntakeAutofillResult, Strategy } from '../types';
+import type { Case, CaseListItem, CreateCaseInput, Document, IntakeAutofillResult, IntakeFieldName, Strategy } from '../types';
+
+export interface ProposedFieldUpdate {
+  field: IntakeFieldName;
+  value: string | number | boolean | null;
+  reasoning: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+export interface ApplyAnswersResult {
+  updates: ProposedFieldUpdate[];
+  notes: string;
+}
 
 export interface StrategyAssessment {
   strategy: 'QUICK_ESCALATION' | 'STANDARD_RECOVERY' | 'GRADUAL_APPROACH';
@@ -61,6 +72,15 @@ export const createDraftCase = async (): Promise<Case> => {
 
 export const autofillFromDocuments = async (caseId: string): Promise<IntakeAutofillResult> => {
   const { data } = await api.post(`/cases/${caseId}/autofill`, undefined, { timeout: 180000 });
+  return data;
+};
+
+export const applyIntakeAnswers = async (
+  caseId: string,
+  currentFields: Record<string, unknown>,
+  answers: Array<{ question: string; answer: string; field: string | null }>,
+): Promise<ApplyAnswersResult> => {
+  const { data } = await api.post(`/cases/${caseId}/apply-answers`, { currentFields, answers }, { timeout: 120000 });
   return data;
 };
 

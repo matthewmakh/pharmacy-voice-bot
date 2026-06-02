@@ -1,15 +1,17 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Sparkles, FileText, AlertTriangle, Check, HelpCircle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Sparkles, FileText, AlertTriangle, Check, HelpCircle, Wand2, Loader2, X, Pencil } from 'lucide-react';
 import {
   createCase,
   createDraftCase,
   uploadDocuments,
   autofillFromDocuments,
+  applyIntakeAnswers,
   submitDraftCase,
   getCase,
   getErrorMessage,
+  type ProposedFieldUpdate,
 } from '../lib/api';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -19,6 +21,17 @@ import { RotatingFact } from './case-detail/shared/RotatingFact';
 import type { CreateCaseInput, IntakeAutofillResult, IntakeFieldName, ClarifyingQuestion, Document } from '../types';
 
 const ENTITY_TYPES = ['LLC', 'Corporation', 'Sole Proprietor', 'Partnership', 'Individual', 'Unknown'];
+
+const FIELD_LABELS: Record<IntakeFieldName, string> = {
+  claimantName: 'Your name', claimantBusiness: 'Your business', claimantAddress: 'Your address',
+  claimantEmail: 'Your email', claimantPhone: 'Your phone',
+  debtorName: 'Debtor contact', debtorBusiness: 'Debtor business', debtorAddress: 'Debtor address',
+  debtorEmail: 'Debtor email', debtorPhone: 'Debtor phone', debtorEntityType: 'Debtor entity type',
+  amountOwed: 'Amount owed', amountPaid: 'Amount paid', serviceDescription: 'Services / work',
+  agreementDate: 'Agreement date', serviceStartDate: 'Service start', serviceEndDate: 'Service end',
+  invoiceDate: 'Invoice date', paymentDueDate: 'Payment due date', hasWrittenContract: 'Written contract',
+  invoiceNumber: 'Invoice number', industry: 'Industry',
+};
 
 type FormValues = {
   [K in keyof CreateCaseInput]: CreateCaseInput[K] | '';
@@ -32,6 +45,21 @@ const EMPTY_FORM: FormValues = {
   hasWrittenContract: false, invoiceNumber: '', industry: '', notes: '',
 };
 
+function coerceValue(field: IntakeFieldName, value: unknown): string | number | boolean {
+  if (field === 'amountOwed' || field === 'amountPaid') {
+    const n = typeof value === 'number' ? value : parseFloat(String(value).replace(/[$,]/g, ''));
+    return Number.isFinite(n) ? n : '';
+  }
+  if (field === 'hasWrittenContract') return typeof value === 'boolean' ? value : /^(y|yes|true)/i.test(String(value));
+  return value == null ? '' : String(value);
+}
+
+function displayValue(v: unknown): string {
+  if (v === '' || v == null) return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  return String(v);
+}
+
 export default function NewCase() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -44,8 +72,15 @@ export default function NewCase() {
   const [autofillError, setAutofillError] = useState<string | null>(null);
   const [autofillSummary, setAutofillSummary] = useState<{ filled: number; total: number } | null>(null);
   const [docSummary, setDocSummary] = useState<string | null>(null);
+
   const [questions, setQuestions] = useState<ClarifyingQuestion[]>([]);
-  const [answeredIds, setAnsweredIds] = useState<Set<string>>(new Set());
+  // Saved answers (pinned, editable) — keyed by question id. They are NOT applied to the
+  // form until the user runs "Save & submit all", which sends them all in one AI pass.
+  const [savedAnswers, setSavedAnswers] = useState<Record<string, string>>({});
+  // Proposed field changes returned by that pass, awaiting per-item accept/discard.
+  const [proposed, setProposed] = useState<ProposedFieldUpdate[] | null>(null);
+  const [applyNotes, setApplyNotes] = useState<string>('');
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormValues>(EMPTY_FORM);
   const [aiFilled, setAiFilled] = useState<Map<IntakeFieldName, { sourceDocId: string | null; sourceExcerpt: string | null; confidence: 'high' | 'medium' | 'low' }>>(new Map());
@@ -56,7 +91,6 @@ export default function NewCase() {
     return m;
   }, [docs]);
 
-  // Fields most users should fill before creating a case — used for a gentle pre-submit nudge.
   const missingRecommended = useMemo(() => {
     const m: string[] = [];
     if (!form.debtorName && !form.debtorBusiness) m.push('Debtor name');
@@ -76,6 +110,21 @@ export default function NewCase() {
       queryClient.invalidateQueries({ queryKey: ['cases'] });
       navigate(`/cases/${data.id}`);
     },
+  });
+
+  const applyMut = useMutation({
+    mutationFn: () => {
+      const answers = questions
+        .filter((q) => (savedAnswers[q.id] ?? '').trim().length > 0)
+        .map((q) => ({ question: q.question, answer: savedAnswers[q.id].trim(), field: q.field }));
+      return applyIntakeAnswers(caseId!, cleanFormValues(form) as Record<string, unknown>, answers);
+    },
+    onSuccess: (result) => {
+      setProposed(result.updates);
+      setApplyNotes(result.notes);
+      setApplyError(null);
+    },
+    onError: (err) => setApplyError(getErrorMessage(err, 'Could not process your answers — try again.')),
   });
 
   // ─── Handlers ───────────────────────────────────────────────────────────────
@@ -137,17 +186,7 @@ export default function NewCase() {
       if (f.value === null || f.value === undefined || f.value === '') return;
       if (f.confidence === 'low') return;
       totalNonNull++;
-
-      if (name === 'amountOwed' || name === 'amountPaid') {
-        const num = typeof f.value === 'number' ? f.value : parseFloat(String(f.value));
-        if (!Number.isFinite(num)) return;
-        (next as Record<string, unknown>)[name] = num;
-      } else if (name === 'hasWrittenContract') {
-        (next as Record<string, unknown>)[name] = Boolean(f.value);
-      } else {
-        (next as Record<string, unknown>)[name] = String(f.value);
-      }
-
+      (next as Record<string, unknown>)[name] = coerceValue(name, f.value);
       newAiFilled.set(name, { sourceDocId: f.sourceDocId, sourceExcerpt: f.sourceExcerpt, confidence: f.confidence });
       filledCount++;
     });
@@ -157,29 +196,21 @@ export default function NewCase() {
     setAutofillSummary({ filled: filledCount, total: totalNonNull });
     setDocSummary(result.documentSummary || null);
     setQuestions(result.clarifyingQuestions || []);
-    setAnsweredIds(new Set());
+    setSavedAnswers({});
+    setProposed(null);
   }
 
-  function answerQuestion(q: ClarifyingQuestion, value: string) {
-    const v = value.trim();
-    if (!v) return;
-    if (q.field) {
-      if (q.field === 'amountOwed' || q.field === 'amountPaid') {
-        const num = parseFloat(v.replace(/[$,]/g, ''));
-        if (Number.isFinite(num)) setField(q.field, num);
-      } else if (q.field === 'hasWrittenContract') {
-        setField('hasWrittenContract', /^(y|yes|true)/i.test(v));
-      } else {
-        setField(q.field, v);
-      }
-    } else {
-      // No target field — fold the answer into notes so it isn't lost.
-      setForm((prev) => ({ ...prev, notes: `${prev.notes ? `${prev.notes}\n` : ''}${q.question} ${v}` }));
-    }
-    setAnsweredIds((prev) => new Set(prev).add(q.id));
+  function acceptUpdate(u: ProposedFieldUpdate) {
+    setField(u.field, coerceValue(u.field, u.value) as FormValues[typeof u.field]);
+    // Reuse the AI badge mechanism — the reasoning shows as the field's hover tooltip.
+    setAiFilled((prev) => new Map(prev).set(u.field, { sourceDocId: null, sourceExcerpt: u.reasoning, confidence: u.confidence }));
+    setProposed((prev) => (prev ? prev.filter((p) => p !== u) : prev));
+  }
+  function discardUpdate(u: ProposedFieldUpdate) {
+    setProposed((prev) => (prev ? prev.filter((p) => p !== u) : prev));
   }
 
-  const openQuestions = questions.filter((q) => !answeredIds.has(q.id));
+  const savedCount = questions.filter((q) => (savedAnswers[q.id] ?? '').trim().length > 0).length;
 
   // ─── Render helpers ─────────────────────────────────────────────────────────
 
@@ -189,7 +220,7 @@ export default function NewCase() {
     const filename = meta.sourceDocId ? docNameById.get(meta.sourceDocId) : null;
     const tooltip = filename
       ? `Extracted from: ${filename}${meta.sourceExcerpt ? `\n\n"${meta.sourceExcerpt}"` : ''}`
-      : meta.sourceExcerpt ? `"${meta.sourceExcerpt}"` : 'AI-suggested — review and edit if needed';
+      : meta.sourceExcerpt ? meta.sourceExcerpt : 'AI-suggested — review and edit if needed';
     const tone = meta.confidence === 'high' ? 'info' : 'neutral';
     return (
       <Badge tone={tone} size="sm" title={tooltip} className="cursor-help">
@@ -234,7 +265,6 @@ export default function NewCase() {
             Drop your case documents here. We'll read them and pre-fill the form below — you can edit anything.
           </p>
           <UploadZone onUpload={handleUpload} uploading={uploading} />
-
           {docs.length > 0 && !uploading && !analyzing && (
             <div className="mt-3 text-xs text-slate-500 flex items-center gap-2">
               <FileText className="w-3.5 h-3.5 text-slate-400" />
@@ -243,14 +273,12 @@ export default function NewCase() {
           )}
         </div>
 
-        {/* Analyzing loader */}
         {analyzing && analyzeStartedAt && (
           <div className="mb-5">
             <RotatingFact label="Reading your documents…" startedAt={analyzeStartedAt} estimatedSeconds={45} />
           </div>
         )}
 
-        {/* What we found */}
         {docSummary && !analyzing && (
           <div className="mb-5">
             <SectionCard title={<div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-blue-500" />What we found in your documents</div>} defaultOpen>
@@ -264,31 +292,80 @@ export default function NewCase() {
           </div>
         )}
 
-        {/* Clarifying questions */}
-        {openQuestions.length > 0 && !analyzing && (
+        {/* Clarifying questions — answers are saved/pinned, then applied together */}
+        {questions.length > 0 && !analyzing && (
           <div className="mb-5">
             <SectionCard
-              title={<div className="flex items-center gap-2"><HelpCircle className="w-4 h-4 text-amber-500" />A few quick questions ({openQuestions.length})</div>}
-              description="Answering these strengthens your case. Each answer fills the form for you."
+              title={<div className="flex items-center gap-2"><HelpCircle className="w-4 h-4 text-amber-500" />A few quick questions</div>}
+              description="Answer what you can — including anything that needs math (penalties, partial payments, per-item pricing). Save each one; then “Save &amp; submit all” and we'll turn them into proposed updates you can review before they touch the form."
               defaultOpen
             >
-              <div className="space-y-4">
-                {openQuestions.map((q) => (
-                  <QuestionItem key={q.id} q={q} onAnswer={(v) => answerQuestion(q, v)} />
+              <div className="space-y-3">
+                {questions.map((q) => (
+                  <QuestionItem
+                    key={q.id}
+                    q={q}
+                    saved={savedAnswers[q.id]}
+                    onSave={(v) => setSavedAnswers((prev) => ({ ...prev, [q.id]: v }))}
+                    onClear={() => setSavedAnswers((prev) => { const next = { ...prev }; delete next[q.id]; return next; })}
+                  />
                 ))}
               </div>
+
+              <div className="flex items-center justify-between gap-3 mt-4 pt-4 border-t border-slate-100">
+                <span className="text-xs text-slate-500">{savedCount} answer{savedCount !== 1 ? 's' : ''} saved</span>
+                <button
+                  onClick={() => applyMut.mutate()}
+                  disabled={savedCount === 0 || applyMut.isPending}
+                  className="btn-primary text-sm"
+                >
+                  {applyMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                  {applyMut.isPending ? 'Working through your answers…' : 'Save & submit all'}
+                </button>
+              </div>
+              {applyError && <p className="text-xs text-red-600 mt-2">{applyError}</p>}
             </SectionCard>
           </div>
         )}
-        {questions.length > 0 && openQuestions.length === 0 && !analyzing && (
+
+        {/* Review proposed changes before they touch the form */}
+        {proposed && (
           <div className="mb-5">
-            <Alert tone="success" title="Thanks — that's everything we needed">
-              You can still edit any answer in the form below.
-            </Alert>
+            <SectionCard
+              title={<div className="flex items-center gap-2"><Wand2 className="w-4 h-4 text-blue-500" />Proposed changes from your answers</div>}
+              description="Nothing has changed yet. Accept each update to apply it, or discard it. Accepted fields are marked AI so you can tweak them after."
+              defaultOpen
+              action={<button onClick={() => setProposed(null)} className="text-xs text-slate-400 hover:text-slate-600 inline-flex items-center gap-1"><X className="w-3.5 h-3.5" />Close</button>}
+            >
+              {applyNotes && <Alert tone="info" title="What we did">{applyNotes}</Alert>}
+              {proposed.length === 0 ? (
+                <p className="text-sm text-slate-500 mt-3">No further changes — your answers matched what's already in the form.</p>
+              ) : (
+                <div className="space-y-3 mt-3">
+                  {proposed.map((u, i) => (
+                    <div key={i} className="rounded-xl border border-slate-200 p-4">
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <span className="text-sm font-semibold text-slate-800">{FIELD_LABELS[u.field]}</span>
+                        <Badge tone={u.confidence === 'high' ? 'info' : 'neutral'} size="sm"><Sparkles className="w-3 h-3" />AI</Badge>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm mb-2 flex-wrap">
+                        <span className="text-slate-400 line-through">{displayValue(form[u.field as keyof FormValues])}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-medium text-slate-900">{displayValue(u.value)}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 leading-relaxed">{u.reasoning}</p>
+                      <div className="flex items-center gap-2 mt-3">
+                        <button onClick={() => acceptUpdate(u)} className="btn-primary text-xs"><Check className="w-3.5 h-3.5" />Accept</button>
+                        <button onClick={() => discardUpdate(u)} className="btn-ghost text-xs">Discard</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionCard>
           </div>
         )}
 
-        {/* Autofill error */}
         {autofillError && (
           <div className="mb-5">
             <Alert tone="warning" title="Auto-fill couldn't read your documents">
@@ -298,7 +375,6 @@ export default function NewCase() {
         )}
 
         <form onSubmit={(e) => { e.preventDefault(); submitMut.mutate(); }}>
-          {/* ─── Your Business ───────────────────────────────────────────── */}
           <SectionCard title="Your Business (Claimant)" description="The party that is owed money" defaultOpen className="mb-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -326,7 +402,6 @@ export default function NewCase() {
             </div>
           </SectionCard>
 
-          {/* ─── Debtor ─────────────────────────────────────────────────── */}
           <SectionCard title="Debtor" description="The party that owes you money" defaultOpen className="mb-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -361,7 +436,6 @@ export default function NewCase() {
             </div>
           </SectionCard>
 
-          {/* ─── Claim Details ──────────────────────────────────────────── */}
           <SectionCard title="Claim Details" description="The amount owed and what was provided" defaultOpen className="mb-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -410,7 +484,6 @@ export default function NewCase() {
             </div>
           </SectionCard>
 
-          {/* ─── Agreement ──────────────────────────────────────────────── */}
           <SectionCard title="Agreement & Notes" description="Contract details and any other context" defaultOpen className="mb-4">
             <div>
               <FieldLabel name="agreementDate">Agreement Date</FieldLabel>
@@ -431,9 +504,7 @@ export default function NewCase() {
 
           {submitMut.isError && (
             <div className="mb-4">
-              <Alert tone="danger" title="Failed to create case">
-                {getErrorMessage(submitMut.error, 'Please check your input and try again.')}
-              </Alert>
+              <Alert tone="danger" title="Failed to create case">{getErrorMessage(submitMut.error, 'Please check your input and try again.')}</Alert>
             </div>
           )}
 
@@ -457,9 +528,7 @@ export default function NewCase() {
           ) : null}
 
           <div className="flex items-center justify-end gap-3 pb-12">
-            <button type="button" onClick={() => navigate('/')} className="btn-secondary" disabled={submitMut.isPending}>
-              Cancel
-            </button>
+            <button type="button" onClick={() => navigate('/')} className="btn-secondary" disabled={submitMut.isPending}>Cancel</button>
             <button type="submit" disabled={submitMut.isPending || !form.amountOwed || analyzing || uploading} className="btn-primary btn-lg">
               {submitMut.isPending ? 'Creating Case…' : 'Create Case'}
               {!submitMut.isPending && <ArrowRight className="w-4 h-4" />}
@@ -471,8 +540,29 @@ export default function NewCase() {
   );
 }
 
-function QuestionItem({ q, onAnswer }: { q: ClarifyingQuestion; onAnswer: (v: string) => void }) {
-  const [value, setValue] = useState('');
+function QuestionItem({ q, saved, onSave, onClear }: { q: ClarifyingQuestion; saved: string | undefined; onSave: (v: string) => void; onClear: () => void }) {
+  const isSaved = (saved ?? '').trim().length > 0;
+  const [value, setValue] = useState(saved ?? '');
+  const [editing, setEditing] = useState(false);
+  const open = !isSaved || editing;
+
+  if (!open) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-slate-800 flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />{q.question}</div>
+            <div className="text-sm text-slate-600 mt-1 break-words">{saved}</div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => { setValue(saved ?? ''); setEditing(true); }} className="p-1.5 text-slate-400 hover:text-blue-600" title="Edit answer"><Pencil className="w-3.5 h-3.5" /></button>
+            <button onClick={onClear} className="p-1.5 text-slate-400 hover:text-red-500" title="Remove answer"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <div className="text-sm font-medium text-slate-800">{q.question}</div>
@@ -480,20 +570,13 @@ function QuestionItem({ q, onAnswer }: { q: ClarifyingQuestion; onAnswer: (v: st
       {q.suggestions && q.suggestions.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-3">
           {q.suggestions.map((s) => (
-            <button key={s} type="button" onClick={() => onAnswer(s)} className="px-3 py-1 rounded-full border border-slate-300 text-xs text-slate-700 hover:bg-slate-50">
-              {s}
-            </button>
+            <button key={s} type="button" onClick={() => setValue(s)} className="px-3 py-1 rounded-full border border-slate-300 text-xs text-slate-700 hover:bg-slate-50">{s}</button>
           ))}
         </div>
       )}
-      <form
-        className="flex items-center gap-2 mt-3"
-        onSubmit={(e) => { e.preventDefault(); onAnswer(value); }}
-      >
-        <input className="input flex-1" placeholder="Type your answer…" value={value} onChange={(e) => setValue(e.target.value)} />
-        <button type="submit" disabled={!value.trim()} className="btn-secondary text-sm">
-          <Check className="w-4 h-4" /> Save
-        </button>
+      <form className="flex items-start gap-2 mt-3" onSubmit={(e) => { e.preventDefault(); if (value.trim()) { onSave(value.trim()); setEditing(false); } }}>
+        <textarea className="input flex-1 min-h-[44px] resize-y" placeholder="Type your answer — include any details or math…" value={value} onChange={(e) => setValue(e.target.value)} />
+        <button type="submit" disabled={!value.trim()} className="btn-secondary text-sm shrink-0"><Check className="w-4 h-4" />Save</button>
       </form>
     </div>
   );

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyCaseSynthesis, extractIntakeFromDocuments } from '../services/claude';
+import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCourtForm, generateDefaultJudgment, assessStrategyWithResearch, generateAffidavitOfService, generateStipulationOfSettlement, generatePaymentPlanAgreement, verifyCaseSynthesis, extractIntakeFromDocuments, applyIntakeAnswers } from '../services/claude';
 import { verifyDocumentFacts, reviseDocument } from '../services/verify';
 import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { trackForAmount, outstandingBalance } from '../lib/legal';
@@ -306,6 +306,39 @@ router.post('/:id/autofill', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Autofill error:', err);
     res.status(500).json({ error: 'Autofill failed', details: String(err) });
+  }
+});
+
+// POST /api/cases/:id/apply-answers — turn clarifying-question answers into PROPOSED
+// field updates (with reasoning/math). Does not persist; the client reviews + applies.
+router.post('/:id/apply-answers', async (req: Request, res: Response) => {
+  try {
+    const body = z.object({
+      currentFields: z.record(z.unknown()).optional(),
+      answers: z.array(z.object({ question: z.string(), answer: z.string(), field: z.string().nullable().optional() })).min(1),
+    }).parse(req.body);
+
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
+      include: { documents: true },
+    });
+    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
+    if (caseData.status !== 'DRAFT') { res.status(400).json({ error: 'Answers can only be applied to a draft case' }); return; }
+
+    const ready = caseData.documents
+      .filter((d) => typeof d.extractedText === 'string' && d.extractedText.length > 0)
+      .map((d) => ({ id: d.id, originalName: d.originalName, extractedText: d.extractedText! }));
+
+    const result = await applyIntakeAnswers(
+      ready,
+      (body.currentFields ?? {}) as Record<string, unknown>,
+      body.answers.map((a) => ({ question: a.question, answer: a.answer, field: a.field ?? null })),
+    );
+    res.json(result);
+  } catch (err) {
+    if (err instanceof z.ZodError) { res.status(400).json({ error: err.errors[0].message }); return; }
+    console.error('Apply answers error:', err);
+    res.status(500).json({ error: 'Failed to apply answers', details: String(err) });
   }
 });
 
