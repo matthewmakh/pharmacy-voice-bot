@@ -290,12 +290,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
             defaultOpen={!(caseData.acrisResult || caseData.courtHistory || caseData.entityResult || caseData.uccResult || caseData.ecbResult || caseData.pacerResult)}
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <AcrisLookup caseId={caseData.id} />
-              <CourtHistoryLookup caseId={caseData.id} />
-              <NysEntityLookup caseId={caseData.id} />
-              <EcbLookup caseId={caseData.id} />
-              <UccLookup caseId={caseData.id} />
-              <PacerLookup caseId={caseData.id} />
+              <AcrisLookup caseData={caseData} />
+              <CourtHistoryLookup caseData={caseData} />
+              <NysEntityLookup caseData={caseData} />
+              <EcbLookup caseData={caseData} />
+              <UccLookup caseData={caseData} />
+              <PacerLookup caseData={caseData} />
             </div>
           </SectionCard>
         </>

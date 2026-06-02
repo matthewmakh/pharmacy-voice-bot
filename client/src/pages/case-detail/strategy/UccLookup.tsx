@@ -1,40 +1,24 @@
-import { useState } from 'react';
-import { lookupUCCFilings } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { UccResult } from './lookupTypes';
 
-export default function UccLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<UccResult | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupUCCFilings(caseId));
-    } catch {
-      setResult({ found: false, totalFilings: 0, activeFilings: 0, filings: [], searchedName: '', note: '', error: 'UCC lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export default function UccLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<UccResult>
+      caseData={caseData}
+      lookupKey="ucc"
+      field="uccResult"
       title="NYS UCC Filings (Secured Creditors)"
       description="Check if any secured creditors have existing UCC liens on debtor assets. A judgment lien is subordinate to prior UCC filings. Requires CAPTCHA solving (~40s)."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Search UCC"
       runningLabel="Solving CAPTCHA…"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <div className="text-xs space-y-1">
           <p className="text-red-600">{result.error}</p>
           {result.scraperNote && <p className="text-slate-400 italic">{result.scraperNote}</p>}
         </div>
-      ) : result?.found && result.filings.length > 0 ? (
+      ) : result.found && result.filings.length > 0 ? (
         <>
           <Badge tone={result.activeFilings > 0 ? 'warning' : 'neutral'} size="sm">
             {result.activeFilings > 0
@@ -60,8 +44,8 @@ export default function UccLookup({ caseId }: { caseId: string }) {
           </div>
         </>
       ) : (
-        <p className="text-xs text-slate-600 leading-relaxed">{result?.note}</p>
+        <p className="text-xs text-slate-600 leading-relaxed">{result.note}</p>
       )}
-    </LookupCard>
+    />
   );
 }

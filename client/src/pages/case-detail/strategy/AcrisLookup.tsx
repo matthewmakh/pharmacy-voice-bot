@@ -1,36 +1,20 @@
-import { useState } from 'react';
-import { lookupACRIS } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { AcrisResult } from './lookupTypes';
 
-export default function AcrisLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<AcrisResult | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupACRIS(caseId));
-    } catch {
-      setResult({ found: false, totalRecords: 0, asGrantee: 0, asGrantor: 0, searchedName: '', note: '', error: 'Lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export default function AcrisLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<AcrisResult>
+      caseData={caseData}
+      lookupKey="acris"
+      field="acrisResult"
       title="NYC Property Records (ACRIS)"
       description="Check if the debtor owns NYC real property — a post-judgment lien can prevent them from selling or refinancing."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Run ACRIS Lookup"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <p className="text-xs text-slate-500">{result.error}</p>
-      ) : result && (
+      ) : (
         <>
           <div className="flex items-center gap-2 text-xs">
             <Badge tone={result.found ? 'success' : 'neutral'} size="sm">
@@ -46,6 +30,6 @@ export default function AcrisLookup({ caseId }: { caseId: string }) {
           )}
         </>
       )}
-    </LookupCard>
+    />
   );
 }

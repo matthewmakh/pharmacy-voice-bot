@@ -76,7 +76,8 @@ export default function CaseDetail() {
       const docsAnalyzing = data.documents.some(
         (d) => d.classification === null && !d.analysisError && Date.now() - new Date(d.uploadedAt).getTime() < DOC_POLL_MAX_AGE_MS,
       );
-      return busy || docsAnalyzing ? 3000 : false;
+      const lookupRunning = Object.values(data.lookupMeta ?? {}).some((m) => m?.status === 'running');
+      return busy || docsAnalyzing || lookupRunning ? 3000 : false;
     },
   });
 

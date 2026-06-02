@@ -1,39 +1,23 @@
-import { useState } from 'react';
-import { lookupECBViolations } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge, { type Tone } from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { EcbResult } from './lookupTypes';
 
-export default function EcbLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<EcbResult | null>(null);
-  const [loading, setLoading] = useState(false);
+const outstandingTone = (amount: number): Tone =>
+  amount > 50000 ? 'danger' : amount > 5000 ? 'warning' : 'neutral';
 
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupECBViolations(caseId));
-    } catch {
-      setResult({ found: false, totalViolations: 0, totalImposed: 0, totalOutstanding: 0, unpaidViolations: 0, violations: [], searchedName: '', note: '', error: 'ECB lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const outstandingTone = (amount: number): Tone =>
-    amount > 50000 ? 'danger' : amount > 5000 ? 'warning' : 'neutral';
-
+export default function EcbLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<EcbResult>
+      caseData={caseData}
+      lookupKey="ecb"
+      field="ecbResult"
       title="NYC Code Violations (ECB/OATH)"
       description="Check for unpaid NYC code violation fines. Large outstanding balances are a collectability red flag."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Check Violations"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <p className="text-xs text-red-600">{result.error}</p>
-      ) : result?.found ? (
+      ) : result.found ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge tone="neutral" size="sm">{result.totalViolations} violation(s)</Badge>
@@ -63,8 +47,8 @@ export default function EcbLookup({ caseId }: { caseId: string }) {
           )}
         </>
       ) : (
-        <p className="text-xs text-slate-600 leading-relaxed">{result?.note}</p>
+        <p className="text-xs text-slate-600 leading-relaxed">{result.note}</p>
       )}
-    </LookupCard>
+    />
   );
 }

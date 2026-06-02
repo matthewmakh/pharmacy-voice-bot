@@ -173,6 +173,7 @@ export interface Case {
   uccResult: Record<string, unknown> | null;
   ecbResult: Record<string, unknown> | null;
   pacerResult: Record<string, unknown> | null;
+  lookupMeta: Record<string, { status: 'running' | 'done' | 'error'; fetchedAt?: string; startedAt?: string; error?: string }> | null;
 
   // Additional pre-trial documents
   affidavitOfServiceHtml: string | null;

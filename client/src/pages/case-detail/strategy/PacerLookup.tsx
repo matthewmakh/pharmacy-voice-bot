@@ -1,46 +1,30 @@
-import { useState } from 'react';
-import { lookupPACERBankruptcy } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge, { type Tone } from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { PacerResult } from './lookupTypes';
 
-export default function PacerLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<PacerResult | null>(null);
-  const [loading, setLoading] = useState(false);
+const headlineTone = (r: PacerResult): Tone => {
+  if (r.activeCases > 0) return 'danger';
+  if (r.found) return 'warning';
+  return 'success';
+};
 
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupPACERBankruptcy(caseId));
-    } catch {
-      setResult({ found: false, totalCases: 0, activeCases: 0, cases: [], searchedName: '', note: '', error: 'PACER lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const headlineTone = (r: PacerResult): Tone => {
-    if (r.activeCases > 0) return 'danger';
-    if (r.found) return 'warning';
-    return 'success';
-  };
-
+export default function PacerLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<PacerResult>
+      caseData={caseData}
+      lookupKey="pacer"
+      field="pacerResult"
       title="Federal Bankruptcy (PACER)"
       description="Check PACER for active federal bankruptcy filings. An active automatic stay means you cannot collect — attempting to do so is a federal violation."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Check Bankruptcy"
       runningLabel="Checking PACER…"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <div className="text-xs space-y-1">
           <p className="text-red-600">{result.error}</p>
           {result.scraperNote && <p className="text-slate-400 italic">{result.scraperNote}</p>}
         </div>
-      ) : result && (
+      ) : (
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge tone={headlineTone(result)} size="sm">
@@ -58,10 +42,7 @@ export default function PacerLookup({ caseId }: { caseId: string }) {
                 <div key={i} className="p-2.5 rounded border border-slate-200 bg-white text-xs space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono font-semibold text-slate-700">{bc.caseNumber}</span>
-                    <Badge
-                      tone={bc.automaticStayActive ? 'danger' : bc.status === 'Discharged' ? 'warning' : 'neutral'}
-                      size="sm"
-                    >
+                    <Badge tone={bc.automaticStayActive ? 'danger' : bc.status === 'Discharged' ? 'warning' : 'neutral'} size="sm">
                       {bc.status}
                     </Badge>
                     {bc.chapter !== 'unknown' && <span className="text-slate-500">Ch. {bc.chapter}</span>}
@@ -79,6 +60,6 @@ export default function PacerLookup({ caseId }: { caseId: string }) {
           <p className="text-xs text-slate-400">Source: PACER (pacer.uscourts.gov) — federal courts only.</p>
         </>
       )}
-    </LookupCard>
+    />
   );
 }

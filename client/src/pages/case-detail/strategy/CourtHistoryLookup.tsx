@@ -1,39 +1,23 @@
-import { useState } from 'react';
-import { lookupCourtHistory } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { CourtHistoryResult } from './lookupTypes';
 
-export default function CourtHistoryLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<CourtHistoryResult | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupCourtHistory(caseId));
-    } catch {
-      setResult({ found: false, totalCases: 0, asDefendant: 0, asPlaintiff: 0, cases: [], searchedName: '', note: '', error: 'Lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export default function CourtHistoryLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<CourtHistoryResult>
+      caseData={caseData}
+      lookupKey="courts"
+      field="courtHistory"
       title="NYC Civil Court History"
       description="Search NYC Civil Court records for prior cases against this debtor — prior judgments, defaults, or serial non-payment patterns change your strategy."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Search Court Records"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <div className="text-xs text-slate-500">
           <p>{result.error}</p>
           {result.scraperNote && <p className="mt-1 text-slate-400 italic">{result.scraperNote}</p>}
         </div>
-      ) : result && (
+      ) : (
         <>
           <div className="flex items-center gap-2">
             <Badge tone={result.found ? (result.asDefendant > 2 ? 'warning' : 'neutral') : 'neutral'} size="sm">
@@ -58,6 +42,6 @@ export default function CourtHistoryLookup({ caseId }: { caseId: string }) {
           <p className="text-xs text-slate-400">Verify at: <strong>iapps.courts.state.ny.us/webcivil/FCASMain</strong></p>
         </>
       )}
-    </LookupCard>
+    />
   );
 }

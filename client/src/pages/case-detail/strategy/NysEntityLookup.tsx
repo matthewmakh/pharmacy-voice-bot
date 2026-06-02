@@ -1,42 +1,26 @@
-import { useState } from 'react';
-import { lookupNYSEntity } from '../../../lib/api';
 import LookupCard from './LookupCard';
 import Badge, { type Tone } from '../../../components/ui/Badge';
+import type { Case } from '../../../types';
 import type { NysEntityResult } from './lookupTypes';
 
-export default function NysEntityLookup({ caseId }: { caseId: string }) {
-  const [result, setResult] = useState<NysEntityResult | null>(null);
-  const [loading, setLoading] = useState(false);
+const statusTone = (s: string): Tone => {
+  if (s.toLowerCase() === 'active') return 'success';
+  if (/dissolved|inactive|cancelled|revoked/i.test(s)) return 'danger';
+  return 'neutral';
+};
 
-  const run = async () => {
-    setLoading(true);
-    try {
-      setResult(await lookupNYSEntity(caseId));
-    } catch {
-      setResult({ found: false, totalRecords: 0, entities: [], searchedName: '', note: '', error: 'Lookup failed' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const statusTone = (s: string): Tone => {
-    if (s.toLowerCase() === 'active') return 'success';
-    if (/dissolved|inactive|cancelled|revoked/i.test(s)) return 'danger';
-    return 'neutral';
-  };
-
+export default function NysEntityLookup({ caseData }: { caseData: Case }) {
   return (
-    <LookupCard
+    <LookupCard<NysEntityResult>
+      caseData={caseData}
+      lookupKey="entity"
+      field="entityResult"
       title="NYS Entity Status"
       description="Look up debtor entity status, registered agent, and formation date in the NYS Department of State database. Registered agent address is legally valid for service of process."
-      loading={loading}
-      hasResult={!!result}
-      onRun={run}
       runLabel="Search NYS DOS"
-    >
-      {result?.error ? (
+      render={(result) => result.error ? (
         <p className="text-xs text-slate-500">{result.error}</p>
-      ) : result?.found && result.entities.length > 0 ? (
+      ) : result.found && result.entities.length > 0 ? (
         <>
           {result.entities.slice(0, 3).map((e, i) => (
             <div key={i} className="p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs space-y-1">
@@ -69,8 +53,8 @@ export default function NysEntityLookup({ caseId }: { caseId: string }) {
           <p className="text-xs text-slate-400">Verify at: <strong>apps.dos.ny.gov/publicInquiry/</strong></p>
         </>
       ) : (
-        <p className="text-xs text-slate-600 leading-relaxed">{result?.note}</p>
+        <p className="text-xs text-slate-600 leading-relaxed">{result.note}</p>
       )}
-    </LookupCard>
+    />
   );
 }

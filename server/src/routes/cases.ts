@@ -730,9 +730,52 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/cases/:id/acris — ACRIS NYC property lookup for debtor
-router.get('/:id/acris', async (req: Request, res: Response) => {
+// ─── Debtor research lookups (backgrounded + persisted) ─────────────────────────
+// Each lookup persists its result on the Case and records status in `lookupMeta` so
+// the UI shows running/done/error and the result survives a refresh. Previously these
+// were synchronous GETs that blocked the request 40–90s (UCC/PACER) and lost the
+// result on reload (the card kept it only in local state).
+
+type LookupKey = 'acris' | 'courts' | 'entity' | 'ucc' | 'ecb' | 'pacer';
+
+const LOOKUPS: Record<LookupKey, { field: string; run: (name: string) => Promise<unknown> }> = {
+  acris: { field: 'acrisResult', run: lookupACRIS },
+  courts: { field: 'courtHistory', run: lookupNYCourtHistory },
+  entity: { field: 'entityResult', run: lookupNYSEntity },
+  ucc: { field: 'uccResult', run: lookupNYSUCC },
+  ecb: { field: 'ecbResult', run: lookupNYCECB },
+  pacer: { field: 'pacerResult', run: checkPACERBankruptcy },
+};
+
+const lookupJobs = new Set<string>(); // `${caseId}:${key}` currently running
+
+async function mergeLookupMeta(caseId: string, key: LookupKey, meta: Record<string, unknown>) {
+  const c = await prisma.case.findUnique({ where: { id: caseId }, select: { lookupMeta: true } });
+  const current = (c?.lookupMeta as Record<string, unknown> | null) ?? {};
+  await prisma.case.update({ where: { id: caseId }, data: { lookupMeta: { ...current, [key]: meta } as never } }).catch(() => {});
+}
+
+async function runLookupInBackground(caseId: string, key: LookupKey, partyName: string) {
+  const cfg = LOOKUPS[key];
   try {
+    const result = await cfg.run(partyName);
+    const c = await prisma.case.findUnique({ where: { id: caseId }, select: { lookupMeta: true } });
+    const meta = { ...((c?.lookupMeta as Record<string, unknown>) ?? {}), [key]: { status: 'done', fetchedAt: new Date().toISOString() } };
+    await prisma.case.update({ where: { id: caseId }, data: { [cfg.field]: result as never, lookupMeta: meta as never } });
+  } catch (err) {
+    console.error(`Lookup ${key} failed for case ${caseId}:`, err);
+    await mergeLookupMeta(caseId, key, { status: 'error', fetchedAt: new Date().toISOString(), error: String(err) });
+  } finally {
+    lookupJobs.delete(`${caseId}:${key}`);
+  }
+}
+
+// POST /api/cases/:id/lookups/:key — trigger a debtor-research lookup in the background
+router.post('/:id/lookups/:key', async (req: Request, res: Response) => {
+  try {
+    const key = req.params.key as LookupKey;
+    if (!LOOKUPS[key]) { res.status(400).json({ error: 'Unknown lookup type' }); return; }
+
     const caseData = await prisma.case.findUnique({
       where: { id: req.params.id, userId: req.user!.id },
       select: { debtorBusiness: true, debtorName: true },
@@ -740,137 +783,19 @@ router.get('/:id/acris', async (req: Request, res: Response) => {
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
     const partyName = caseData.debtorBusiness || caseData.debtorName;
-    if (!partyName) {
-      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
-      return;
-    }
+    if (!partyName) { res.status(400).json({ error: 'No debtor name on file — add debtor information first' }); return; }
 
-    const result = await lookupACRIS(partyName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { acrisResult: result as never } }).catch(() => {});
-    res.json(result);
+    const jobKey = `${req.params.id}:${key}`;
+    if (lookupJobs.has(jobKey)) { res.status(202).json({ status: 'running' }); return; }
+    lookupJobs.add(jobKey);
+
+    await mergeLookupMeta(req.params.id, key, { status: 'running', startedAt: new Date().toISOString() });
+    res.status(202).json({ status: 'running' });
+
+    runLookupInBackground(req.params.id, key, partyName);
   } catch (err) {
-    console.error('ACRIS lookup error:', err);
-    res.status(500).json({ error: 'ACRIS lookup failed', details: String(err) });
-  }
-});
-
-// GET /api/cases/:id/court-history — NYC Civil Court prior case lookup for debtor
-router.get('/:id/court-history', async (req: Request, res: Response) => {
-  try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
-      select: { debtorBusiness: true, debtorName: true },
-    });
-    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
-
-    const partyName = caseData.debtorBusiness || caseData.debtorName;
-    if (!partyName) {
-      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
-      return;
-    }
-
-    const result = await lookupNYCourtHistory(partyName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { courtHistory: result as never } }).catch(() => {});
-    res.json(result);
-  } catch (err) {
-    console.error('Court history lookup error:', err);
-    res.status(500).json({ error: 'Court history lookup failed', details: String(err) });
-  }
-});
-
-// GET /api/cases/:id/nys-entity — NYS DOS entity lookup for debtor
-router.get('/:id/nys-entity', async (req: Request, res: Response) => {
-  try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
-      select: { debtorBusiness: true, debtorName: true },
-    });
-    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
-
-    const entityName = caseData.debtorBusiness || caseData.debtorName;
-    if (!entityName) {
-      res.status(400).json({ error: 'No debtor business or name on file — add debtor information first' });
-      return;
-    }
-
-    const result = await lookupNYSEntity(entityName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { entityResult: result as never } }).catch(() => {});
-    res.json(result);
-  } catch (err) {
-    console.error('NYS entity lookup error:', err);
-    res.status(500).json({ error: 'NYS entity lookup failed', details: String(err) });
-  }
-});
-
-// GET /api/cases/:id/ucc-filings — NYS UCC secured creditor search for debtor
-router.get('/:id/ucc-filings', async (req: Request, res: Response) => {
-  try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
-      select: { debtorBusiness: true, debtorName: true },
-    });
-    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
-
-    const debtorName = caseData.debtorBusiness || caseData.debtorName;
-    if (!debtorName) {
-      res.status(400).json({ error: 'No debtor name on file — add debtor information first' });
-      return;
-    }
-
-    const result = await lookupNYSUCC(debtorName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { uccResult: result as never } }).catch(() => {});
-    res.json(result);
-  } catch (err) {
-    console.error('UCC lookup error:', err);
-    res.status(500).json({ error: 'UCC lookup failed', details: String(err) });
-  }
-});
-
-// GET /api/cases/:id/ecb-violations — NYC ECB/OATH violation lookup for debtor
-router.get('/:id/ecb-violations', async (req: Request, res: Response) => {
-  try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
-      select: { debtorBusiness: true, debtorName: true },
-    });
-    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
-
-    const partyName = caseData.debtorBusiness || caseData.debtorName;
-    if (!partyName) {
-      res.status(400).json({ error: 'No debtor name on file' });
-      return;
-    }
-
-    const result = await lookupNYCECB(partyName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { ecbResult: result as never } }).catch(() => {});
-    res.json(result);
-  } catch (err) {
-    console.error('ECB lookup error:', err);
-    res.status(500).json({ error: 'ECB lookup failed', details: String(err) });
-  }
-});
-
-// GET /api/cases/:id/pacer-bankruptcy — PACER federal bankruptcy check for debtor
-router.get('/:id/pacer-bankruptcy', async (req: Request, res: Response) => {
-  try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
-      select: { debtorBusiness: true, debtorName: true },
-    });
-    if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
-
-    const partyName = caseData.debtorBusiness || caseData.debtorName;
-    if (!partyName) {
-      res.status(400).json({ error: 'No debtor name on file' });
-      return;
-    }
-
-    const result = await checkPACERBankruptcy(partyName);
-    await prisma.case.update({ where: { id: req.params.id }, data: { pacerResult: result as never } }).catch(() => {});
-    res.json(result);
-  } catch (err) {
-    console.error('PACER lookup error:', err);
-    res.status(500).json({ error: 'PACER lookup failed', details: String(err) });
+    console.error('Lookup trigger error:', err);
+    res.status(500).json({ error: 'Failed to start lookup', details: String(err) });
   }
 });
 

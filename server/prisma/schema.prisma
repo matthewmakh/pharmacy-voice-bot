@@ -90,6 +90,7 @@ model Case {
   uccResult      Json?
   ecbResult      Json?
   pacerResult    Json?
+  lookupMeta     Json?  // per-lookup status+timestamp: { acris: { status, fetchedAt, error? }, ... }
 
   // Additional pre-trial documents
   affidavitOfServiceHtml String? @db.Text
