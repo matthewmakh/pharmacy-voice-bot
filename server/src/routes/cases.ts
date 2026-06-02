@@ -5,6 +5,7 @@ import { synthesizeCase, generateDemandLetter, generateFinalNotice, generateCour
 import { verifyDocumentFacts, reviseDocument } from '../services/verify';
 import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { trackForAmount, outstandingBalance } from '../lib/legal';
+import { resolveVenue } from '../lib/county';
 import { requireAuth } from '../middleware/auth';
 import { lookupACRIS } from '../services/acris';
 import { lookupNYCourtHistory } from '../services/nycourts';
@@ -970,7 +971,7 @@ router.get('/:id/court-form-pdf', async (req: Request, res: Response) => {
       return;
     }
 
-    const outstanding = Number(caseData.amountOwed ?? 0) - Number(caseData.amountPaid ?? 0);
+    const outstanding = outstandingBalance(caseData.amountOwed?.toString(), caseData.amountPaid?.toString());
 
     // Commercial claims (≤$10k) → official CIV-SC-70 layout via pdf-lib
     if (outstanding <= 10000) {
@@ -988,6 +989,7 @@ router.get('/:id/court-form-pdf', async (req: Request, res: Response) => {
         invoiceNumber: caseData.invoiceNumber ?? undefined,
         agreementDate: caseData.agreementDate?.toISOString().split('T')[0] ?? undefined,
         invoiceDate: caseData.invoiceDate?.toISOString().split('T')[0] ?? undefined,
+        county: resolveVenue(caseData.debtorAddress).county ?? undefined,
       };
       const pdf = await fillCIVSC70(formData);
       res.setHeader('Content-Type', 'application/pdf');
