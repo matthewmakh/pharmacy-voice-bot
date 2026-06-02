@@ -2,10 +2,13 @@
   "name": "collections-platform",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "npm run build:client && npm run build:server",
-    "build:client": "cd client && npm install && npm run build",
-    "build:server": "cd server && npm install && npx prisma generate && npm run build",
+    "build:client": "cd client && npm install --include=dev && npm run build",
+    "build:server": "cd server && npm install --include=dev && npx prisma generate && npm run build",
     "start": "cd server && npm start",
     "dev": "concurrently \"cd server && npm run dev\" \"cd client && npm run dev\"",
     "db:migrate": "cd server && npx prisma migrate deploy",
