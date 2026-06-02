@@ -13,8 +13,37 @@ model User {
   passwordHash String
   name         String?
   cases        Case[]
+  memberships  Membership[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  memberships Membership[]
+  cases       Case[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role         @default(MEMBER)
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
 }
 
 model Case {
@@ -25,6 +54,10 @@ model Case {
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id])
+
+  // Owning organization (every member of the org can see the case)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   // Claimant
   claimantName     String?
@@ -104,6 +137,7 @@ model Case {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([organizationId])
   @@index([status])
   @@index([createdAt])
 }

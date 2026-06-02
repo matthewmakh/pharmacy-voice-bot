@@ -160,6 +160,18 @@ export const downloadDocument = async (caseId: string, docId: string, filename: 
   triggerDownload(url, filename);
 };
 
+// ─── Organizations / team ─────────────────────────────────────────────────────
+
+export type OrgRole = 'OWNER' | 'ADMIN' | 'MEMBER';
+export interface OrgSummary { id: string; name: string; role: OrgRole; memberCount: number }
+export interface OrgMember { userId: string; name: string | null; email: string; role: OrgRole; joinedAt?: string }
+
+export const getOrgs = async (): Promise<OrgSummary[]> => (await api.get('/orgs')).data;
+export const getOrgMembers = async (orgId: string): Promise<OrgMember[]> => (await api.get(`/orgs/${orgId}/members`)).data;
+export const inviteMember = async (orgId: string, email: string): Promise<OrgMember> => (await api.post(`/orgs/${orgId}/invite`, { email })).data;
+export const removeMember = async (orgId: string, userId: string): Promise<void> => { await api.delete(`/orgs/${orgId}/members/${userId}`); };
+export const renameOrg = async (orgId: string, name: string): Promise<{ id: string; name: string }> => (await api.patch(`/orgs/${orgId}`, { name })).data;
+
 export type LookupKey = 'acris' | 'courts' | 'entity' | 'ucc' | 'ecb' | 'pacer';
 
 /** Trigger a debtor-research lookup. It runs in the background and persists to the case. */

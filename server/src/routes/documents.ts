@@ -4,10 +4,12 @@ import { upload } from '../middleware/upload';
 import { extractText } from '../services/fileProcessor';
 import { analyzeDocument } from '../services/claude';
 import { requireAuth } from '../middleware/auth';
+import { loadOrgs } from '../middleware/orgs';
 import { storage } from '../lib/storage';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
+router.use(loadOrgs);
 
 // MIME types we are willing to render inline in the browser. Everything else is forced
 // to download, so an attacker cannot get an uploaded HTML/SVG payload to execute
@@ -31,8 +33,8 @@ async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-async function verifyOwnership(caseId: string, userId: string): Promise<boolean> {
-  const c = await prisma.case.findUnique({ where: { id: caseId, userId }, select: { id: true } });
+async function verifyOwnership(caseId: string, orgIds: string[]): Promise<boolean> {
+  const c = await prisma.case.findFirst({ where: { id: caseId, organizationId: { in: orgIds } }, select: { id: true } });
   return !!c;
 }
 
@@ -74,7 +76,7 @@ async function analyzeDocumentInBackground(docId: string, key: string, mimeType:
 router.post('/', upload.array('files', 20), async (req: Request, res: Response) => {
   try {
     const { caseId } = req.params;
-    if (!(await verifyOwnership(caseId, req.user!.id))) {
+    if (!(await verifyOwnership(caseId, req.orgIds!))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
@@ -127,7 +129,7 @@ router.post('/', upload.array('files', 20), async (req: Request, res: Response) 
 // GET /api/cases/:caseId/documents
 router.get('/', async (req: Request, res: Response) => {
   try {
-    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
+    if (!(await verifyOwnership(req.params.caseId, req.orgIds!))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
@@ -145,7 +147,7 @@ router.get('/', async (req: Request, res: Response) => {
 // DELETE /api/cases/:caseId/documents/:docId
 router.delete('/:docId', async (req: Request, res: Response) => {
   try {
-    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
+    if (!(await verifyOwnership(req.params.caseId, req.orgIds!))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }
@@ -165,7 +167,7 @@ router.delete('/:docId', async (req: Request, res: Response) => {
 
 // Shared handler for view (inline) and download (attachment).
 async function serveFile(req: Request, res: Response, mode: 'inline' | 'attachment') {
-  if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
+  if (!(await verifyOwnership(req.params.caseId, req.orgIds!))) {
     res.status(404).json({ error: 'File not found' });
     return;
   }
@@ -190,7 +192,7 @@ router.get('/:docId/download', (req, res) => serveFile(req, res, 'attachment').c
 // POST /api/cases/:caseId/documents/:docId/reanalyze
 router.post('/:docId/reanalyze', async (req: Request, res: Response) => {
   try {
-    if (!(await verifyOwnership(req.params.caseId, req.user!.id))) {
+    if (!(await verifyOwnership(req.params.caseId, req.orgIds!))) {
       res.status(404).json({ error: 'Case not found' });
       return;
     }

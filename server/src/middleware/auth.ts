@@ -15,6 +15,8 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      /** Organization ids the authenticated user belongs to (set by loadOrgs). */
+      orgIds?: string[];
     }
   }
 }

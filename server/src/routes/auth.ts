@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { signToken, signDownloadToken, requireAuth } from '../middleware/auth';
+import { ensurePersonalOrg } from '../lib/org';
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const user = await prisma.user.create({
       data: { email, passwordHash, name },
     });
+    await ensurePersonalOrg(user);
 
     const token = signToken({ id: user.id, email: user.email });
     res.status(201).json({ token, user: { id: user.id, email: user.email, name: user.name } });

@@ -8,8 +8,10 @@ import rateLimit from 'express-rate-limit';
 import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
 import authRouter from './routes/auth';
+import orgsRouter from './routes/orgs';
 import prisma from './lib/prisma';
 import { storageHealthWarning } from './lib/storage';
+import { ensurePersonalOrg, primaryOrgId } from './lib/org';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -72,6 +74,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/auth', authLimiter, authRouter);
+app.use('/api/orgs', apiLimiter, orgsRouter);
 app.use('/api/cases', apiLimiter, casesRouter);
 app.use('/api/cases/:caseId/documents', apiLimiter, documentsRouter);
 
@@ -112,6 +115,24 @@ async function start() {
     }
   } catch (err) {
     console.error('Startup cleanup failed (non-fatal):', err);
+  }
+
+  // Multi-tenancy backfill (idempotent): give every pre-existing user a personal org
+  // and assign every unscoped case to its creator's org. Safe to run on every boot.
+  try {
+    const usersWithoutOrg = await prisma.user.findMany({ where: { memberships: { none: {} } }, select: { id: true, email: true, name: true } });
+    for (const u of usersWithoutOrg) await ensurePersonalOrg(u);
+
+    const orphanCases = await prisma.case.findMany({ where: { organizationId: null, userId: { not: null } }, select: { id: true, userId: true } });
+    for (const c of orphanCases) {
+      const orgId = await primaryOrgId(c.userId!);
+      if (orgId) await prisma.case.update({ where: { id: c.id }, data: { organizationId: orgId } });
+    }
+    if (usersWithoutOrg.length || orphanCases.length) {
+      console.log(`Startup: provisioned ${usersWithoutOrg.length} org(s), assigned ${orphanCases.length} case(s) to an org`);
+    }
+  } catch (err) {
+    console.error('Org backfill failed (non-fatal):', err);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

@@ -4,6 +4,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
+import Team from './pages/Team';
 import CaseDetail from './pages/case-detail';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -27,6 +28,7 @@ function ProtectedRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="cases/new" element={<NewCase />} />
         <Route path="cases/:id" element={<CaseDetail />} />
+        <Route path="team" element={<Team />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

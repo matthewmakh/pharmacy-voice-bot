@@ -7,6 +7,8 @@ import { fillCIVSC70, htmlToPDF } from '../services/pdf';
 import { trackForAmount, outstandingBalance } from '../lib/legal';
 import { resolveVenue } from '../lib/county';
 import { requireAuth } from '../middleware/auth';
+import { loadOrgs } from '../middleware/orgs';
+import { caseInScope, primaryOrgId } from '../lib/org';
 import { lookupACRIS } from '../services/acris';
 import { lookupNYCourtHistory } from '../services/nycourts';
 import { lookupNYSEntity } from '../services/nysEntity';
@@ -16,8 +18,9 @@ import { checkPACERBankruptcy } from '../services/pacer';
 
 const router = Router();
 
-// All case routes require authentication
+// All case routes require authentication + an organization context
 router.use(requireAuth);
+router.use(loadOrgs);
 
 // In-process guard against double-submitting a long-running job for the same case.
 // Combined with the DB status check, this makes generation idempotent under rapid
@@ -99,7 +102,7 @@ router.get('/', async (req: Request, res: Response) => {
     const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
     const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
     const cases = await prisma.case.findMany({
-      where: { userId: req.user!.id },
+      where: { organizationId: { in: req.orgIds! } },
       orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,
@@ -152,6 +155,7 @@ router.post('/', async (req: Request, res: Response) => {
         notes: data.notes,
         status: 'ASSEMBLING',
         userId: req.user!.id,
+        organizationId: (await primaryOrgId(req.user!.id)) ?? undefined,
         actions: {
           create: {
             type: 'CASE_CREATED',
@@ -181,6 +185,7 @@ router.post('/draft', async (req: Request, res: Response) => {
       data: {
         status: 'DRAFT',
         userId: req.user!.id,
+        organizationId: (await primaryOrgId(req.user!.id)) ?? undefined,
       },
       include: { documents: true, actions: true },
     });
@@ -196,8 +201,8 @@ router.post('/:id/submit-draft', async (req: Request, res: Response) => {
   try {
     const data = updateCaseSchema.parse(req.body);
 
-    const existing = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const existing = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { status: true, debtorName: true, debtorBusiness: true },
     });
     if (!existing) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -262,8 +267,8 @@ router.post('/:id/submit-draft', async (req: Request, res: Response) => {
 // and persists on final submit via PATCH /:id.
 router.post('/:id/autofill', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: { documents: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -307,8 +312,8 @@ router.post('/:id/autofill', async (req: Request, res: Response) => {
 // GET /api/cases/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: {
         documents: { orderBy: { uploadedAt: 'desc' } },
         actions: { orderBy: { createdAt: 'asc' } },
@@ -332,8 +337,9 @@ router.patch('/:id', async (req: Request, res: Response) => {
   try {
     const data = updateCaseSchema.parse(req.body);
 
+    if (!(await caseInScope(req.params.id, req.orgIds!))) { res.status(404).json({ error: 'Case not found' }); return; }
     const updated = await prisma.case.update({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id },
       data: {
         ...data,
         claimantEmail: data.claimantEmail || undefined,
@@ -363,8 +369,9 @@ router.patch('/:id', async (req: Request, res: Response) => {
 // POST /api/cases/:id/reset-analysis — clear AI results so analysis can be re-run
 router.post('/:id/reset-analysis', async (req: Request, res: Response) => {
   try {
+    if (!(await caseInScope(req.params.id, req.orgIds!))) { res.status(404).json({ error: 'Case not found' }); return; }
     const updated = await prisma.case.update({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id },
       data: {
         status: 'ASSEMBLING',
         caseStrength: null,
@@ -510,8 +517,8 @@ async function generateLetterInBackground(
 // POST /api/cases/:id/analyze  — run AI synthesis across all uploaded docs
 router.post('/:id/analyze', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: { documents: true },
     });
 
@@ -580,8 +587,9 @@ router.post('/:id/strategy', async (req: Request, res: Response) => {
   try {
     const { strategy } = strategySchema.parse(req.body);
 
+    if (!(await caseInScope(req.params.id, req.orgIds!))) { res.status(404).json({ error: 'Case not found' }); return; }
     const updated = await prisma.case.update({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id },
       data: {
         strategy,
         status: 'STRATEGY_SELECTED',
@@ -610,8 +618,8 @@ router.post('/:id/strategy', async (req: Request, res: Response) => {
 // POST /api/cases/:id/generate — generate demand letter
 router.post('/:id/generate', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: { documents: { select: { classification: true, supportsTags: true, summary: true } } },
     });
 
@@ -678,7 +686,7 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
     const { type, notes, metadata } = actionSchema.parse(req.body);
 
     // Verify case ownership
-    const caseData = await prisma.case.findUnique({ where: { id: req.params.id, userId: req.user!.id } });
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
     const action = await prisma.caseAction.create({
@@ -719,7 +727,7 @@ router.post('/:id/actions', async (req: Request, res: Response) => {
     let nextStatus: string | undefined = statusMap[type];
     if (type === 'PAYMENT_RECEIVED') nextStatus = resolvedByPayment ? 'RESOLVED' : 'AWAITING_RESPONSE';
     if (nextStatus) {
-      await prisma.case.update({ where: { id: req.params.id, userId: req.user!.id }, data: { status: nextStatus as never } });
+      await prisma.case.update({ where: { id: req.params.id }, data: { status: nextStatus as never } });
     }
 
     res.status(201).json(action);
@@ -750,7 +758,7 @@ const LOOKUPS: Record<LookupKey, { field: string; run: (name: string) => Promise
 const lookupJobs = new Set<string>(); // `${caseId}:${key}` currently running
 
 async function mergeLookupMeta(caseId: string, key: LookupKey, meta: Record<string, unknown>) {
-  const c = await prisma.case.findUnique({ where: { id: caseId }, select: { lookupMeta: true } });
+  const c = await prisma.case.findFirst({ where: { id: caseId }, select: { lookupMeta: true } });
   const current = (c?.lookupMeta as Record<string, unknown> | null) ?? {};
   await prisma.case.update({ where: { id: caseId }, data: { lookupMeta: { ...current, [key]: meta } as never } }).catch(() => {});
 }
@@ -759,7 +767,7 @@ async function runLookupInBackground(caseId: string, key: LookupKey, partyName: 
   const cfg = LOOKUPS[key];
   try {
     const result = await cfg.run(partyName);
-    const c = await prisma.case.findUnique({ where: { id: caseId }, select: { lookupMeta: true } });
+    const c = await prisma.case.findFirst({ where: { id: caseId }, select: { lookupMeta: true } });
     const meta = { ...((c?.lookupMeta as Record<string, unknown>) ?? {}), [key]: { status: 'done', fetchedAt: new Date().toISOString() } };
     await prisma.case.update({ where: { id: caseId }, data: { [cfg.field]: result as never, lookupMeta: meta as never } });
   } catch (err) {
@@ -776,8 +784,8 @@ router.post('/:id/lookups/:key', async (req: Request, res: Response) => {
     const key = req.params.key as LookupKey;
     if (!LOOKUPS[key]) { res.status(400).json({ error: 'Unknown lookup type' }); return; }
 
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { debtorBusiness: true, debtorName: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -802,8 +810,8 @@ router.post('/:id/lookups/:key', async (req: Request, res: Response) => {
 // POST /api/cases/:id/assess-strategy — re-assess strategy using persisted debtor research
 router.post('/:id/assess-strategy', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
@@ -847,8 +855,8 @@ router.post('/:id/assess-strategy', async (req: Request, res: Response) => {
 // GET /api/cases/:id/demand-letter-pdf
 router.get('/:id/demand-letter-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { demandLetterHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -867,8 +875,8 @@ router.get('/:id/demand-letter-pdf', async (req: Request, res: Response) => {
 // GET /api/cases/:id/final-notice-pdf
 router.get('/:id/final-notice-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { finalNoticeHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -887,8 +895,8 @@ router.get('/:id/final-notice-pdf', async (req: Request, res: Response) => {
 // GET /api/cases/:id/court-form-pdf
 router.get('/:id/court-form-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
     if (!caseData.filingPacketHtml && !caseData.filingPacket) {
@@ -937,8 +945,8 @@ router.get('/:id/court-form-pdf', async (req: Request, res: Response) => {
 // GET /api/cases/:id/default-judgment-pdf
 router.get('/:id/default-judgment-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { defaultJudgmentHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -957,7 +965,7 @@ router.get('/:id/default-judgment-pdf', async (req: Request, res: Response) => {
 // POST /api/cases/:id/generate-affidavit-of-service
 router.post('/:id/generate-affidavit-of-service', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
     const context = {
@@ -986,8 +994,8 @@ router.post('/:id/generate-affidavit-of-service', async (req: Request, res: Resp
 // GET /api/cases/:id/affidavit-of-service-pdf
 router.get('/:id/affidavit-of-service-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { affidavitOfServiceHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -1161,7 +1169,7 @@ async function generateFinalNoticeInBackground(caseId: string, context: Record<s
 // POST /api/cases/:id/generate-settlement
 router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
     const context = {
@@ -1201,8 +1209,8 @@ router.post('/:id/generate-settlement', async (req: Request, res: Response) => {
 // GET /api/cases/:id/settlement-pdf
 router.get('/:id/settlement-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { settlementHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -1221,7 +1229,7 @@ router.get('/:id/settlement-pdf', async (req: Request, res: Response) => {
 // POST /api/cases/:id/generate-payment-plan
 router.post('/:id/generate-payment-plan', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    const caseData = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
     const context = {
@@ -1259,8 +1267,8 @@ router.post('/:id/generate-payment-plan', async (req: Request, res: Response) =>
 // GET /api/cases/:id/payment-plan-pdf
 router.get('/:id/payment-plan-pdf', async (req: Request, res: Response) => {
   try {
-    const caseData = await prisma.case.findUnique({
-      where: { id: req.params.id, userId: req.user!.id },
+    const caseData = await prisma.case.findFirst({
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       select: { paymentPlanHtml: true },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -1279,7 +1287,8 @@ router.get('/:id/payment-plan-pdf', async (req: Request, res: Response) => {
 // DELETE /api/cases/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    await prisma.case.delete({ where: { id: req.params.id, userId: req.user!.id } });
+    const del = await prisma.case.deleteMany({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
+    if (del.count === 0) { res.status(404).json({ error: 'Case not found' }); return; }
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -1291,7 +1300,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.post('/:id/final-notice', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: { actions: { orderBy: { createdAt: 'asc' } } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
@@ -1353,7 +1362,7 @@ router.post('/:id/final-notice', async (req: Request, res: Response) => {
 router.post('/:id/court-form', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 
@@ -1410,7 +1419,7 @@ router.post('/:id/court-form', async (req: Request, res: Response) => {
 router.post('/:id/default-judgment', async (req: Request, res: Response) => {
   try {
     const caseData = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!caseData) { res.status(404).json({ error: 'Case not found' }); return; }
 

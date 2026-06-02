@@ -1,6 +1,11 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Scale, X, LogOut, User } from 'lucide-react';
+import { LayoutDashboard, Plus, Scale, X, LogOut, User, Users } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+
+const navClass = ({ isActive }: { isActive: boolean }) =>
+  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+    isActive ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+  }`;
 
 interface Props {
   onClose?: () => void;
@@ -53,20 +58,13 @@ export default function Sidebar({ onClose }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        <NavLink
-          to="/"
-          end
-          onClick={onClose}
-          className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`
-          }
-        >
+        <NavLink to="/" end onClick={onClose} className={navClass}>
           <LayoutDashboard className="w-4 h-4 shrink-0" />
           Cases
+        </NavLink>
+        <NavLink to="/team" onClick={onClose} className={navClass}>
+          <Users className="w-4 h-4 shrink-0" />
+          Team
         </NavLink>
       </nav>
 
