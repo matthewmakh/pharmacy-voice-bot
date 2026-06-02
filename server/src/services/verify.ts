@@ -83,7 +83,8 @@ export function verifyDocumentFacts(kind: DocKind, html: string, caseData: Recor
 
   // Invoice number, when present in the data.
   const invoiceNumber = str(caseData.invoiceNumber);
-  if (invoiceNumber) {
+  const invoiceRelevant = kind === 'demand-letter' || kind === 'court-form' || kind === 'default-judgment';
+  if (invoiceNumber && invoiceRelevant) {
     const ok = has(invoiceNumber);
     checks.push({ field: 'Invoice number', status: ok ? 'ok' : 'missing', expected: invoiceNumber, found: ok ? invoiceNumber : null, note: ok ? '' : 'Invoice number from the case data does not appear in the document.' });
   }
