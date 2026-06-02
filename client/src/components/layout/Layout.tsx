@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import { Menu, X } from 'lucide-react';
+import DisclaimerGate from '../DisclaimerGate';
+import { Menu } from 'lucide-react';
 
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -40,8 +41,13 @@ export default function Layout() {
 
         <main className="flex-1 overflow-y-auto">
           <Outlet />
+          <footer className="px-6 py-4 text-center text-[11px] text-slate-400 border-t border-slate-100">
+            Reclaim provides self-help document preparation and public-records research — not legal advice. Have a licensed attorney review documents before filing.
+          </footer>
         </main>
       </div>
+
+      <DisclaimerGate />
     </div>
   );
 }

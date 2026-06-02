@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ArrowRight, AlertCircle, TrendingUp, Clock, CheckCircle2 } from 'lucide-react';
@@ -62,9 +63,10 @@ function CaseRow({ caseItem }: { caseItem: CaseListItem }) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [limit, setLimit] = useState(50);
   const { data: allCases = [], isLoading, error } = useQuery({
-    queryKey: ['cases'],
-    queryFn: getCases,
+    queryKey: ['cases', limit],
+    queryFn: () => getCases(limit),
     // Only poll while something is actually in progress — otherwise the dashboard
     // refetched every 10s indefinitely (battery/quota drain during office hours).
     refetchInterval: (query) => {
@@ -73,6 +75,7 @@ export default function Dashboard() {
       return busy ? 5000 : false;
     },
   });
+  const mayHaveMore = allCases.length >= limit;
 
   // Hide unfinished drafts (cases the user started uploading to but never submitted).
   // They'd otherwise clutter the dashboard with empty rows.
@@ -170,8 +173,8 @@ export default function Dashboard() {
           />
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <table className="w-full">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead>
               <tr className="border-b border-slate-200">
                 <th className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -198,6 +201,14 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {mayHaveMore && (
+        <div className="flex justify-center mt-4">
+          <button onClick={() => setLimit((l) => l + 50)} className="btn-secondary text-sm">
+            Load more cases
+          </button>
         </div>
       )}
     </div>

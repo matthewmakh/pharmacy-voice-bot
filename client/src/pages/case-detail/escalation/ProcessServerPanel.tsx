@@ -37,7 +37,7 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
         collapsible
         defaultOpen={!svcAction}
       >
-        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
           <div>
             <div className="field-label mb-0.5">Defendant</div>
             <div className="field-value">{caseData.debtorBusiness || caseData.debtorName || '[unknown]'}</div>

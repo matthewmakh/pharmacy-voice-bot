@@ -278,7 +278,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
 
       {/* Key dates & SOL */}
       <SectionCard title="Key Dates" collapsible defaultOpen>
-        <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
           {[
             { label: 'Agreement Date', value: formatDate(caseData.agreementDate) },
             { label: 'Service Start', value: formatDate(caseData.serviceStartDate) },
@@ -316,7 +316,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Evidence on file */}
       {evidenceSummary && (
         <SectionCard title="Evidence on File" collapsible defaultOpen>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {[
               { label: 'Contract', key: 'hasContract' },
               { label: 'Invoice', key: 'hasInvoice' },

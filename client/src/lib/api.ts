@@ -39,8 +39,8 @@ export function getErrorMessage(err: unknown, fallback = 'Something went wrong. 
 
 // ─── Cases ────────────────────────────────────────────────────────────────────
 
-export const getCases = async (): Promise<CaseListItem[]> => {
-  const { data } = await api.get('/cases');
+export const getCases = async (limit = 50, offset = 0): Promise<CaseListItem[]> => {
+  const { data } = await api.get('/cases', { params: { limit, offset } });
   return data;
 };
 
