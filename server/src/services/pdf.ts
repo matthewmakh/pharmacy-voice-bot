@@ -8,11 +8,14 @@
  *
  *   htmlToPDF()    — converts Claude-generated HTML to a CPLR-compliant PDF
  *                    (8.5×11, 1-inch margins, 12pt Times New Roman, double-spaced)
- *                    using Puppeteer + @sparticuz/chromium-min.
+ *                    using puppeteer-core + @sparticuz/chromium (a slim Chromium built
+ *                    to run in containers/serverless like Railway). For local dev on a
+ *                    non-Linux box, set PUPPETEER_EXECUTABLE_PATH to your installed Chrome.
  */
 
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from 'pdf-lib';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -339,24 +342,23 @@ export async function fillCIVSC70(data: CIVFormData): Promise<Buffer> {
 
 // Reuse one browser across requests. Launching Chromium per PDF (the previous behavior)
 // cost 1–3s and a memory spike every time and could OOM a small container under load.
-let browserPromise: Promise<import('puppeteer').Browser> | null = null;
+let browserPromise: Promise<import('puppeteer-core').Browser> | null = null;
 
-async function getBrowser(): Promise<import('puppeteer').Browser> {
+async function getBrowser(): Promise<import('puppeteer-core').Browser> {
   if (!browserPromise) {
-    browserPromise = puppeteer.launch({
-      headless: true,
-      protocolTimeout: 60_000,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage', // prevents Chrome crash in containers with small /dev/shm
-        '--disable-gpu',
-        '--disable-extensions',
-        '--single-process',
-      ],
-    });
+    browserPromise = (async () => {
+      // In a Linux container, use the @sparticuz/chromium binary. For local dev on a
+      // non-Linux machine, point PUPPETEER_EXECUTABLE_PATH at your installed Chrome.
+      const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
+      return puppeteer.launch({
+        executablePath,
+        args: chromium.args,
+        headless: true,
+        protocolTimeout: 60_000,
+      });
+    })();
   }
-  let browser = await browserPromise;
+  const browser = await browserPromise;
   if (!browser.connected) {
     // Crashed/disconnected — relaunch.
     browserPromise = null;
