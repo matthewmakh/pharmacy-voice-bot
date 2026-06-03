@@ -42,6 +42,8 @@ uploaded evidence survives redeploys; the default local-disk storage is ephemera
 env vars are documented in [`.env.example`](./.env.example).
 
 ## Documentation
+- **[docs/SESSION_HANDOFF.md](./docs/SESSION_HANDOFF.md)** — start here when continuing in a new
+  chat: current status and what is *confirmed* vs. *not yet verified*.
 - **[HANDOFF.md](./HANDOFF.md)** — context document for a new session: architecture, data
   model, AI layer, route map, conventions index.
 - **[docs/ENGINEERING.md](./docs/ENGINEERING.md)** — how this codebase is built and what's

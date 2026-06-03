@@ -4,6 +4,9 @@
 **Repo:** `matthewmakh/pharmacy-voice-bot`
 **DB:** Railway PostgreSQL (connection string from the Railway dashboard)
 
+> **Continuing in a new chat?** Start with [`docs/SESSION_HANDOFF.md`](./docs/SESSION_HANDOFF.md)
+> — current status and, importantly, what is *confirmed* vs. *not yet verified*.
+
 > This is the start-here context document for a new session. For the *why* behind how
 > the code is built, see [`docs/ENGINEERING.md`](./docs/ENGINEERING.md); for the recent
 > overhaul, [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Check `git log` for the latest.
@@ -30,7 +33,7 @@ and footer make this explicit — relevant to unauthorized-practice-of-law risk)
 | Backend | Node.js + Express + TypeScript |
 | ORM | Prisma (PostgreSQL) |
 | AI | Anthropic Claude (`claude-sonnet-4-6`) — tool-based structured output + prompt caching |
-| PDF | Puppeteer (HTML→PDF, shared browser), pdf-lib (official CIV-SC-70) |
+| PDF | puppeteer-core + @sparticuz/chromium (HTML→PDF, shared browser), pdf-lib (official CIV-SC-70) |
 | Storage | pluggable: local disk (dev) or S3 / Cloudflare R2 (prod) |
 | Tests/CI | vitest + GitHub Actions |
 | Hosting | Railway |
@@ -62,7 +65,7 @@ routes/
 services/
   claude.ts              # generate*/synthesize/analyze/extractIntake/assessStrategy/verifyCaseSynthesis
   verify.ts              # verifyDocumentFacts (deterministic) + reviseDocument (one shared LLM fixer)
-  pdf.ts                 # fillCIVSC70 (pdf-lib) + htmlToPDF (shared Puppeteer + timeouts)
+  pdf.ts                 # fillCIVSC70 (pdf-lib) + htmlToPDF (puppeteer-core + @sparticuz/chromium)
   fileProcessor.ts       # extractText: text/.docx(mammoth)/PDF(pdf-parse→Claude fallback)/image(vision)
   acris/nycourts/nysEntity/nysUCC/nycECB/pacer/twoCaptcha.ts   # debtor-research integrations
 ```
@@ -190,6 +193,7 @@ POST   /api/cases                     # create
 POST   /api/cases/draft               # empty DRAFT (attach docs before submit)
 POST   /api/cases/:id/submit-draft
 POST   /api/cases/:id/autofill        # extract intake fields + questions from docs
+POST   /api/cases/:id/apply-answers   # clarifying-answers → PROPOSED field updates (with math); not persisted
 GET    /api/cases/:id                 # get one
 PATCH  /api/cases/:id                 # update
 DELETE /api/cases/:id
@@ -251,6 +255,16 @@ UCC_PORTAL_URL / ECB_DATASET_ID — optional overrides if those portals change
 Optional integrations degrade gracefully when unset. See [`.env.example`](./.env.example).
 
 ---
+
+## Deploy notes
+
+- Railway builds via nixpacks (`railway.toml`). The build runs with `NODE_ENV=production`, so
+  the root build scripts use `npm install --include=dev` to keep `tsc`/`vite` available, and
+  Node is pinned `>=20` in the root `package.json`.
+- PDF rendering uses `@sparticuz/chromium` (bundled Chromium) — it ran successfully in a Linux
+  container here. For local dev on macOS/Windows, set `PUPPETEER_EXECUTABLE_PATH` to your Chrome.
+- A real Railway deploy (build *and* runtime) has not been observed from the dev environment.
+  See [`docs/SESSION_HANDOFF.md`](./docs/SESSION_HANDOFF.md) for the full verified-vs-assumed split.
 
 ## Known issues / pending
 
