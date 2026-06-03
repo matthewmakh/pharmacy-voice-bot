@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Copy, Mail, Eye, Send } from 'lucide-react';
+import { FileText, Copy, Mail, Eye, Send, Loader2 } from 'lucide-react';
 import { generateLetter, logAction } from '../../lib/api';
 import type { Case } from '../../types';
 import SectionCard from '../../components/ui/SectionCard';
 import EmptyState from '../../components/ui/EmptyState';
+import Alert from '../../components/ui/Alert';
 import { RotatingFact } from './shared/RotatingFact';
 import { VerificationPanel } from './shared/VerificationPanel';
 import { PdfDownloadButton } from './shared/PdfDownloadButton';
@@ -17,6 +18,16 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
 
   const generateMutation = useMutation({
     mutationFn: () => { generateStartRef.current = new Date(); return generateLetter(caseData.id); },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
+  });
+
+  // The letter has to be *sent* before escalation unlocks. Sent = status moved past READY,
+  // or a send action was logged (email here, or "Mark as Sent" for mail/other channels).
+  const sent =
+    ['SENT', 'AWAITING_RESPONSE', 'ESCALATING', 'RESOLVED', 'CLOSED'].includes(caseData.status) ||
+    caseData.actions.some((a) => a.type === 'EMAIL_SENT' || a.type === 'CERTIFIED_MAIL_SENT' || a.type === 'FINAL_NOTICE_SENT');
+  const markSentMutation = useMutation({
+    mutationFn: () => logAction(caseData.id, 'CERTIFIED_MAIL_SENT', 'Demand letter marked as sent'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['case', caseData.id] }),
   });
 
@@ -104,6 +115,22 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
           </button>
         </div>
       </SectionCard>
+
+      {sent ? (
+        <Alert tone="success">
+          Marked as sent — the <strong>Escalation</strong> stage is unlocked. Use the stage rail or the “Do this next” prompt above to continue.
+        </Alert>
+      ) : (
+        <Alert tone="info" title="Next step — send it to continue">
+          Send this letter to the debtor; the <strong>Escalation</strong> stage (court forms, default judgment) unlocks once it’s sent. Use <strong>Email to Debtor</strong> above, or mark it sent if you delivered it another way.
+          <div className="mt-2.5">
+            <button onClick={() => markSentMutation.mutate()} disabled={markSentMutation.isPending} className="btn-primary btn-sm">
+              {markSentMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Mark as Sent
+            </button>
+          </div>
+        </Alert>
+      )}
 
       {caseData.demandLetterVerification && (
         <VerificationPanel verification={caseData.demandLetterVerification} />

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, CheckCircle2, CircleDashed, Sparkles } from 'lucide-react';
+import { Loader2, CheckCircle2, CircleDashed, Sparkles, TrendingUp, TrendingDown } from 'lucide-react';
 import {
   analyzeCase,
   setStrategy,
@@ -49,6 +49,43 @@ const STRATEGIES: { id: Strategy; title: string; description: string; traits: st
     traits: ['Diplomatic tone', 'Extended deadlines', 'Multiple reminders'],
   },
 ];
+
+// The AI returns counterclaim signals prefixed "RISK-ELEVATING:" / "RISK-REDUCING:".
+// Split them so what hurts vs. helps the case is obvious instead of one flat list.
+function categorizeSignals(signals: string[]) {
+  const strip = (s: string) => s.replace(/^\s*RISK-(ELEVATING|REDUCING)\s*[:\-—]*\s*/i, '').trim();
+  const up: string[] = [];
+  const down: string[] = [];
+  const other: string[] = [];
+  for (const s of signals) {
+    if (/^\s*RISK-ELEVATING/i.test(s)) up.push(strip(s));
+    else if (/^\s*RISK-REDUCING/i.test(s)) down.push(strip(s));
+    else other.push(s);
+  }
+  return { up, down, other };
+}
+
+function SignalGroup({ items, variant }: { items: string[]; variant: 'up' | 'down' }) {
+  if (items.length === 0) return null;
+  const up = variant === 'up';
+  const Icon = up ? TrendingUp : TrendingDown;
+  return (
+    <div className={`rounded-lg border p-3 ${up ? 'border-red-200 bg-red-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
+      <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide mb-2 ${up ? 'text-red-700' : 'text-emerald-700'}`}>
+        <Icon className="w-3.5 h-3.5" /> {up ? 'Raises risk' : 'Reduces risk'}
+        <span className={`ml-auto rounded-full px-1.5 text-[10px] font-semibold ${up ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{items.length}</span>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((s, i) => (
+          <li key={i} className="flex items-start gap-2 text-xs leading-relaxed">
+            <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${up ? 'bg-red-400' : 'bg-emerald-500'}`} />
+            <span className={up ? 'text-red-900/90' : 'text-emerald-900/90'}>{s}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export default function StrategyTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
@@ -239,15 +276,24 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                   }
                 >
                   <p className="text-xs leading-relaxed mb-1.5">{a.counterclaimRisk.reasoning}</p>
-                  {a.counterclaimRisk.signals.length > 0 && (
-                    <ul className="space-y-0.5">
-                      {a.counterclaimRisk.signals.map((s, i) => (
-                        <li key={i} className="text-xs flex items-start gap-1.5">
-                          <span className="shrink-0 opacity-60">—</span>{s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  {a.counterclaimRisk.signals.length > 0 && (() => {
+                    const sig = categorizeSignals(a.counterclaimRisk.signals);
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                        <SignalGroup items={sig.up} variant="up" />
+                        <SignalGroup items={sig.down} variant="down" />
+                        {sig.other.length > 0 && (
+                          <ul className="space-y-1 sm:col-span-2 mt-1">
+                            {sig.other.map((s, i) => (
+                              <li key={i} className="text-xs flex items-start gap-1.5">
+                                <span className="shrink-0 opacity-60">—</span>{s}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </Alert>
               )}
 

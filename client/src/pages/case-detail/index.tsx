@@ -50,14 +50,20 @@ const REF_META: Record<RefView, { label: string; icon: typeof BarChart3 }> = {
 const isStage = (v: View): v is Stage => (STAGE_ORDER as string[]).includes(v);
 
 function signals(c: Case) {
+  // "Sent" must be durable: a transient ANALYZING/GENERATING status (e.g. while a document
+  // generates on the Escalate stage) must NOT relock later stages. Treat the letter as sent
+  // once the status says so, a send action was logged, or any escalation document exists.
+  const escalationStarted =
+    !!(c.finalNoticeHtml || c.filingPacketHtml || c.affidavitOfServiceHtml || c.defaultJudgmentHtml || c.settlementHtml || c.paymentPlanHtml) ||
+    c.actions.some((a) => a.type === 'EMAIL_SENT' || a.type === 'CERTIFIED_MAIL_SENT' || a.type === 'FINAL_NOTICE_SENT' || a.type === 'SERVICE_INITIATED');
   return {
     hasDocs: c.documents.length > 0,
     hasAnalysis: !!c.caseStrength || ANALYSIS_DONE_STATUSES.includes(c.status),
     hasStrategy: !!c.strategy,
     hasLetter: !!c.demandLetterHtml,
-    isPostLetter: POST_LETTER_STATUSES.includes(c.status),
     isResolved: c.status === 'RESOLVED' || c.status === 'CLOSED',
     analyzing: c.status === 'ANALYZING',
+    letterSent: POST_LETTER_STATUSES.includes(c.status) || escalationStarted,
   };
 }
 
@@ -68,8 +74,8 @@ function stageStates(c: Case): Record<Stage, StageState> {
     intake: s.hasDocs || s.hasAnalysis ? 'done' : 'current',
     analysis: s.hasAnalysis ? 'done' : s.hasDocs || s.analyzing ? 'current' : 'locked',
     strategy: s.hasStrategy ? 'done' : s.hasAnalysis ? 'current' : 'locked',
-    demand: s.isPostLetter || s.isResolved ? 'done' : s.hasStrategy || s.hasLetter ? 'current' : 'locked',
-    escalate: s.isResolved ? 'done' : s.isPostLetter ? 'current' : 'locked',
+    demand: s.letterSent || s.isResolved ? 'done' : s.hasStrategy || s.hasLetter ? 'current' : 'locked',
+    escalate: s.isResolved ? 'done' : s.letterSent ? 'current' : 'locked',
   };
 }
 
@@ -88,9 +94,9 @@ function stageSub(id: Stage, c: Case): string | undefined {
     case 'strategy':
       return s.hasStrategy && c.strategy ? STRATEGY_LABELS[c.strategy] : s.hasAnalysis ? 'Pick an approach' : undefined;
     case 'demand':
-      return s.isPostLetter ? 'Sent' : s.hasLetter ? 'Ready to send' : s.hasStrategy ? 'Generate letter' : undefined;
+      return s.letterSent ? 'Sent' : s.hasLetter ? 'Ready to send' : s.hasStrategy ? 'Generate letter' : undefined;
     case 'escalate':
-      return s.isResolved ? 'Resolved' : s.isPostLetter ? 'In progress' : undefined;
+      return s.isResolved ? 'Resolved' : s.letterSent ? 'In progress' : undefined;
   }
 }
 
@@ -134,9 +140,11 @@ export default function CaseDetail() {
   // If the selected stage becomes locked (e.g. analysis was reset), fall back to the
   // current stage — same safety as the previous "fall back to Overview".
   useEffect(() => {
-    if (caseData && view && isStage(view) && stageStates(caseData)[view] === 'locked') {
-      setView(currentStage(caseData));
-    }
+    if (!caseData || !view || !isStage(view)) return;
+    // Never relock/redirect during a transient ANALYZING/GENERATING state — generating a
+    // document on a stage must not bounce you back to an earlier stage.
+    if (caseData.status === 'ANALYZING' || caseData.status === 'GENERATING') return;
+    if (stageStates(caseData)[view] === 'locked') setView(currentStage(caseData));
   }, [caseData, view]);
 
   if (isLoading) {
