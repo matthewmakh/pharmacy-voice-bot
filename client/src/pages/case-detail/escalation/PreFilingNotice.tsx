@@ -7,7 +7,7 @@ import SectionCard from '../../../components/ui/SectionCard';
 import { RotatingFact } from '../shared/RotatingFact';
 import DocumentActions from './DocumentActions';
 
-export default function PreFilingNotice({ caseData }: { caseData: Case }) {
+export default function PreFilingNotice({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
   const startedRef = React.useRef<Date | null>(null);
@@ -41,7 +41,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
       title={<div className="flex items-center gap-2"><Shield className="w-4 h-4 text-blue-500" />Pre-Filing Notice</div>}
       description="Send this before filing to give the debtor a final opportunity to pay and to document your escalation path."
       collapsible
-      defaultOpen={!!caseData.finalNoticeHtml}
+      defaultOpen={defaultOpen ?? !!caseData.finalNoticeHtml}
     >
       {mutation.isPending ? (
         <RotatingFact label="Generating pre-filing notice…" startedAt={startedRef.current ?? undefined} estimatedSeconds={20} />

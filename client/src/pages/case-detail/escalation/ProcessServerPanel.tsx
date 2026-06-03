@@ -7,7 +7,7 @@ import SectionCard from '../../../components/ui/SectionCard';
 import Alert from '../../../components/ui/Alert';
 import Badge, { type Tone } from '../../../components/ui/Badge';
 
-export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
+export default function ProcessServerPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [notes, setNotes] = useState('');
@@ -35,7 +35,7 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
         title={<div className="flex items-center gap-2"><Send className="w-4 h-4 text-blue-500" />Process Server Engagement</div>}
         description="For Civil Court and Supreme Court cases, a licensed process server must serve the summons. Log when service is initiated."
         collapsible
-        defaultOpen={!svcAction}
+        defaultOpen={defaultOpen ?? !svcAction}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
           <div>

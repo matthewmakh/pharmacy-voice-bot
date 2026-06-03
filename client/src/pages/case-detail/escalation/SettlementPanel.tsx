@@ -9,7 +9,7 @@ import { VerificationPanel } from '../shared/VerificationPanel';
 import { PdfDownloadButton } from '../shared/PdfDownloadButton';
 import { openHtmlInTab } from '../shared/openHtmlInTab';
 
-export default function SettlementPanel({ caseData }: { caseData: Case }) {
+export default function SettlementPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const settlementRef = React.useRef<Date | null>(null);
   const paymentPlanRef = React.useRef<Date | null>(null);
@@ -28,7 +28,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
       title={<div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" />Settlement Track</div>}
       description="Many cases settle after a demand letter or final notice. If the debtor contacts you, put any agreement in writing immediately."
       collapsible
-      defaultOpen={!!(caseData.settlementHtml || caseData.paymentPlanHtml)}
+      defaultOpen={defaultOpen ?? !!(caseData.settlementHtml || caseData.paymentPlanHtml)}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Stipulation of Settlement */}

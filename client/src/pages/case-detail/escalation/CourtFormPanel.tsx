@@ -10,7 +10,7 @@ import { RotatingFact } from '../shared/RotatingFact';
 import { VerificationPanel } from '../shared/VerificationPanel';
 import DocumentActions from './DocumentActions';
 
-export default function CourtFormPanel({ caseData }: { caseData: Case }) {
+export default function CourtFormPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const startedRef = React.useRef<Date | null>(null);
 
@@ -34,7 +34,7 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
         Based on your outstanding balance of <strong>{formatCurrency(outstanding)}</strong>, the applicable form is <strong>{courtFormName}</strong>.
       </>}
       collapsible
-      defaultOpen={!!caseData.filingPacketHtml}
+      defaultOpen={defaultOpen ?? !!caseData.filingPacketHtml}
     >
       <Alert tone="warning" title="Review every field carefully before filing">
         This form will be pre-filled with your case data. Look for <code>[UNKNOWN — VERIFY BEFORE FILING]</code> placeholders where data is missing.

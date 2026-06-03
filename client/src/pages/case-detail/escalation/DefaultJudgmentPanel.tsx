@@ -9,7 +9,7 @@ import { RotatingFact } from '../shared/RotatingFact';
 import { VerificationPanel } from '../shared/VerificationPanel';
 import DocumentActions from './DocumentActions';
 
-export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
+export default function DefaultJudgmentPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const startedRef = React.useRef<Date | null>(null);
 
@@ -25,7 +25,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
     <SectionCard
       title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-muted-foreground" />Default Judgment Motion</div>}
       collapsible
-      defaultOpen={!!caseData.defaultJudgmentHtml}
+      defaultOpen={defaultOpen ?? !!caseData.defaultJudgmentHtml}
     >
       {!svcAction ? (
         <Alert tone="neutral">

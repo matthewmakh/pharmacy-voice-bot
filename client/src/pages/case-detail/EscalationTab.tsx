@@ -32,7 +32,7 @@ function Node({ state, n }: { state: NodeState; n: number }) {
  * Escalation as a guided mini-stepper. The six existing panels are reused untouched as
  * each step's content (all their generate / deadline / verification / PDF logic intact);
  * this only adds the numbered done/current/locked spine + lock reasons so the order is
- * obvious and you can see what's actionable now instead of scanning six stacked cards.
+ * obvious and you can see what's actionable now. The current step is auto-expanded.
  */
 export default function EscalationTab({ caseData }: { caseData: Case }) {
   const outstanding = parseFloat(caseData.amountOwed || '0') - parseFloat(caseData.amountPaid || '0');
@@ -46,14 +46,14 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
     locked: boolean;
     lockMsg?: string;
     optional?: boolean;
-    content: React.ReactNode;
+    render: (open?: boolean) => React.ReactNode;
   };
 
   const steps: Step[] = [
-    { id: 'notice', title: 'Pre-filing notice', done: !!caseData.finalNoticeHtml, locked: false, content: <PreFilingNotice caseData={caseData} /> },
-    { id: 'court', title: 'Court form', done: !!caseData.filingPacketHtml, locked: false, content: <CourtFormPanel caseData={caseData} /> },
+    { id: 'notice', title: 'Pre-filing notice', done: !!caseData.finalNoticeHtml, locked: false, render: (open) => <PreFilingNotice caseData={caseData} defaultOpen={open} /> },
+    { id: 'court', title: 'Court form', done: !!caseData.filingPacketHtml, locked: false, render: (open) => <CourtFormPanel caseData={caseData} defaultOpen={open} /> },
     ...(needsProcessServer
-      ? [{ id: 'service', title: 'Serve the defendant', done: served, locked: false, content: <ProcessServerPanel caseData={caseData} /> } as Step]
+      ? [{ id: 'service', title: 'Serve the defendant', done: served, locked: false, render: (open?: boolean) => <ProcessServerPanel caseData={caseData} defaultOpen={open} /> } as Step]
       : []),
     {
       id: 'affidavit',
@@ -61,8 +61,8 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
       done: !!caseData.affidavitOfServiceHtml,
       locked: !served,
       lockMsg: 'Unlocks after service is logged',
-      // AffidavitPanel renders null without a service action; show a placeholder when locked.
-      content: served ? <AffidavitPanel caseData={caseData} /> : null,
+      // AffidavitPanel renders null without a service action; the locked branch shows a placeholder.
+      render: (open) => (served ? <AffidavitPanel caseData={caseData} defaultOpen={open} /> : null),
     },
     {
       id: 'judgment',
@@ -70,9 +70,9 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
       done: !!caseData.defaultJudgmentHtml,
       locked: !served,
       lockMsg: 'Unlocks after the defendant is served',
-      content: <DefaultJudgmentPanel caseData={caseData} />,
+      render: (open) => <DefaultJudgmentPanel caseData={caseData} defaultOpen={open} />,
     },
-    { id: 'settlement', title: 'Settlement / payment plan', done: !!(caseData.settlementHtml || caseData.paymentPlanHtml), locked: false, optional: true, content: <SettlementPanel caseData={caseData} /> },
+    { id: 'settlement', title: 'Settlement / payment plan', done: !!(caseData.settlementHtml || caseData.paymentPlanHtml), locked: false, optional: true, render: (open) => <SettlementPanel caseData={caseData} defaultOpen={open} /> },
   ];
 
   // "Current" = first required, not-done, unlocked step.
@@ -103,7 +103,7 @@ export default function EscalationTab({ caseData }: { caseData: Case }) {
                     <span className="text-xs text-muted-foreground/80">{s.lockMsg}</span>
                   </div>
                 ) : (
-                  s.content
+                  s.render(state === 'current' || undefined)
                 )}
               </div>
             </div>
