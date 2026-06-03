@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ArrowRight, AlertCircle, TrendingUp, DollarSign, CheckCircle2, FileText } from 'lucide-react';
 import { getCases } from '../lib/api';
-import { formatCurrency, formatDate } from '../lib/utils';
+import { formatCurrency, STATUS_LABELS } from '../lib/utils';
 import StatusPill from '../components/ui/StatusPill';
 import EmptyState from '../components/ui/EmptyState';
 import Alert from '../components/ui/Alert';
-import type { CaseListItem } from '../types';
+import type { CaseListItem, CaseStatus } from '../types';
 
 function StatCard({ label, value, icon: Icon, accent }: { label: string; value: string | number; icon: React.ElementType; accent: string }) {
   return (
@@ -25,69 +25,82 @@ function StatCard({ label, value, icon: Icon, accent }: { label: string; value: 
   );
 }
 
+// Group every case by whose move it is — so the home screen points you at the right case.
+type Group = 'action' | 'waiting' | 'resolved';
+const GROUP_OF: Record<CaseStatus, Group> = {
+  DRAFT: 'action',
+  ASSEMBLING: 'action',
+  STRATEGY_PENDING: 'action',
+  STRATEGY_SELECTED: 'action',
+  READY: 'action',
+  ESCALATING: 'action',
+  ANALYZING: 'waiting',
+  GENERATING: 'waiting',
+  SENT: 'waiting',
+  AWAITING_RESPONSE: 'waiting',
+  RESOLVED: 'resolved',
+  CLOSED: 'resolved',
+};
+const ACTION_LABEL: Partial<Record<CaseStatus, string>> = {
+  ASSEMBLING: 'Run analysis',
+  STRATEGY_PENDING: 'Choose a strategy',
+  STRATEGY_SELECTED: 'Generate demand letter',
+  READY: 'Send the demand letter',
+  ESCALATING: 'Continue escalation',
+};
+const WAITING_LABEL: Partial<Record<CaseStatus, string>> = {
+  ANALYZING: 'Analyzing…',
+  GENERATING: 'Generating…',
+  SENT: 'Awaiting debtor response',
+  AWAITING_RESPONSE: 'Awaiting debtor response',
+};
+
 function CaseRow({ caseItem }: { caseItem: CaseListItem }) {
   const navigate = useNavigate();
   const outstanding = parseFloat(caseItem.amountOwed || '0') - parseFloat(caseItem.amountPaid || '0');
-
-  return (
-    <tr
-      className="group hover:bg-muted/60 cursor-pointer transition-colors"
-      onClick={() => navigate(`/cases/${caseItem.id}`)}
-    >
-      <td className="px-6 py-4">
-        <div className="font-medium text-foreground text-sm">
-          {caseItem.title || 'Untitled Case'}
-        </div>
-        <div className="text-xs text-muted-foreground mt-0.5">
-          {caseItem.debtorBusiness || caseItem.debtorName || '—'}
-        </div>
-      </td>
-      <td className="px-6 py-4">
-        <StatusPill status={caseItem.status} />
-      </td>
-      <td className="px-6 py-4 text-sm text-foreground font-medium tabular-nums">
-        {outstanding > 0 ? formatCurrency(outstanding) : '—'}
-      </td>
-      <td className="px-6 py-4 text-sm text-muted-foreground">
-        {caseItem.documents.length} file{caseItem.documents.length !== 1 ? 's' : ''}
-      </td>
-      <td className="px-6 py-4 text-sm text-muted-foreground tabular-nums">
-        {formatDate(caseItem.createdAt)}
-      </td>
-      <td className="px-6 py-4">
-        <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-foreground group-hover:translate-x-0.5 transition-all" />
-      </td>
-    </tr>
-  );
-}
-
-function CaseCard({ caseItem }: { caseItem: CaseListItem }) {
-  const navigate = useNavigate();
-  const outstanding = parseFloat(caseItem.amountOwed || '0') - parseFloat(caseItem.amountPaid || '0');
+  const group = GROUP_OF[caseItem.status];
 
   return (
     <button
       onClick={() => navigate(`/cases/${caseItem.id}`)}
-      className="card p-4 w-full text-left transition-shadow hover:shadow-md active:scale-[0.99]"
+      className="group w-full flex items-center gap-3 px-4 sm:px-5 py-4 text-left hover:bg-muted/60 transition-colors"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-medium text-foreground text-sm truncate">{caseItem.title || 'Untitled Case'}</div>
-          <div className="text-xs text-muted-foreground mt-0.5 truncate">
-            {caseItem.debtorBusiness || caseItem.debtorName || '—'}
-          </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-foreground truncate">{caseItem.title || 'Untitled Case'}</div>
+        <div className="text-xs text-muted-foreground mt-0.5 truncate">
+          {caseItem.debtorBusiness || caseItem.debtorName || '—'}
+          {outstanding > 0 && <span className="text-muted-foreground"> · {formatCurrency(outstanding)}</span>}
         </div>
-        <StatusPill status={caseItem.status} />
       </div>
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-border text-sm">
-        <span className="font-semibold text-foreground tabular-nums">
-          {outstanding > 0 ? formatCurrency(outstanding) : '—'}
+      {group === 'action' && (
+        <span className="hidden sm:inline-flex items-center rounded-full bg-accent text-accent-foreground ring-1 ring-primary/20 px-2.5 py-1 text-xs font-medium whitespace-nowrap">
+          {ACTION_LABEL[caseItem.status] ?? 'Open case'}
         </span>
-        <span className="text-xs text-muted-foreground">
-          {caseItem.documents.length} file{caseItem.documents.length !== 1 ? 's' : ''} · {formatDate(caseItem.createdAt)}
+      )}
+      {group === 'waiting' && (
+        <span className="hidden sm:block text-xs text-muted-foreground whitespace-nowrap">
+          {WAITING_LABEL[caseItem.status] ?? STATUS_LABELS[caseItem.status]}
         </span>
-      </div>
+      )}
+      {group === 'resolved' && <StatusPill status={caseItem.status} />}
+      <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
     </button>
+  );
+}
+
+function CaseGroup({ title, dot, cases }: { title: string; dot: string; cases: CaseListItem[] }) {
+  if (cases.length === 0) return null;
+  return (
+    <div className="mb-8">
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`w-2 h-2 rounded-full ${dot}`} />
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        <span className="text-xs font-medium text-muted-foreground bg-muted rounded-full px-2 py-0.5">{cases.length}</span>
+      </div>
+      <div className="card divide-y divide-border overflow-hidden">
+        {cases.map((c) => <CaseRow key={c.id} caseItem={c} />)}
+      </div>
+    </div>
   );
 }
 
@@ -108,26 +121,22 @@ export default function Dashboard() {
   const mayHaveMore = allCases.length >= limit;
 
   // Hide unfinished drafts (cases the user started uploading to but never submitted).
-  // They'd otherwise clutter the dashboard with empty rows.
   const cases = allCases.filter((c) => c.status !== 'DRAFT');
 
-  const activeCount = cases.filter(
-    (c) => !['RESOLVED', 'CLOSED'].includes(c.status)
-  ).length;
-
-  const pendingActionCount = cases.filter((c) =>
-    ['STRATEGY_PENDING', 'ASSEMBLING'].includes(c.status)
-  ).length;
-
-  const resolvedCount = cases.filter((c) =>
-    ['RESOLVED', 'CLOSED'].includes(c.status)
-  ).length;
-
+  const activeCount = cases.filter((c) => !['RESOLVED', 'CLOSED'].includes(c.status)).length;
+  const pendingActionCount = cases.filter((c) => GROUP_OF[c.status] === 'action').length;
+  const resolvedCount = cases.filter((c) => ['RESOLVED', 'CLOSED'].includes(c.status)).length;
   const totalOutstanding = cases.reduce((sum, c) => {
     const owed = parseFloat(c.amountOwed || '0');
     const paid = parseFloat(c.amountPaid || '0');
     return sum + Math.max(0, owed - paid);
   }, 0);
+
+  const groups = {
+    action: cases.filter((c) => GROUP_OF[c.status] === 'action'),
+    waiting: cases.filter((c) => GROUP_OF[c.status] === 'waiting'),
+    resolved: cases.filter((c) => GROUP_OF[c.status] === 'resolved'),
+  };
 
   if (isLoading) {
     return (
@@ -143,9 +152,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Cases</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Manage your business collections matters
-          </p>
+          <p className="text-muted-foreground text-sm mt-1">Manage your business collections matters</p>
         </div>
         <button onClick={() => navigate('/cases/new')} className="btn-primary btn-lg shrink-0">
           <Plus className="w-4 h-4" />
@@ -167,7 +174,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Cases */}
+      {/* Grouped cases — by whose move it is */}
       {cases.length === 0 ? (
         <div className="card">
           <EmptyState
@@ -184,33 +191,9 @@ export default function Dashboard() {
         </div>
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="card overflow-hidden hidden sm:block">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Case</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Outstanding</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Documents</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Created</th>
-                  <th className="px-6 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {cases.map((c) => (
-                  <CaseRow key={c.id} caseItem={c} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="grid grid-cols-1 gap-3 sm:hidden">
-            {cases.map((c) => (
-              <CaseCard key={c.id} caseItem={c} />
-            ))}
-          </div>
+          <CaseGroup title="Needs your action" dot="bg-primary" cases={groups.action} />
+          <CaseGroup title="Waiting" dot="bg-warning" cases={groups.waiting} />
+          <CaseGroup title="Resolved" dot="bg-success" cases={groups.resolved} />
         </>
       )}
 
