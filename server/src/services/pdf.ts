@@ -15,7 +15,6 @@
 
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from 'pdf-lib';
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -344,11 +343,23 @@ export async function fillCIVSC70(data: CIVFormData): Promise<Buffer> {
 // cost 1–3s and a memory spike every time and could OOM a small container under load.
 let browserPromise: Promise<import('puppeteer-core').Browser> | null = null;
 
+// @sparticuz/chromium ships as an ES module. A static `import` compiles (under CommonJS)
+// to require(), which throws ERR_REQUIRE_ESM at startup on installs that resolve the
+// pure-ESM build (e.g. Railway). Load it with a *real* dynamic import — wrapped in a
+// Function so tsc doesn't downlevel the import() back into a require().
+const importESM = new Function('m', 'return import(m)') as (m: string) => Promise<{ default: unknown }>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadChromium(): Promise<any> {
+  const mod = await importESM('@sparticuz/chromium');
+  return (mod as { default?: unknown }).default ?? mod;
+}
+
 async function getBrowser(): Promise<import('puppeteer-core').Browser> {
   if (!browserPromise) {
     browserPromise = (async () => {
       // In a Linux container, use the @sparticuz/chromium binary. For local dev on a
       // non-Linux machine, point PUPPETEER_EXECUTABLE_PATH at your installed Chrome.
+      const chromium = await loadChromium();
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
       return puppeteer.launch({
         executablePath,
