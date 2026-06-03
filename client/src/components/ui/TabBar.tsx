@@ -32,7 +32,7 @@ export default function TabBar<Id extends string = string>({ tabs, activeTab, on
   }
 
   return (
-    <div className={`border-b border-slate-200 ${className}`}>
+    <div className={`border-b border-border ${className}`}>
       <nav ref={ref} className="flex gap-1 overflow-x-auto -mb-px" role="tablist" aria-label="Case sections" onKeyDown={onKeyDown}>
         {tabs.map(({ id, label, icon: Icon, badge, disabled, disabledHint }) => {
           const active = activeTab === id;
@@ -47,10 +47,10 @@ export default function TabBar<Id extends string = string>({ tabs, activeTab, on
               onClick={() => { if (!disabled) onChange(id); }}
               className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 active
-                  ? 'border-blue-600 text-blue-700'
+                  ? 'border-primary text-primary'
                   : disabled
-                  ? 'border-transparent text-slate-300 cursor-not-allowed'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                  ? 'border-transparent text-muted-foreground/40 cursor-not-allowed'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
             >
               {Icon && <Icon className="w-4 h-4" />}
