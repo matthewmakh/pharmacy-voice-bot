@@ -48,7 +48,7 @@ export default function LookupCard<T>({
   const triggerError = mutation.isError ? getErrorMessage(mutation.error) : null;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3 mb-1.5">
         <span className="kbd-label">{title}</span>
         <button
@@ -67,17 +67,17 @@ export default function LookupCard<T>({
       </div>
 
       {busy && (
-        <p className="text-xs text-slate-400 leading-relaxed">Running in the background — this can take up to a minute and keeps going if you navigate away.</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">Running in the background — this can take up to a minute and keeps going if you navigate away.</p>
       )}
       {!busy && !hasResult && !runError && !triggerError && (
-        <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
       )}
       {(runError || triggerError) && !busy && (
         <p className="text-xs text-red-600 flex items-center gap-1.5"><AlertCircle className="w-3 h-3 shrink-0" />{runError || triggerError}</p>
       )}
       {hasResult && <div className="space-y-2">{render(result as T)}</div>}
       {hasResult && meta?.fetchedAt && (
-        <p className="text-[11px] text-slate-300 mt-2">Checked {new Date(meta.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+        <p className="text-[11px] text-muted-foreground/60 mt-2">Checked {new Date(meta.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
       )}
     </div>
   );

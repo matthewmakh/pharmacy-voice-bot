@@ -35,18 +35,18 @@ const COURT_INFO: Record<CourtTrack, { name: string; range: string; fee: string;
 function ExpandableItem({ label, children, num }: { label: string; children: React.ReactNode; num: number }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="border border-slate-200 rounded-lg overflow-hidden">
+    <li className="border border-border rounded-lg overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 transition-colors"
+        className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted transition-colors"
       >
-        <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-xs font-bold shrink-0">
+        <span className="w-6 h-6 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-xs font-bold shrink-0">
           {num}
         </span>
-        <span className="text-sm text-slate-700 flex-1 leading-snug font-medium">{label}</span>
-        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="text-sm text-foreground flex-1 leading-snug font-medium">{label}</span>
+        <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open && <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-2">{children}</div>}
+      {open && <div className="px-4 pb-4 pt-2 border-t border-border space-y-2">{children}</div>}
     </li>
   );
 }
@@ -100,16 +100,16 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Scale className="w-5 h-5 text-blue-600" />
-              <div className="text-lg font-bold text-slate-900">{info.name}</div>
+              <div className="text-lg font-bold text-foreground">{info.name}</div>
             </div>
-            <p className="text-sm text-slate-600 leading-relaxed">{info.note}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{info.note}</p>
           </div>
           <Badge tone="info" size="lg">{formatCurrency(outstanding)} outstanding</Badge>
         </div>
-        <div className="flex flex-wrap gap-6 mt-4 text-sm border-t border-slate-100 pt-4">
-          <div><span className="text-slate-500">Filing Fee:</span> <span className="font-semibold text-slate-800">{info.fee}</span></div>
-          <div><span className="text-slate-500">Representation:</span> <span className="font-semibold text-slate-800">{info.rep}</span></div>
-          <div><span className="text-slate-500">Claim Range:</span> <span className="font-semibold text-slate-800">{info.range}</span></div>
+        <div className="flex flex-wrap gap-6 mt-4 text-sm border-t border-border pt-4">
+          <div><span className="text-muted-foreground">Filing Fee:</span> <span className="font-semibold text-foreground">{info.fee}</span></div>
+          <div><span className="text-muted-foreground">Representation:</span> <span className="font-semibold text-foreground">{info.rep}</span></div>
+          <div><span className="text-muted-foreground">Claim Range:</span> <span className="font-semibold text-foreground">{info.range}</span></div>
         </div>
         {sol.status !== 'unknown' && (
           <div className="mt-3">
@@ -128,11 +128,11 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             { key: 'civil' as const, label: 'Civil Court', range: '$10,001–$50,000', fee: '~$45', note: 'Summons + complaint, process server' },
             { key: 'supreme' as const, label: 'Supreme Court', range: '> $50,000', fee: '$210+', note: 'Full litigation, attorney recommended' },
           ]).map((c) => (
-            <div key={c.key} className={`p-4 rounded-lg border ${track === c.key ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}>
-              <div className="text-sm font-semibold text-slate-800">{c.label}</div>
-              <div className="text-xs text-slate-500 mt-1">{c.range}</div>
-              <div className="text-xs text-slate-400 mt-0.5">Fee: {c.fee}</div>
-              <div className="text-xs text-slate-400 mt-1 leading-tight">{c.note}</div>
+            <div key={c.key} className={`p-4 rounded-lg border ${track === c.key ? 'border-blue-300 bg-blue-50' : 'border-border bg-card'}`}>
+              <div className="text-sm font-semibold text-foreground">{c.label}</div>
+              <div className="text-xs text-muted-foreground mt-1">{c.range}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Fee: {c.fee}</div>
+              <div className="text-xs text-muted-foreground mt-1 leading-tight">{c.note}</div>
             </div>
           ))}
         </div>
@@ -142,9 +142,9 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
       <SectionCard title="Pre-Filing Checklist" collapsible defaultOpen>
         <ul className="space-y-2">
           {checklist.map(({ label, done }, i) => (
-            <li key={i} className={`flex items-start gap-2.5 text-sm ${done ? 'text-slate-700' : 'text-slate-400'}`}>
+            <li key={i} className={`flex items-start gap-2.5 text-sm ${done ? 'text-foreground' : 'text-muted-foreground'}`}>
               {done ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                    : <CircleDashed className="w-4 h-4 text-slate-300 mt-0.5 shrink-0" />}
+                    : <CircleDashed className="w-4 h-4 text-muted-foreground/60 mt-0.5 shrink-0" />}
               <span>{label}</span>
             </li>
           ))}
@@ -187,8 +187,8 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             'Calendar the answer deadline the same day service is completed.',
             'Service mistakes are the easiest way to lose or delay a case. Do not improvise.',
           ].map((item, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-              <span className="text-slate-300 font-bold mt-0.5">—</span>
+            <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <span className="text-muted-foreground/60 font-bold mt-0.5">—</span>
               <span>{item}</span>
             </li>
           ))}
@@ -204,12 +204,12 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             const hasDays = days != null;
             const rowCls = isPast
               ? 'bg-red-50 border-red-200'
-              : value ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100';
-            const textCls = isPast ? 'text-red-700' : value ? 'text-emerald-800' : 'text-slate-600';
-            const valueCls = isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-slate-700';
+              : value ? 'bg-emerald-50 border-emerald-200' : 'bg-muted border-border';
+            const textCls = isPast ? 'text-red-700' : value ? 'text-emerald-800' : 'text-muted-foreground';
+            const valueCls = isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-foreground';
             return (
               <div key={i} className={`flex items-start gap-3 p-2.5 rounded-lg border ${rowCls}`}>
-                <div className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${isPast ? 'bg-red-400' : value ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${isPast ? 'bg-red-400' : value ? 'bg-emerald-500' : 'bg-muted'}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2">
                     <span className={`text-xs font-medium ${textCls}`}>{label}</span>
@@ -218,16 +218,16 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
                         {value}{hasDays && days! >= 0 ? ` (${days}d)` : isPast ? ' (PASSED)' : ''}
                       </span>
                     )}
-                    {!value && <span className="text-xs text-slate-300 ml-auto shrink-0">—</span>}
+                    {!value && <span className="text-xs text-muted-foreground/60 ml-auto shrink-0">—</span>}
                   </div>
-                  <div className="text-xs text-slate-400 mt-0.5">{note}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{note}</div>
                 </div>
               </div>
             );
           })}
         </div>
         {!svcAction && (
-          <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-100">
+          <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
             Log "Service Initiated" in the Escalation tab to calculate answer and default deadlines automatically.
           </p>
         )}
@@ -245,7 +245,7 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             'Not calendaring the defendant\'s answer deadline.',
             'Serving the wrong person — for business entities, serve an officer, director, or registered agent.',
           ].map((item, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
+            <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <span>{item}</span>
             </li>
@@ -255,7 +255,7 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
 
       {/* Enforcement */}
       <SectionCard title="Enforcing a Judgment" collapsible defaultOpen={false}>
-        <p className="text-sm text-slate-600 mb-3">
+        <p className="text-sm text-muted-foreground mb-3">
           Winning in court gives you a judgment — a legal right to collect. The court does not collect for you. Three main enforcement tools:
         </p>
         <div className="space-y-2">
@@ -264,9 +264,9 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             { title: 'Property Lien', body: 'File a lien against real property the debtor owns in New York. They cannot sell or refinance the property without satisfying your judgment first.' },
             { title: 'Income Execution (Wage Garnishment)', body: 'If the debtor is an individual with employment income, you can garnish up to 10% of gross wages in NY. Does not apply to business entity defendants — use bank levy instead.' },
           ].map(({ title, body }) => (
-            <div key={title} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="text-sm font-semibold text-slate-800 mb-1">{title}</div>
-              <p className="text-xs text-slate-600 leading-relaxed">{body}</p>
+            <div key={title} className="p-3 bg-muted rounded-lg border border-border">
+              <div className="text-sm font-semibold text-foreground mb-1">{title}</div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{body}</p>
             </div>
           ))}
         </div>
@@ -274,7 +274,7 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
 
       {/* NYC Marshals */}
       <SectionCard title="NYC City Marshals — Judgment Enforcement" collapsible defaultOpen={false}>
-        <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+        <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
           Once you have a judgment, a NYC City Marshal can levy bank accounts, seize business property, and execute income executions.
           Marshals are private officers appointed by the Mayor of New York City — you hire them directly, without court involvement.
         </p>
@@ -285,9 +285,9 @@ export default function FilingGuideTab({ caseData }: { caseData: Case }) {
             { title: 'How to find one', body: 'Search the NYC Department of Investigation marshal directory at nyc.gov. Each marshal has a borough focus.' },
             { title: 'What you\'ll need to provide', body: 'A certified copy of your judgment, the debtor\'s last known address, and — for a bank levy — the name and branch of the debtor\'s bank.' },
           ].map(({ title, body }) => (
-            <div key={title} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="text-xs font-semibold text-slate-700 mb-1">{title}</div>
-              <p className="text-xs text-slate-500 leading-relaxed">{body}</p>
+            <div key={title} className="p-3 bg-muted rounded-lg border border-border">
+              <div className="text-xs font-semibold text-foreground mb-1">{title}</div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{body}</p>
             </div>
           ))}
         </div>

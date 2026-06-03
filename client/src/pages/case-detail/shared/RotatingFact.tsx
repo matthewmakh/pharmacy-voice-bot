@@ -89,9 +89,9 @@ export function RotatingFact({
       <div className="flex items-center gap-3 mb-4">
         <Loader2 className="w-5 h-5 text-blue-500 animate-spin shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-slate-800">{label}</div>
+          <div className="text-sm font-semibold text-foreground">{label}</div>
           {startedAt && (
-            <div className="text-xs text-slate-400 mt-0.5 tabular-nums">
+            <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">
               {fmtElapsed(elapsed)} elapsed
               {estimatedSeconds && elapsed < estimatedSeconds
                 ? ` · ~${Math.max(0, estimatedSeconds - elapsed)}s remaining`
@@ -100,11 +100,11 @@ export function RotatingFact({
                 : ''}
             </div>
           )}
-          {!startedAt && sublabel && <div className="text-xs text-slate-400 mt-0.5">{sublabel}</div>}
+          {!startedAt && sublabel && <div className="text-xs text-muted-foreground mt-0.5">{sublabel}</div>}
         </div>
       </div>
       {progress !== null && (
-        <div className="w-full bg-slate-100 rounded-full h-1 mb-4">
+        <div className="w-full bg-muted rounded-full h-1 mb-4">
           <div
             className="bg-blue-500 h-1 rounded-full transition-all duration-1000"
             style={{ width: `${progress}%` }}
@@ -112,7 +112,7 @@ export function RotatingFact({
         </div>
       )}
       <p
-        className="text-xs text-slate-400 italic leading-relaxed transition-opacity duration-500 pt-2 border-t border-slate-100"
+        className="text-xs text-muted-foreground italic leading-relaxed transition-opacity duration-500 pt-2 border-t border-border"
         style={{ opacity: visible ? 1 : 0 }}
       >
         Did you know? {LOADING_FACTS[idx]}

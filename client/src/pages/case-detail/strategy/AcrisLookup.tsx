@@ -13,18 +13,18 @@ export default function AcrisLookup({ caseData }: { caseData: Case }) {
       description="Check if the debtor owns NYC real property — a post-judgment lien can prevent them from selling or refinancing."
       runLabel="Run ACRIS Lookup"
       render={(result) => result.error ? (
-        <p className="text-xs text-slate-500">{result.error}</p>
+        <p className="text-xs text-muted-foreground">{result.error}</p>
       ) : (
         <>
           <div className="flex items-center gap-2 text-xs">
             <Badge tone={result.found ? 'success' : 'neutral'} size="sm">
               {result.found ? `${result.totalRecords} record(s) found` : 'No records found'}
             </Badge>
-            {result.found && <span className="text-slate-400">· {result.searchedName}</span>}
+            {result.found && <span className="text-muted-foreground">· {result.searchedName}</span>}
           </div>
-          <p className="text-xs text-slate-600 leading-relaxed">{result.note}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">{result.note}</p>
           {result.found && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-muted-foreground">
               Verify at: <strong>a836-acris.nyc.gov</strong> → Document Search → Party Name Search
             </p>
           )}

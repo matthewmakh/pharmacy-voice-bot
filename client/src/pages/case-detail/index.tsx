@@ -126,18 +126,18 @@ export default function CaseDetail() {
   return (
     <div className="max-w-5xl mx-auto p-4 lg:p-8">
       {/* Header */}
-      <div className="flex items-start gap-3 mb-6 pb-5 border-b border-slate-200">
-        <button onClick={() => navigate('/')} className="p-2 -ml-2 text-slate-400 hover:text-slate-600 transition-colors rounded-lg hover:bg-slate-100" aria-label="Back to cases">
+      <div className="flex items-start gap-3 mb-6 pb-5 border-b border-border">
+        <button onClick={() => navigate('/')} className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted" aria-label="Back to cases">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-slate-900 truncate">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground truncate">
             {caseData.title || `Case #${caseData.id.slice(0, 8)}`}
           </h1>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
             <StatusPill status={caseData.status} />
-            {caseData.strategy && <span className="text-xs text-slate-500">{STRATEGY_LABELS[caseData.strategy]}</span>}
-            {outstanding > 0 && <span className="text-xs text-slate-500">· {formatCurrency(outstanding)} outstanding</span>}
+            {caseData.strategy && <span className="text-xs text-muted-foreground">{STRATEGY_LABELS[caseData.strategy]}</span>}
+            {outstanding > 0 && <span className="text-xs text-muted-foreground">· {formatCurrency(outstanding)} outstanding</span>}
           </div>
         </div>
       </div>
@@ -154,8 +154,8 @@ export default function CaseDetail() {
       {/* Next-step guide — the intelligent "what do I do now" nudge */}
       {step && (
         <div className="mb-6">
-          <div className="flex items-center justify-between gap-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-            <div className="text-sm text-blue-900"><span className="font-semibold">Next step:</span> {step.title}</div>
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/20 bg-accent px-4 py-3.5">
+            <div className="text-sm text-accent-foreground"><span className="font-semibold">Next step:</span> {step.title}</div>
             {activeTab !== step.tab && (
               <button onClick={() => setActiveTab(step.tab)} className="btn-primary text-sm whitespace-nowrap">
                 {step.cta} <ArrowRight className="w-4 h-4" />

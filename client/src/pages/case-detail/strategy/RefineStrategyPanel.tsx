@@ -55,24 +55,24 @@ export default function RefineStrategyPanel({ caseData }: { caseData: Case }) {
               {STRATEGY_LABELS[assessment.strategy] ?? assessment.strategy}
             </Badge>
           </div>
-          <p className="text-sm text-slate-700 leading-relaxed">{assessment.reasoning}</p>
+          <p className="text-sm text-foreground leading-relaxed">{assessment.reasoning}</p>
           {assessment.keyFactors.length > 0 && (
             <div>
               <div className="kbd-label mb-1.5">Key Factors</div>
               <ul className="space-y-1">
                 {assessment.keyFactors.map((f, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-slate-600">
-                    <span className="text-slate-300 font-bold mt-0.5 shrink-0">—</span>
+                  <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <span className="text-muted-foreground/60 font-bold mt-0.5 shrink-0">—</span>
                     <span>{f}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-          <p className="text-xs text-slate-400 italic">This is a recommendation — you still select the final strategy below.</p>
+          <p className="text-xs text-muted-foreground italic">This is a recommendation — you still select the final strategy below.</p>
         </div>
       ) : !err ? (
-        <p className="text-xs text-slate-500 leading-relaxed">
+        <p className="text-xs text-muted-foreground leading-relaxed">
           You have debtor research results on file. Click <strong>Refine</strong> to get a Claude-backed strategy recommendation.
         </p>
       ) : null}

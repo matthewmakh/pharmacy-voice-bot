@@ -233,7 +233,7 @@ export default function NewCase() {
   function FieldLabel({ name, children }: { name: IntakeFieldName | 'notes' | 'title'; children: React.ReactNode }) {
     return (
       <div className="flex items-center gap-2 mb-1.5">
-        <label className="text-sm font-medium text-slate-700">{children}</label>
+        <label className="text-sm font-medium text-foreground">{children}</label>
         {name !== 'notes' && name !== 'title' && aiBadgeFor(name as IntakeFieldName)}
       </div>
     );
@@ -242,14 +242,14 @@ export default function NewCase() {
   return (
     <div className="min-h-screen p-4 lg:p-8">
       <div className="max-w-3xl mx-auto">
-        <button onClick={() => navigate('/')} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors">
+        <button onClick={() => navigate('/')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm mb-6 transition-colors">
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
 
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">New Collections Case</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-foreground">New Collections Case</h1>
+          <p className="text-muted-foreground text-sm mt-1">
             Drop in your contracts, invoices, and emails — we'll read them, pre-fill the form, and ask a couple of quick questions.
           </p>
         </div>
@@ -258,16 +258,16 @@ export default function NewCase() {
         <div className="card p-5 mb-5">
           <div className="flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-blue-500" />
-            <h2 className="text-base font-semibold text-slate-900">Auto-fill from documents</h2>
-            <span className="text-xs text-slate-400 font-normal">(recommended)</span>
+            <h2 className="text-base font-semibold text-foreground">Auto-fill from documents</h2>
+            <span className="text-xs text-muted-foreground font-normal">(recommended)</span>
           </div>
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Drop your case documents here. We'll read them and pre-fill the form below — you can edit anything.
           </p>
           <UploadZone onUpload={handleUpload} uploading={uploading} />
           {docs.length > 0 && !uploading && !analyzing && (
-            <div className="mt-3 text-xs text-slate-500 flex items-center gap-2">
-              <FileText className="w-3.5 h-3.5 text-slate-400" />
+            <div className="mt-3 text-xs text-muted-foreground flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               {docs.length} file{docs.length !== 1 ? 's' : ''} attached
             </div>
           )}
@@ -282,9 +282,9 @@ export default function NewCase() {
         {docSummary && !analyzing && (
           <div className="mb-5">
             <SectionCard title={<div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-blue-500" />What we found in your documents</div>} defaultOpen>
-              <p className="text-sm text-slate-600 leading-relaxed">{docSummary}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{docSummary}</p>
               {autofillSummary && (
-                <p className="text-xs text-slate-400 mt-3">
+                <p className="text-xs text-muted-foreground mt-3">
                   Pre-filled {autofillSummary.filled} field{autofillSummary.filled !== 1 ? 's' : ''}. Review everything below — fields we couldn't find are blank for you to complete.
                 </p>
               )}
@@ -312,8 +312,8 @@ export default function NewCase() {
                 ))}
               </div>
 
-              <div className="flex items-center justify-between gap-3 mt-4 pt-4 border-t border-slate-100">
-                <span className="text-xs text-slate-500">{savedCount} answer{savedCount !== 1 ? 's' : ''} saved</span>
+              <div className="flex items-center justify-between gap-3 mt-4 pt-4 border-t border-border">
+                <span className="text-xs text-muted-foreground">{savedCount} answer{savedCount !== 1 ? 's' : ''} saved</span>
                 <button
                   onClick={() => applyMut.mutate()}
                   disabled={savedCount === 0 || applyMut.isPending}
@@ -335,25 +335,25 @@ export default function NewCase() {
               title={<div className="flex items-center gap-2"><Wand2 className="w-4 h-4 text-blue-500" />Proposed changes from your answers</div>}
               description="Nothing has changed yet. Accept each update to apply it, or discard it. Accepted fields are marked AI so you can tweak them after."
               defaultOpen
-              action={<button onClick={() => setProposed(null)} className="text-xs text-slate-400 hover:text-slate-600 inline-flex items-center gap-1"><X className="w-3.5 h-3.5" />Close</button>}
+              action={<button onClick={() => setProposed(null)} className="text-xs text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1"><X className="w-3.5 h-3.5" />Close</button>}
             >
               {applyNotes && <Alert tone="info" title="What we did">{applyNotes}</Alert>}
               {proposed.length === 0 ? (
-                <p className="text-sm text-slate-500 mt-3">No further changes — your answers matched what's already in the form.</p>
+                <p className="text-sm text-muted-foreground mt-3">No further changes — your answers matched what's already in the form.</p>
               ) : (
                 <div className="space-y-3 mt-3">
                   {proposed.map((u, i) => (
-                    <div key={i} className="rounded-xl border border-slate-200 p-4">
+                    <div key={i} className="rounded-xl border border-border p-4">
                       <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <span className="text-sm font-semibold text-slate-800">{FIELD_LABELS[u.field]}</span>
+                        <span className="text-sm font-semibold text-foreground">{FIELD_LABELS[u.field]}</span>
                         <Badge tone={u.confidence === 'high' ? 'info' : 'neutral'} size="sm"><Sparkles className="w-3 h-3" />AI</Badge>
                       </div>
                       <div className="flex items-center gap-2 text-sm mb-2 flex-wrap">
-                        <span className="text-slate-400 line-through">{displayValue(form[u.field as keyof FormValues])}</span>
-                        <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span className="font-medium text-slate-900">{displayValue(u.value)}</span>
+                        <span className="text-muted-foreground line-through">{displayValue(form[u.field as keyof FormValues])}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="font-medium text-foreground">{displayValue(u.value)}</span>
                       </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">{u.reasoning}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{u.reasoning}</p>
                       <div className="flex items-center gap-2 mt-3">
                         <button onClick={() => acceptUpdate(u)} className="btn-primary text-xs"><Check className="w-3.5 h-3.5" />Accept</button>
                         <button onClick={() => discardUpdate(u)} className="btn-ghost text-xs">Discard</button>
@@ -491,8 +491,8 @@ export default function NewCase() {
             </div>
             <div className="mt-4">
               <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" checked={Boolean(form.hasWrittenContract)} onChange={(e) => setField('hasWrittenContract', e.target.checked)} />
-                <span className="text-sm text-slate-700 font-medium">There is a written contract or formal agreement</span>
+                <input type="checkbox" className="w-4 h-4 rounded border-border text-blue-600 focus:ring-blue-500" checked={Boolean(form.hasWrittenContract)} onChange={(e) => setField('hasWrittenContract', e.target.checked)} />
+                <span className="text-sm text-foreground font-medium">There is a written contract or formal agreement</span>
                 {aiBadgeFor('hasWrittenContract')}
               </label>
             </div>
@@ -512,7 +512,7 @@ export default function NewCase() {
             <div className="mb-4">
               <Alert tone="neutral">
                 <div className="flex items-center gap-2 text-sm">
-                  <AlertTriangle className="w-4 h-4 text-slate-400 shrink-0" />
+                  <AlertTriangle className="w-4 h-4 text-muted-foreground shrink-0" />
                   <span><strong>Amount Owed</strong> is required to create a case.</span>
                 </div>
               </Alert>
@@ -551,12 +551,12 @@ function QuestionItem({ q, saved, onSave, onClear }: { q: ClarifyingQuestion; sa
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium text-slate-800 flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />{q.question}</div>
-            <div className="text-sm text-slate-600 mt-1 break-words">{saved}</div>
+            <div className="text-sm font-medium text-foreground flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />{q.question}</div>
+            <div className="text-sm text-muted-foreground mt-1 break-words">{saved}</div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => { setValue(saved ?? ''); setEditing(true); }} className="p-1.5 text-slate-400 hover:text-blue-600" title="Edit answer"><Pencil className="w-3.5 h-3.5" /></button>
-            <button onClick={onClear} className="p-1.5 text-slate-400 hover:text-red-500" title="Remove answer"><X className="w-3.5 h-3.5" /></button>
+            <button onClick={() => { setValue(saved ?? ''); setEditing(true); }} className="p-1.5 text-muted-foreground hover:text-blue-600" title="Edit answer"><Pencil className="w-3.5 h-3.5" /></button>
+            <button onClick={onClear} className="p-1.5 text-muted-foreground hover:text-red-500" title="Remove answer"><X className="w-3.5 h-3.5" /></button>
           </div>
         </div>
       </div>
@@ -564,13 +564,13 @@ function QuestionItem({ q, saved, onSave, onClear }: { q: ClarifyingQuestion; sa
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 p-4">
-      <div className="text-sm font-medium text-slate-800">{q.question}</div>
-      {q.why && <div className="text-xs text-slate-500 mt-1">{q.why}</div>}
+    <div className="rounded-xl border border-border p-4">
+      <div className="text-sm font-medium text-foreground">{q.question}</div>
+      {q.why && <div className="text-xs text-muted-foreground mt-1">{q.why}</div>}
       {q.suggestions && q.suggestions.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-3">
           {q.suggestions.map((s) => (
-            <button key={s} type="button" onClick={() => setValue(s)} className="px-3 py-1 rounded-full border border-slate-300 text-xs text-slate-700 hover:bg-slate-50">{s}</button>
+            <button key={s} type="button" onClick={() => setValue(s)} className="px-3 py-1 rounded-full border border-border text-xs text-foreground hover:bg-muted">{s}</button>
           ))}
         </div>
       )}

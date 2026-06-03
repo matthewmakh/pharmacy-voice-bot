@@ -23,7 +23,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
 
   return (
     <SectionCard
-      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-slate-500" />Default Judgment Motion</div>}
+      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-muted-foreground" />Default Judgment Motion</div>}
       collapsible
       defaultOpen={!!caseData.defaultJudgmentHtml}
     >
@@ -48,7 +48,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
 
         return (
           <>
-            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
               The answer deadline has passed. If the defendant has not appeared or answered, you can move for a default judgment. Service was initiated on {fmtDate(svcDate)}; the 30-day answer deadline was {fmtDate(altDeadline)}.
             </p>
             {mutation.isPending ? (
@@ -72,7 +72,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
               </div>
             ) : (
               <div className="text-center py-4">
-                <p className="text-sm text-slate-500 mb-4">
+                <p className="text-sm text-muted-foreground mb-4">
                   Generate a Motion for Default Judgment package — Notice of Motion, Affidavit in Support, Proposed Order, and blank Affidavit of Service template.
                 </p>
                 <button onClick={() => mutation.mutate()} className="btn-primary">

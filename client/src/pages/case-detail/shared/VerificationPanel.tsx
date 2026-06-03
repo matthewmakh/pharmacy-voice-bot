@@ -29,16 +29,16 @@ export function VerificationPanel({
 
   return (
     <div className="card overflow-hidden">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-100">
-        <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0" />
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-border">
+        <ShieldCheck className="w-4 h-4 text-muted-foreground shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          <div className="text-sm font-semibold text-foreground">{title}</div>
         </div>
         {v.didRetry && <Badge tone="info" size="sm">Auto-corrected</Badge>}
         <Badge tone={cfg.tone} icon={<StatusIcon className="w-3 h-3" />}>{cfg.label}</Badge>
       </div>
       <div className="px-5 py-4 space-y-3">
-        <p className="text-sm text-slate-700 leading-relaxed">{v.summary}</p>
+        <p className="text-sm text-foreground leading-relaxed">{v.summary}</p>
         <div className="flex items-center gap-2 text-xs">
           <Badge tone="success" size="sm"><CheckCircle2 className="w-3 h-3" />{okCount} verified</Badge>
           {issues.length > 0 && (
@@ -48,7 +48,7 @@ export function VerificationPanel({
           )}
         </div>
         {issues.length > 0 && (
-          <ul className="divide-y divide-slate-100 border-t border-slate-100 pt-2">
+          <ul className="divide-y divide-border border-t border-border pt-2">
             {issues.map((check, i) => {
               const ic = CHECK_ICON[check.status] ?? CHECK_ICON.mismatch;
               const Icon = ic.Icon;
@@ -56,12 +56,12 @@ export function VerificationPanel({
                 <li key={i} className="flex items-start gap-2 py-2 text-sm">
                   <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${ic.cls}`} />
                   <div className="flex-1 min-w-0">
-                    <span className="font-medium text-slate-800">{check.field}</span>
-                    {check.note && <span className="text-slate-500"> — {check.note}</span>}
+                    <span className="font-medium text-foreground">{check.field}</span>
+                    {check.note && <span className="text-muted-foreground"> — {check.note}</span>}
                     {(check.expected || check.found) && (
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        {check.expected && <>Expected: <span className="text-slate-600">{check.expected}</span></>}
-                        {check.found && check.status !== 'ok' && <span className="ml-3">Found: <span className="text-slate-600">{check.found}</span></span>}
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {check.expected && <>Expected: <span className="text-muted-foreground">{check.expected}</span></>}
+                        {check.found && check.status !== 'ok' && <span className="ml-3">Found: <span className="text-muted-foreground">{check.found}</span></span>}
                       </div>
                     )}
                   </div>
@@ -71,7 +71,7 @@ export function VerificationPanel({
           </ul>
         )}
         {v.blankFields.length > 0 && (
-          <div className="text-xs text-slate-500 border-t border-slate-100 pt-2">
+          <div className="text-xs text-muted-foreground border-t border-border pt-2">
             <span className="font-semibold">Blank / UNKNOWN fields:</span> {v.blankFields.join(', ')}
           </div>
         )}

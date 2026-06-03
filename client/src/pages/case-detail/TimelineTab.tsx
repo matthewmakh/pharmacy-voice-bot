@@ -84,21 +84,21 @@ export default function TimelineTab({ caseData }: { caseData: Case }) {
       </SectionCard>
 
       {sortedActions.length > 0 ? (
-        <div className="card divide-y divide-slate-100">
+        <div className="card divide-y divide-border">
           {sortedActions.map((action) => {
             const Icon = ACTION_ICONS[action.type] ?? Clock;
             return (
               <div key={action.id} className="flex items-start gap-4 p-4">
-                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 mt-0.5">
-                  <Icon className="w-4 h-4 text-slate-500" />
+                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                  <Icon className="w-4 h-4 text-muted-foreground" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-800">
+                  <div className="text-sm font-medium text-foreground">
                     {action.label || action.type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                   </div>
-                  {action.notes && <p className="text-sm text-slate-500 mt-0.5">{action.notes}</p>}
+                  {action.notes && <p className="text-sm text-muted-foreground mt-0.5">{action.notes}</p>}
                 </div>
-                <div className="text-xs text-slate-400 whitespace-nowrap shrink-0">
+                <div className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
                   {formatDate(action.createdAt)}
                 </div>
               </div>

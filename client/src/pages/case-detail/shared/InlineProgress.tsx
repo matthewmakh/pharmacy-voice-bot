@@ -16,7 +16,7 @@ export function InlineProgress({ startedAt, estimatedSeconds, label }: {
   const progress = Math.min(95, (elapsed / estimatedSeconds) * 100);
   return (
     <div className="space-y-1.5 py-1">
-      <div className="flex items-center justify-between text-xs text-slate-500">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
           {label}
@@ -25,7 +25,7 @@ export function InlineProgress({ startedAt, estimatedSeconds, label }: {
           {elapsed < estimatedSeconds ? `~${Math.max(0, estimatedSeconds - elapsed)}s` : 'almost done…'}
         </span>
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-1">
+      <div className="w-full bg-muted rounded-full h-1">
         <div
           className="bg-blue-500 h-1 rounded-full transition-all duration-1000"
           style={{ width: `${progress}%` }}

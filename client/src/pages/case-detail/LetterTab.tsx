@@ -86,7 +86,7 @@ export default function LetterTab({ caseData }: { caseData: Case }) {
               <Mail className="w-4 h-4" /> Email to Debtor
             </button>
           ) : (
-            <span className="text-xs text-slate-400">No debtor email on file — add one in Overview to enable email.</span>
+            <span className="text-xs text-muted-foreground">No debtor email on file — add one in Overview to enable email.</span>
           )}
           <button
             onClick={() => openHtmlInTab(caseData.demandLetterHtml || '', 'Demand Letter')}

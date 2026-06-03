@@ -44,7 +44,7 @@ export default function AffidavitPanel({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4">
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filled Affidavit of Service template. Your process server completes and signs this after service.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">Generate Affidavit of Service</button>

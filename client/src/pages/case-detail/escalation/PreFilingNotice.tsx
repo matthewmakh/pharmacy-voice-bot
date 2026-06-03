@@ -64,7 +64,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
                     <Mail className="w-4 h-4" /> Email to Debtor
                   </button>
                 ) : (
-                  <span className="text-xs text-slate-400">No debtor email on file.</span>
+                  <span className="text-xs text-muted-foreground">No debtor email on file.</span>
                 )}
               </>
             }
@@ -75,7 +75,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4">
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filing notice — a short, firm letter stating legal action is imminent.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">Generate Pre-Filing Notice</button>

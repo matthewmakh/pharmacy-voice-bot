@@ -60,7 +60,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       ) : type === 'checkbox' ? (
         <input
           type="checkbox"
-          className="rounded border-slate-300"
+          className="rounded border-border"
           checked={(form as Record<string, unknown>)[key] as boolean}
           onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
         />
@@ -89,11 +89,11 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <div className="card p-3 sm:p-5">
           <div className="field-label mb-1 leading-tight">Amount Owed</div>
-          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountOwed)}</div>
+          <div className="text-base sm:text-2xl font-bold text-foreground truncate">{formatCurrency(caseData.amountOwed)}</div>
         </div>
         <div className="card p-3 sm:p-5">
           <div className="field-label mb-1 leading-tight">Amount Paid</div>
-          <div className="text-base sm:text-2xl font-bold text-slate-900 truncate">{formatCurrency(caseData.amountPaid || 0)}</div>
+          <div className="text-base sm:text-2xl font-bold text-foreground truncate">{formatCurrency(caseData.amountPaid || 0)}</div>
         </div>
         <div className="card p-3 sm:p-5 bg-blue-50 border-blue-200">
           <div className="text-xs font-medium text-blue-700 mb-1 leading-tight">Balance Due</div>
@@ -120,20 +120,20 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
               <div>
                 <div className="field-label mb-0.5">Principal</div>
-                <div className="text-base sm:text-lg font-semibold text-slate-800">{formatCurrency(outstanding)}</div>
+                <div className="text-base sm:text-lg font-semibold text-foreground">{formatCurrency(outstanding)}</div>
               </div>
-              <div className="text-slate-300 text-lg self-center">+</div>
+              <div className="text-muted-foreground/60 text-lg self-center">+</div>
               <div>
                 <div className="field-label mb-0.5">Interest ({yearsElapsed} yrs)</div>
-                <div className="text-base sm:text-lg font-semibold text-slate-800">{formatCurrency(interest)}</div>
+                <div className="text-base sm:text-lg font-semibold text-foreground">{formatCurrency(interest)}</div>
               </div>
-              <div className="text-slate-300 text-lg self-center">=</div>
+              <div className="text-muted-foreground/60 text-lg self-center">=</div>
               <div>
                 <div className="field-label mb-0.5">Total claim value</div>
-                <div className="text-base sm:text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
+                <div className="text-base sm:text-lg font-bold text-foreground">{formatCurrency(totalWithInterest)}</div>
               </div>
             </div>
-            <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+            <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
               Include pre-judgment interest in your demand letter and court filings. Interest runs from{' '}
               {new Date(caseData.paymentDueDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.
             </p>
@@ -212,10 +212,10 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             {field('Amount Owed', 'amountOwed', 'number')}
             {field('Amount Paid', 'amountPaid', 'number')}
             {field('Invoice Number', 'invoiceNumber')}
-            <label className="flex items-center gap-2 pt-6 text-sm text-slate-700">
+            <label className="flex items-center gap-2 pt-6 text-sm text-foreground">
               <input
                 type="checkbox"
-                className="rounded border-slate-300"
+                className="rounded border-border"
                 checked={form.hasWrittenContract}
                 onChange={(e) => setForm((f) => ({ ...f, hasWrittenContract: e.target.checked }))}
               />
@@ -308,7 +308,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             </Badge>
           </div>
           {caseData.caseSummary && (
-            <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{caseData.caseSummary}</p>
           )}
         </SectionCard>
       )}
@@ -326,7 +326,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             ].map(({ label, key }) => (
               <div
                 key={key}
-                className={`flex items-center gap-2 text-sm ${evidenceSummary[key] ? 'text-emerald-700' : 'text-slate-400'}`}
+                className={`flex items-center gap-2 text-sm ${evidenceSummary[key] ? 'text-emerald-700' : 'text-muted-foreground'}`}
               >
                 {evidenceSummary[key] ? (
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -341,8 +341,8 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             <>
               <div className="divider my-3" />
               <div className="text-xs">
-                <span className="text-slate-500">Strongest evidence: </span>
-                <span className="text-slate-700">{String(evidenceSummary.strongestEvidence)}</span>
+                <span className="text-muted-foreground">Strongest evidence: </span>
+                <span className="text-foreground">{String(evidenceSummary.strongestEvidence)}</span>
               </div>
             </>
           )}
@@ -385,7 +385,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Service description */}
       {caseData.serviceDescription && (
         <SectionCard title="Services / Work Performed" collapsible defaultOpen>
-          <p className="text-sm text-slate-700 leading-relaxed">{caseData.serviceDescription}</p>
+          <p className="text-sm text-foreground leading-relaxed">{caseData.serviceDescription}</p>
         </SectionCard>
       )}
     </div>
@@ -405,13 +405,13 @@ function PartyCard({
     <div className="card p-5">
       <div className="kbd-label mb-3">{label}</div>
       <div className="space-y-1">
-        {party.business && <div className="font-semibold text-slate-900">{party.business}</div>}
-        {party.name && <div className="text-sm text-slate-700">{party.name}</div>}
-        {party.address && <div className="text-sm text-slate-500">{party.address}</div>}
-        {party.email && <div className="text-sm text-slate-500">{party.email}</div>}
-        {party.phone && <div className="text-sm text-slate-500">{party.phone}</div>}
+        {party.business && <div className="font-semibold text-foreground">{party.business}</div>}
+        {party.name && <div className="text-sm text-foreground">{party.name}</div>}
+        {party.address && <div className="text-sm text-muted-foreground">{party.address}</div>}
+        {party.email && <div className="text-sm text-muted-foreground">{party.email}</div>}
+        {party.phone && <div className="text-sm text-muted-foreground">{party.phone}</div>}
         {!party.business && !party.name && !party.address && !party.email && !party.phone && (
-          <div className="text-sm text-slate-400 italic">No details on file</div>
+          <div className="text-sm text-muted-foreground italic">No details on file</div>
         )}
         {chips && chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">

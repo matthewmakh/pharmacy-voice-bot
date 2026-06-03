@@ -78,8 +78,8 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4 mt-4">
-          <div className="text-sm font-semibold text-slate-700 mb-2">{courtFormName}</div>
-          <p className="text-sm text-slate-500 mb-4">
+          <div className="text-sm font-semibold text-foreground mb-2">{courtFormName}</div>
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filled, print-ready version of the correct NYC court form for your case.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">

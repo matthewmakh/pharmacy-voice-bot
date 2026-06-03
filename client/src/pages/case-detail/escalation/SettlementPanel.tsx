@@ -32,9 +32,9 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Stipulation of Settlement */}
-        <div className="p-4 rounded-xl border border-slate-200 bg-white">
-          <div className="text-sm font-semibold text-slate-800 mb-1">Stipulation of Settlement</div>
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+        <div className="p-4 rounded-xl border border-border bg-card">
+          <div className="text-sm font-semibold text-foreground mb-1">Stipulation of Settlement</div>
+          <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
             A binding agreement between both parties — settlement amount, payment terms, mutual release, default provisions.
           </p>
           {(settlementMutation.isPending || (!caseData.settlementHtml && caseData.status === 'GENERATING')) && settlementRef.current ? (
@@ -56,9 +56,9 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
         </div>
 
         {/* Payment Plan */}
-        <div className="p-4 rounded-xl border border-slate-200 bg-white">
-          <div className="text-sm font-semibold text-slate-800 mb-1">Payment Plan Agreement</div>
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+        <div className="p-4 rounded-xl border border-border bg-card">
+          <div className="text-sm font-semibold text-foreground mb-1">Payment Plan Agreement</div>
+          <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
             Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments.
           </p>
           {(paymentPlanMutation.isPending || (!caseData.paymentPlanHtml && caseData.status === 'GENERATING')) && paymentPlanRef.current ? (

@@ -22,7 +22,7 @@ export default function PacerLookup({ caseData }: { caseData: Case }) {
       render={(result) => result.error ? (
         <div className="text-xs space-y-1">
           <p className="text-red-600">{result.error}</p>
-          {result.scraperNote && <p className="text-slate-400 italic">{result.scraperNote}</p>}
+          {result.scraperNote && <p className="text-muted-foreground italic">{result.scraperNote}</p>}
         </div>
       ) : (
         <>
@@ -35,29 +35,29 @@ export default function PacerLookup({ caseData }: { caseData: Case }) {
                 : 'No bankruptcy filings — safe to proceed'}
             </Badge>
           </div>
-          <p className="text-xs text-slate-600 leading-relaxed">{result.note}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">{result.note}</p>
           {result.cases.length > 0 && (
             <div className="space-y-2">
               {result.cases.map((bc, i) => (
-                <div key={i} className="p-2.5 rounded border border-slate-200 bg-white text-xs space-y-1">
+                <div key={i} className="p-2.5 rounded border border-border bg-card text-xs space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-semibold text-slate-700">{bc.caseNumber}</span>
+                    <span className="font-mono font-semibold text-foreground">{bc.caseNumber}</span>
                     <Badge tone={bc.automaticStayActive ? 'danger' : bc.status === 'Discharged' ? 'warning' : 'neutral'} size="sm">
                       {bc.status}
                     </Badge>
-                    {bc.chapter !== 'unknown' && <span className="text-slate-500">Ch. {bc.chapter}</span>}
-                    {bc.dateFiled && <span className="text-slate-400">Filed {bc.dateFiled}</span>}
+                    {bc.chapter !== 'unknown' && <span className="text-muted-foreground">Ch. {bc.chapter}</span>}
+                    {bc.dateFiled && <span className="text-muted-foreground">Filed {bc.dateFiled}</span>}
                   </div>
-                  {bc.court && <p className="text-slate-500">{bc.court}</p>}
+                  {bc.court && <p className="text-muted-foreground">{bc.court}</p>}
                   {bc.proofOfClaimDeadline && (
                     <p className="text-amber-700 font-medium">Proof of claim deadline: {bc.proofOfClaimDeadline}</p>
                   )}
-                  <p className="text-slate-600 leading-relaxed border-t border-slate-100 pt-1 mt-1">{bc.actionRequired}</p>
+                  <p className="text-muted-foreground leading-relaxed border-t border-border pt-1 mt-1">{bc.actionRequired}</p>
                 </div>
               ))}
             </div>
           )}
-          <p className="text-xs text-slate-400">Source: PACER (pacer.uscourts.gov) — federal courts only.</p>
+          <p className="text-xs text-muted-foreground">Source: PACER (pacer.uscourts.gov) — federal courts only.</p>
         </>
       )}
     />

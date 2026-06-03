@@ -25,10 +25,10 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="min-h-screen bg-muted flex items-center justify-center p-6">
           <div className="card max-w-md w-full text-center p-8">
-            <h1 className="text-lg font-semibold text-slate-900">Something went wrong</h1>
-            <p className="text-sm text-slate-500 mt-2">
+            <h1 className="text-lg font-semibold text-foreground">Something went wrong</h1>
+            <p className="text-sm text-muted-foreground mt-2">
               An unexpected error occurred while rendering this page. Your data is safe.
             </p>
             <div className="flex items-center justify-center gap-3 mt-6">

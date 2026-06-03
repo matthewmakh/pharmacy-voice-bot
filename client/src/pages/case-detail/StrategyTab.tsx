@@ -90,8 +90,8 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
         <SectionCard padding="lg">
           <div className="text-center py-4">
             <Sparkles className="w-8 h-8 text-blue-500 mx-auto mb-3" />
-            <div className="text-sm font-semibold text-slate-900 mb-1">Run AI Analysis</div>
-            <p className="text-sm text-slate-500 mb-4 max-w-md mx-auto leading-relaxed">
+            <div className="text-sm font-semibold text-foreground mb-1">Run AI Analysis</div>
+            <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto leading-relaxed">
               Analyze your case to get a strength assessment, evidence summary, and strategy recommendations.
             </p>
             <button
@@ -164,18 +164,18 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
               <button
                 onClick={() => resetMutation.mutate()}
                 disabled={resetMutation.isPending}
-                className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+                className="text-xs text-muted-foreground hover:text-red-500 transition-colors"
               >
                 {resetMutation.isPending ? 'Resetting…' : 'Reset & Re-run'}
               </button>
             }
           >
             {caseData.caseSummary && (
-              <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{caseData.caseSummary}</p>
             )}
             {a?.recommendedStrategy && (
-              <p className="text-xs text-slate-500 mt-3">
-                AI recommends: <span className="font-semibold text-slate-700">
+              <p className="text-xs text-muted-foreground mt-3">
+                AI recommends: <span className="font-semibold text-foreground">
                   {STRATEGIES.find(s => s.id === a.recommendedStrategy)?.title}
                 </span>
               </p>
@@ -186,12 +186,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
           {a?.primaryCauseOfAction && (
             <SectionCard title="Legal Theory" collapsible defaultOpen>
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm font-bold text-slate-800">
+                <span className="text-sm font-bold text-foreground">
                   {THEORY_LABELS[a.primaryCauseOfAction.theory] ?? a.primaryCauseOfAction.theory}
                 </span>
                 <Badge tone="neutral" size="sm">primary</Badge>
               </div>
-              <p className="text-sm text-slate-500 mb-3 leading-relaxed">{a.primaryCauseOfAction.reasoning}</p>
+              <p className="text-sm text-muted-foreground mb-3 leading-relaxed">{a.primaryCauseOfAction.reasoning}</p>
               <div className="space-y-1.5">
                 {a.primaryCauseOfAction.elements.map((el, i) => (
                   <div key={i} className="flex items-start gap-2">
@@ -201,9 +201,9 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                       <CircleDashed className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
                     )}
                     <div className="flex-1 min-w-0 text-sm">
-                      <span className="font-medium text-slate-700">{el.element}</span>
+                      <span className="font-medium text-foreground">{el.element}</span>
                       {el.satisfied && el.evidence && (
-                        <span className="text-slate-500 ml-1">— {el.evidence}</span>
+                        <span className="text-muted-foreground ml-1">— {el.evidence}</span>
                       )}
                       {!el.satisfied && el.gap && (
                         <span className="text-red-600 ml-1">— {el.gap}</span>
@@ -213,7 +213,7 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                 ))}
               </div>
               {a.alternativeCauses.length > 0 && (
-                <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-100">
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
                   Also plead in the alternative: {a.alternativeCauses.join(', ')}
                 </p>
               )}
@@ -322,12 +322,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                 key={s.id}
                 onClick={() => strategyMutation.mutate(s.id)}
                 disabled={strategyMutation.isPending}
-                className={`text-left p-5 rounded-xl border bg-white transition-all relative ${
+                className={`text-left p-5 rounded-xl border bg-card transition-all relative ${
                   isSelected
                     ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/50'
                     : isGeneric
-                    ? 'border-slate-200 opacity-60 hover:opacity-80'
-                    : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
+                    ? 'border-border opacity-60 hover:opacity-80'
+                    : 'border-border hover:border-border hover:shadow-sm'
                 }`}
               >
                 {isRecommended && !isSelected && (
@@ -335,12 +335,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                     <Badge tone="info" size="sm">AI pick</Badge>
                   </span>
                 )}
-                <div className="text-sm font-semibold text-slate-800 mb-2 pr-16">{s.title}</div>
-                <p className="text-xs text-slate-500 mb-3 leading-relaxed">{s.description}</p>
+                <div className="text-sm font-semibold text-foreground mb-2 pr-16">{s.title}</div>
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{s.description}</p>
                 <ul className="space-y-1">
                   {s.traits.map((t) => (
-                    <li key={t} className="text-xs text-slate-500 flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-slate-300'}`} />
+                    <li key={t} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-muted'}`} />
                       {t}
                     </li>
                   ))}
