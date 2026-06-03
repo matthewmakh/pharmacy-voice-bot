@@ -180,3 +180,44 @@ Dashboard's mobile presentation (table → card list) — same data, same row-cl
 - **Regression checklist:** every behavior-only item above is unaffected, since changes are limited to
   `className` strings plus the Dashboard mobile card list (same data + navigation). Not exercised
   against a live DB/API in this pass (none available here) — recommend a click-through on staging.
+
+---
+
+# Phase 2 — Structural redesign (guided navigation)
+
+Goal: clearer, more guided, harder to get lost. **Still strictly behavior-preserving** — every tab
+and escalation panel is *reused untouched*; this only changes how they're navigated and arranged.
+
+### What changed
+- **Case page** (`case-detail/index.tsx` + new `StageRail.tsx`): the flat 7-tab bar became a
+  **5-stage progress spine** (Intake → Analysis → Strategy → Demand → Escalate & File) with
+  done/current/locked nodes and a single "Do this next" card. Case details (Overview), NY Filing
+  Guide, and Timeline moved into a **Reference & History** menu. The seven existing tab components
+  are reused as the per-stage / reference workspaces; the query+polling, gating signals, next-step
+  logic, and the "fall back when the active view locks" safety are all preserved.
+- **Escalation** (`EscalationTab.tsx`): the six stacked panels became a **numbered vertical
+  stepper** (done/current/locked) with lock reasons ("Unlocks after service is logged"). The six
+  panels are reused **unchanged** as step content — all generate / deadline / verification / PDF /
+  settlement logic intact.
+- **Dashboard** (`Dashboard.tsx`): the flat list became three groups — **Needs your action**
+  (with the next verb), **Waiting**, **Resolved**. Stat cards, polling, and pagination unchanged.
+
+### Mapping (nothing removed)
+| Before (tab) | After |
+|---|---|
+| Overview | Reference & History → "Case details" |
+| Evidence | Stage 1 · Intake |
+| Strategy | Stage 2 · Analysis + Stage 3 · Strategy |
+| Demand Letter | Stage 4 · Demand |
+| Escalation | Stage 5 · Escalate & File (mini-stepper) |
+| NY Filing Guide | Reference & History → "NY Filing Guide" |
+| Timeline | Reference & History → "Timeline & history" |
+
+### Verification
+- Build green (client `tsc` + vite); client tests **5/5**; server source untouched.
+- Screenshotted (`after/restructure-*`): case page (Strategy stage default + Intake stage +
+  Reference menu), Escalation stepper (locked + served states), grouped dashboard (desktop + mobile).
+  Stage gating, lock reasons, every panel's actions, and the grouping all render correctly.
+- The signals that drove tab enable/disable now drive stage done/current/locked (same inputs); the
+  next-step nudge is the same logic; all panels/tab components are the same code. No data flow,
+  mutation, polling, or routing changed.
