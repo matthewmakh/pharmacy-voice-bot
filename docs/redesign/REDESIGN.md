@@ -128,10 +128,55 @@ Behavior only. Compiled from the codebase with file:line refs.
 
 ---
 
-## What changed (filled in after the redesign)
+## What changed
 
-_TBD — completed when the redesign lands._
+Screenshots: [`before/`](./before/) vs [`after/`](./after/).
 
-## Verification (filled in after the redesign)
+**Design system / foundation**
+- shadcn-style **CSS-variable tokens** (light + dark) mapped through the Tailwind theme; added
+  `cn()` (clsx + tailwind-merge) and `tailwindcss-animate`.
+- **Typography:** system font stack → self-hosted **Inter Variable** (CSP-safe; no external `<link>`).
+- Existing class names kept and retoned (`.btn-*`, `.card`, `.input`, `.label`, …).
 
-_TBD — build + tests + screenshot diff + checklist walk-through._
+**Navigation / shell**
+- Dark `slate-900` sidebar → **light token sidebar** with a primary-accent active state, a
+  "Workspace" section label, and a refined logo lockup. Mobile top bar + overlay (blur) retoned.
+
+**Dashboard**
+- Refined stat cards (token accents, hover lift) and a cleaner table (muted header, row hover,
+  animated chevron). **New responsive mobile card list** replaces the horizontally-scrolling table
+  that clipped amounts. Centered `max-w-7xl`, subtle fade-in.
+
+**Auth**
+- Dark centered login → **branded split-screen** (`AuthLayout`): gradient brand panel + feature
+  list on desktop, clean form on the right, logo lockup on mobile. Login + Register restyled.
+
+**Case workspace + primitives**
+- Case header (semibold / tracking-tight) and next-step banner (accent surface, primary border) refined.
+- `TabBar` (primary active underline), `SectionCard`, `EmptyState`, `DisclaimerGate` (token surfaces,
+  backdrop blur, entrance animation) retoned. `Badge`/`Alert` kept (already token-adjacent).
+
+**App-wide**
+- Migrated all remaining neutral `slate-*` utilities → `foreground` / `muted-foreground` / `border` /
+  `muted`, and bare `bg-white` → `bg-card`, across every case-detail tab, escalation/strategy
+  sub-panel, shared component, New Case intake, and Team. **Semantic accent tones**
+  (success / warning / danger / info, status pills, risk levels, doc classifications) intentionally kept.
+
+**What did NOT change (functionality).** Routing & auth gating, `AuthContext`, every React Query
+query/mutation, all polling intervals, tab-gating + next-step logic, all handlers (upload / generate /
+lookup / PDF / email / copy), disabled-states, the `DisclaimerGate` localStorage key, `openHtmlInTab`
+print CSS, and all PDF/blob flows are untouched. The **only** non-color structural change is the
+Dashboard's mobile presentation (table → card list) — same data, same row-click navigation.
+
+## Verification
+
+- **Build:** client `tsc && vite build` green (1754 modules); root build (client + server) green.
+  Server source untouched (18/18 server tests unaffected).
+- **Tests:** client `vitest` **5/5** pass (SOL math).
+- **Visual:** before/after captured for Login, Dashboard (desktop + mobile), Case Overview,
+  Strategy, Evidence, Filing Guide, New Case, and Team. All states render correctly — tab gating
+  (Letter/Escalation disabled), next-step banner, status pills, badges, lookup grid, strategy
+  selector + AI-pick badge, document classifications, and member roles all present and correct.
+- **Regression checklist:** every behavior-only item above is unaffected, since changes are limited to
+  `className` strings plus the Dashboard mobile card list (same data + navigation). Not exercised
+  against a live DB/API in this pass (none available here) — recommend a click-through on staging.
