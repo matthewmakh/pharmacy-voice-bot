@@ -374,7 +374,15 @@ async function getBrowser(): Promise<import('puppeteer-core').Browser> {
  */
 export async function htmlToPDF(html: string): Promise<Buffer> {
   const wrapped = wrapWithPrintCSS(html);
-  const browser = await getBrowser();
+  let browser: import('puppeteer-core').Browser;
+  try {
+    browser = await getBrowser();
+  } catch (err) {
+    // Surface the real launch failure in the server logs (e.g. Chromium can't start
+    // because of an incompatible Node version or a missing system library on the host).
+    console.error('htmlToPDF: Chromium failed to launch:', err);
+    throw err;
+  }
   const page = await browser.newPage();
   try {
     // 'load' (not 'networkidle0') — generated documents use inline styles only, so we
@@ -387,6 +395,9 @@ export async function htmlToPDF(html: string): Promise<Buffer> {
       timeout: 30_000,
     });
     return Buffer.from(pdf);
+  } catch (err) {
+    console.error('htmlToPDF: render failed:', err);
+    throw err;
   } finally {
     await page.close().catch(() => {});
   }
