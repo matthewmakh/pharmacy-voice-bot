@@ -90,10 +90,18 @@ class S3Storage implements Storage {
     this.presign = presigner.getSignedUrl;
     this.bucket = process.env.S3_BUCKET as string;
     if (!this.bucket) throw new Error('STORAGE_DRIVER=s3 requires S3_BUCKET');
+    const usingCustomEndpoint = !!process.env.S3_ENDPOINT; // R2 / MinIO; AWS omits the endpoint
     this.client = new s3.S3Client({
       region: process.env.S3_REGION || 'auto',
       endpoint: process.env.S3_ENDPOINT, // set for Cloudflare R2 / MinIO; omit for AWS
-      forcePathStyle: !!process.env.S3_ENDPOINT,
+      forcePathStyle: usingCustomEndpoint,
+      // aws-sdk-js v3 defaults to CRC32 "flexible checksums" sent as aws-chunked streaming
+      // trailers, which Cloudflare R2 / MinIO reject (PutObject → NotImplemented). Emit
+      // checksums only when an operation requires them. Gated on a custom endpoint so a real
+      // AWS S3 deployment keeps the SDK defaults.
+      ...(usingCustomEndpoint
+        ? { requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED' }
+        : {}),
       credentials: process.env.S3_ACCESS_KEY_ID
         ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY as string }
         : undefined,

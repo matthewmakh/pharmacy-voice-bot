@@ -48,7 +48,9 @@ what changed is in [`CHANGELOG.md`](./CHANGELOG.md).
   (first page of results only).
 - **S3/R2 storage driver** compiles but was not run against a real bucket. Default is `local`,
   which is **ephemeral on Railway** — set `STORAGE_DRIVER=s3` for production or uploads are lost
-  on redeploy.
+  on redeploy. The driver now disables the aws-sdk-js v3 default CRC32 checksums when a custom
+  `S3_ENDPOINT` is set (the common R2/MinIO `PutObject` failure) — a known fix, but **still not
+  verified against a live R2 bucket**; confirm a real upload→download round-trip when enabling it.
 - **Frontend runtime/UX** was not clicked through in a browser. It builds; the intake
   review panel, tab gating, Team page, etc. are visually unverified.
 - **Legal accuracy is not attorney-reviewed.** Statutory citations, court addresses, filing
