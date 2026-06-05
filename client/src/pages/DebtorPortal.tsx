@@ -34,8 +34,8 @@ export default function DebtorPortal() {
   if (isLoading) {
     return (
       <CenteredCard>
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400 mx-auto" />
-        <p className="text-sm text-slate-500 text-center mt-2">Loading…</p>
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mx-auto" />
+        <p className="text-sm text-muted-foreground text-center mt-2">Loading…</p>
       </CenteredCard>
     );
   }
@@ -44,8 +44,8 @@ export default function DebtorPortal() {
     return (
       <CenteredCard>
         <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
-        <h2 className="text-lg font-semibold text-slate-900 text-center mt-2">Link not found</h2>
-        <p className="text-sm text-slate-500 text-center mt-1">
+        <h2 className="text-lg font-semibold text-foreground text-center mt-2">Link not found</h2>
+        <p className="text-sm text-muted-foreground text-center mt-1">
           This response link is invalid or has expired. Contact the claimant if you need a new one.
         </p>
       </CenteredCard>
@@ -56,8 +56,8 @@ export default function DebtorPortal() {
     return (
       <CenteredCard>
         <Check className="w-10 h-10 text-emerald-500 mx-auto" />
-        <h2 className="text-xl font-semibold text-slate-900 text-center mt-3">Payment received</h2>
-        <p className="text-sm text-slate-500 text-center mt-1">
+        <h2 className="text-xl font-semibold text-foreground text-center mt-3">Payment received</h2>
+        <p className="text-sm text-muted-foreground text-center mt-1">
           You've paid this claim. Thank you. The claimant has been notified.
         </p>
       </CenteredCard>
@@ -69,24 +69,24 @@ export default function DebtorPortal() {
     : '—';
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-background">
       <div className="max-w-2xl mx-auto px-4 py-10">
         <header className="mb-6">
-          <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Response Portal</p>
-          <h1 className="text-2xl font-semibold text-slate-900">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Response Portal</p>
+          <h1 className="text-2xl font-semibold text-foreground">
             {data.claimantBusiness || data.claimantName} is requesting payment
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Amount: <strong className="text-slate-800">{amountStr}</strong>
+          <p className="text-sm text-muted-foreground mt-1">
+            Amount: <strong className="text-foreground">{amountStr}</strong>
             {data.invoiceNumber && <> · Invoice #{data.invoiceNumber}</>}
           </p>
           {data.serviceDescription && (
-            <p className="text-sm text-slate-600 mt-3 leading-relaxed">{data.serviceDescription}</p>
+            <p className="text-sm text-muted-foreground mt-3 leading-relaxed">{data.serviceDescription}</p>
           )}
         </header>
 
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="flex border-b border-slate-200">
+        <div className="card overflow-hidden">
+          <div className="flex border-b border-border">
             <TabBtn active={tab === 'pay'} onClick={() => setTab('pay')} icon={<CreditCard className="w-4 h-4" />}>Pay now</TabBtn>
             <TabBtn active={tab === 'plan'} onClick={() => setTab('plan')} icon={<Calendar className="w-4 h-4" />}>Propose plan</TabBtn>
             <TabBtn active={tab === 'dispute'} onClick={() => setTab('dispute')} icon={<MessageSquare className="w-4 h-4" />}>Dispute</TabBtn>
@@ -110,7 +110,7 @@ export default function DebtorPortal() {
           </div>
         </div>
 
-        <p className="text-xs text-slate-400 text-center mt-6">
+        <p className="text-xs text-muted-foreground text-center mt-6">
           Powered by Reclaim · Secure response link
         </p>
       </div>
@@ -122,8 +122,8 @@ export default function DebtorPortal() {
 
 function CenteredCard({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8 max-w-md w-full">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="card p-8 max-w-md w-full">
         {children}
       </div>
     </div>
@@ -146,8 +146,8 @@ function TabBtn({
       onClick={onClick}
       className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
         active
-          ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
-          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+          ? 'text-primary border-b-2 border-primary bg-accent'
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
       }`}
     >
       {icon}
@@ -169,8 +169,8 @@ function PayTab({
 }) {
   return (
     <div>
-      <h3 className="text-base font-semibold text-slate-900 mb-1">Pay {amountStr}</h3>
-      <p className="text-sm text-slate-500 mb-4">
+      <h3 className="text-base font-semibold text-foreground mb-1">Pay {amountStr}</h3>
+      <p className="text-sm text-muted-foreground mb-4">
         Pay by card or US bank transfer. Closes the claim immediately.
       </p>
       {error && (
@@ -213,7 +213,7 @@ function PlanTab({
 
   if (data.proposedPlan) {
     return (
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted-foreground">
         Your payment plan proposal has been sent to the claimant. They'll respond within a few business days.
       </p>
     );
@@ -221,7 +221,7 @@ function PlanTab({
 
   return (
     <div className="space-y-3">
-      <h3 className="text-base font-semibold text-slate-900">Propose a payment plan</h3>
+      <h3 className="text-base font-semibold text-foreground">Propose a payment plan</h3>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Monthly amount</label>
@@ -292,7 +292,7 @@ function DisputeTab({
 
   if (disputed) {
     return (
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted-foreground">
         Your dispute has been logged and the claimant has been notified. They may contact you to discuss.
       </p>
     );
@@ -300,8 +300,8 @@ function DisputeTab({
 
   return (
     <div className="space-y-3">
-      <h3 className="text-base font-semibold text-slate-900">Dispute this claim</h3>
-      <p className="text-sm text-slate-500">
+      <h3 className="text-base font-semibold text-foreground">Dispute this claim</h3>
+      <p className="text-sm text-muted-foreground">
         Explain why you don't believe this amount is owed. The claimant will see this response.
       </p>
       <textarea

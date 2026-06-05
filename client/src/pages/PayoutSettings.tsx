@@ -27,8 +27,8 @@ export default function PayoutSettings() {
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Payout settings</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-semibold text-foreground">Payout settings</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Connect your Stripe account so collected funds can be paid out to you.
         </p>
       </header>
@@ -39,9 +39,9 @@ export default function PayoutSettings() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+      <div className="card p-6">
         {statusQuery.isLoading ? (
-          <div className="flex items-center gap-2 text-slate-400">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading…
           </div>
         ) : !status?.accountId ? (
@@ -70,7 +70,7 @@ export default function PayoutSettings() {
         )}
       </div>
 
-      <div className="mt-6 text-xs text-slate-500 leading-relaxed">
+      <div className="mt-6 text-xs text-muted-foreground leading-relaxed">
         <p className="mb-2">
           <strong>How payouts work:</strong> when a debtor pays through their response portal, the
           payment lands in Reclaim's escrow first. Reclaim retains a 12% recovery fee and transfers
@@ -90,10 +90,10 @@ function NotStarted({ isPending, onStart }: { isPending: boolean; onStart: () =>
   return (
     <div>
       <div className="flex items-center gap-3 mb-3">
-        <CreditCard className="w-5 h-5 text-slate-400" />
-        <div className="font-semibold text-slate-900">Not connected</div>
+        <CreditCard className="w-5 h-5 text-muted-foreground" />
+        <div className="font-semibold text-foreground">Not connected</div>
       </div>
-      <p className="text-sm text-slate-500 mb-4">
+      <p className="text-sm text-muted-foreground mb-4">
         Onboarding takes ~3 minutes. You'll need your business details, an SSN or EIN, and a US
         bank account.
       </p>
@@ -127,9 +127,9 @@ function Pending({
     <div>
       <div className="flex items-center gap-3 mb-3">
         <Loader2 className="w-5 h-5 text-amber-500" />
-        <div className="font-semibold text-slate-900">Onboarding in progress</div>
+        <div className="font-semibold text-foreground">Onboarding in progress</div>
       </div>
-      <ul className="space-y-2 text-sm text-slate-600 mb-4">
+      <ul className="space-y-2 text-sm text-muted-foreground mb-4">
         <li className="flex items-center gap-2">
           {detailsSubmitted ? <Check className="w-4 h-4 text-emerald-500" /> : <span className="w-4 h-4 inline-block" />}
           Account details submitted
@@ -143,8 +143,8 @@ function Pending({
           Payouts enabled
         </li>
       </ul>
-      <p className="text-xs text-slate-500 mb-4">
-        Connect account <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">{accountId}</code>
+      <p className="text-xs text-muted-foreground mb-4">
+        Connect account <code className="text-xs bg-muted px-1 py-0.5 rounded">{accountId}</code>
       </p>
       <button onClick={onResume} disabled={isPending} className="btn-primary">
         {isPending ? (
@@ -162,13 +162,13 @@ function Active({ accountId }: { accountId: string }) {
     <div>
       <div className="flex items-center gap-3 mb-2">
         <Check className="w-5 h-5 text-emerald-500" />
-        <div className="font-semibold text-slate-900">Connected</div>
+        <div className="font-semibold text-foreground">Connected</div>
       </div>
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted-foreground">
         Your Stripe account is verified and ready to accept payouts.
       </p>
-      <p className="text-xs text-slate-400 mt-3">
-        Account <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">{accountId}</code>
+      <p className="text-xs text-muted-foreground mt-3">
+        Account <code className="text-xs bg-muted px-1 py-0.5 rounded">{accountId}</code>
       </p>
     </div>
   );

@@ -181,7 +181,7 @@ router.post('/:id/walkthrough/start', async (req: Request, res: Response) => {
   try {
     const { type, purpose } = startSchema.parse(req.body);
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -214,7 +214,7 @@ router.post('/:id/walkthrough/advance', async (req: Request, res: Response) => {
   try {
     const { step, noteKey, noteValue } = advanceSchema.parse(req.body);
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.walkthroughType) return res.status(400).json({ error: 'No walkthrough in progress' });
@@ -241,7 +241,7 @@ router.post('/:id/walkthrough/complete', async (req: Request, res: Response) => 
   try {
     const { indexNumber } = completeSchema.parse(req.body);
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.walkthroughType) return res.status(400).json({ error: 'No walkthrough in progress' });
@@ -280,7 +280,7 @@ router.post('/:id/walkthrough/complete', async (req: Request, res: Response) => 
 router.post('/:id/walkthrough/abandon', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     await prisma.case.update({
@@ -304,7 +304,7 @@ router.post('/:id/walkthrough/abandon', async (req: Request, res: Response) => {
 router.get('/:id/walkthrough/steps', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c || !c.walkthroughType) return res.status(404).json({ error: 'No walkthrough' });
     return res.json({

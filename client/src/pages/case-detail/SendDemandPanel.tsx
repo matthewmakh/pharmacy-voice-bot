@@ -52,10 +52,10 @@ export default function SendDemandPanel({ caseData }: { caseData: Case }) {
           {mailed && (
             <div className="flex items-center gap-2 text-sm">
               <Check className="w-4 h-4 text-emerald-500" />
-              <Truck className="w-4 h-4 text-slate-500" />
-              <span className="text-slate-700">Mailed {fmtDate(caseData.demandLetterMailedAt)}</span>
+              <Truck className="w-4 h-4 text-muted-foreground" />
+              <span className="text-foreground">Mailed {fmtDate(caseData.demandLetterMailedAt)}</span>
               {caseData.demandLetterTracking && (
-                <span className="text-xs text-slate-500 ml-2">USPS #{caseData.demandLetterTracking}</span>
+                <span className="text-xs text-muted-foreground ml-2">USPS #{caseData.demandLetterTracking}</span>
               )}
               {mailDelivered && (
                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -67,8 +67,8 @@ export default function SendDemandPanel({ caseData }: { caseData: Case }) {
           {emailed && (
             <div className="flex items-center gap-2 text-sm">
               <Check className="w-4 h-4 text-emerald-500" />
-              <Mail className="w-4 h-4 text-slate-500" />
-              <span className="text-slate-700">Emailed {fmtDate(caseData.demandLetterEmailedAt)}</span>
+              <Mail className="w-4 h-4 text-muted-foreground" />
+              <span className="text-foreground">Emailed {fmtDate(caseData.demandLetterEmailedAt)}</span>
               {emailOpened && (
                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">
                   Opened {fmtDate(caseData.demandLetterEmailOpenedAt)}
@@ -89,7 +89,7 @@ export default function SendDemandPanel({ caseData }: { caseData: Case }) {
                 onChange={() => toggle('mail')}
                 disabled={!caseData.debtorAddress}
               />
-              <Truck className="w-4 h-4 text-slate-500" />
+              <Truck className="w-4 h-4 text-muted-foreground" />
               Certified mail RRR via Lob
               {!caseData.debtorAddress && (
                 <span className="text-xs text-amber-600 ml-2">(no debtor address on file)</span>
@@ -102,7 +102,7 @@ export default function SendDemandPanel({ caseData }: { caseData: Case }) {
                 onChange={() => toggle('email')}
                 disabled={!caseData.debtorEmail}
               />
-              <Mail className="w-4 h-4 text-slate-500" />
+              <Mail className="w-4 h-4 text-muted-foreground" />
               Tracked email via Resend
               {!caseData.debtorEmail && (
                 <span className="text-xs text-amber-600 ml-2">(no debtor email on file)</span>
@@ -129,7 +129,7 @@ export default function SendDemandPanel({ caseData }: { caseData: Case }) {
                 <><Send className="w-4 h-4" /> Send {channelLabel(channels)}</>
               )}
             </button>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted-foreground">
               {channels.includes('mail') && '~$8 certified mail. '}
               {channels.includes('email') && 'Email is free.'}
             </span>

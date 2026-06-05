@@ -79,7 +79,7 @@ export default function SCRAPanel({ caseData }: { caseData: Case }) {
               </p>
             ) : (
               <>
-                <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                <p className="text-xs text-muted-foreground leading-relaxed mb-2">
                   Search by debtor name + DOB at the DOD's free portal. You'll get a Status Report PDF — save it; you'll attach it as Exhibit A to the affidavit.
                 </p>
                 <a href={DOD_URL} target="_blank" rel="noreferrer" className="btn-secondary text-xs">
@@ -90,7 +90,7 @@ export default function SCRAPanel({ caseData }: { caseData: Case }) {
                     I've completed the lookup →
                   </button>
                 ) : (
-                  <div className="mt-3 rounded border border-slate-200 bg-white p-3 space-y-2">
+                  <div className="mt-3 rounded border border-border bg-card p-3 space-y-2">
                     <input
                       type="text"
                       value={certificateNumber}
@@ -177,10 +177,10 @@ export default function SCRAPanel({ caseData }: { caseData: Case }) {
                 )}
               </div>
             ) : caseData.notarizationStatus === 'in-session' || caseData.notarizationStatus === 'pending' ? (
-              <p className="text-xs text-slate-500">RON session in progress — check email for the signer link.</p>
+              <p className="text-xs text-muted-foreground">RON session in progress — check email for the signer link.</p>
             ) : (
               <>
-                <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                <p className="text-xs text-muted-foreground leading-relaxed mb-2">
                   Online notary via Proof — ~10 minutes, complete from your computer with a webcam. Or print and use a local notary.
                 </p>
                 <button
@@ -224,15 +224,15 @@ function Step({
           className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
             done
               ? 'bg-emerald-500 text-white'
-              : 'bg-slate-100 text-slate-500 border border-slate-300'
+              : 'bg-muted text-muted-foreground border border-border'
           }`}
         >
           {done ? <Check className="w-3.5 h-3.5" /> : number}
         </div>
-        {!last && <div className="w-px flex-1 bg-slate-200 mt-1" />}
+        {!last && <div className="w-px flex-1 bg-border mt-1" />}
       </div>
       <div className={`flex-1 pb-4 ${done ? 'opacity-70' : ''}`}>
-        <div className="text-sm font-semibold text-slate-700 mb-1">{title}</div>
+        <div className="text-sm font-semibold text-foreground mb-1">{title}</div>
         <div>{body}</div>
       </div>
     </div>

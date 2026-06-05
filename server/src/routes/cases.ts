@@ -1538,7 +1538,7 @@ router.post('/:id/send-demand-letter', async (req: Request, res: Response) => {
     const { channels } = sendDemandSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.demandLetterHtml) {
@@ -1642,7 +1642,7 @@ router.post('/:id/send-final-notice', async (req: Request, res: Response) => {
     const { channels } = sendDemandSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.finalNoticeHtml) {
@@ -1728,7 +1728,7 @@ router.post('/:id/send-for-signature', async (req: Request, res: Response) => {
     const { kind } = sendForSignatureSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -1784,7 +1784,7 @@ router.post('/:id/send-for-signature', async (req: Request, res: Response) => {
 router.post('/:id/portal-token', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -1810,7 +1810,7 @@ router.post('/:id/portal-token', async (req: Request, res: Response) => {
 router.post('/:id/checkout-session', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.amountOwed) return res.status(400).json({ error: 'Case has no amount owed' });
@@ -1836,7 +1836,7 @@ router.post('/:id/checkout-session', async (req: Request, res: Response) => {
 router.post('/:id/release-payout', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.amountCollectedCents || !c.stripePaymentIntentId) {
@@ -1894,7 +1894,7 @@ const notarizeSchema = z.object({
 router.post('/:id/notarize', async (req: Request, res: Response) => {
   try {
     const { kind } = notarizeSchema.parse(req.body);
-    const c = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    const c = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
     const html = kind === 'scra-affidavit' ? c.scraAffidavitHtml
@@ -1950,7 +1950,7 @@ const serveSchema = z.object({
 router.post('/:id/serve-process', async (req: Request, res: Response) => {
   try {
     const { rush, notes } = serveSchema.parse(req.body);
-    const c = await prisma.case.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    const c = await prisma.case.findFirst({ where: { id: req.params.id, organizationId: { in: req.orgIds! } } });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.filingPacketHtml) return res.status(400).json({ error: 'Court form / Summons + Complaint not generated yet' });
     if (!c.debtorAddress) return res.status(400).json({ error: 'Debtor address required for service' });
@@ -2016,7 +2016,7 @@ router.post('/:id/serve-process', async (req: Request, res: Response) => {
 router.post('/:id/scra-affidavit/generate', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -2050,7 +2050,7 @@ router.post('/:id/scra-affidavit/mark-verified', async (req: Request, res: Respo
   try {
     const { certificateNumber } = scraVerifySchema.parse(req.body);
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -2089,7 +2089,7 @@ router.post('/:id/file-via-infotrack', async (req: Request, res: Response) => {
     const { purpose } = fileViaInfoTrackSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -2196,7 +2196,7 @@ router.post('/:id/default-judgment/mark-filed', async (req: Request, res: Respon
     const { method, indexNumber, filedAt } = markFiledSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
     if (!c.defaultJudgmentHtml) {

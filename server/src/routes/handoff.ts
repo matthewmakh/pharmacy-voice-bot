@@ -16,6 +16,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { loadOrgs } from '../middleware/orgs';
 import { sendEmail } from '../services/resend';
 import {
   generateInformationSubpoena,
@@ -27,6 +28,7 @@ import {
 
 const router = Router();
 router.use(requireAuth);
+router.use(loadOrgs);
 
 // ─── AttorneyPartner CRUD ────────────────────────────────────────────────────
 
@@ -95,7 +97,7 @@ router.post('/cases/:id/handoff/generate-docs', async (req: Request, res: Respon
   try {
     const { docs } = generateDocsSchema.parse(req.body);
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 
@@ -146,7 +148,7 @@ router.post('/cases/:id/handoff/generate-docs', async (req: Request, res: Respon
 router.get('/cases/:id/handoff/package', async (req: Request, res: Response) => {
   try {
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
       include: { actions: { orderBy: { createdAt: 'asc' } }, documents: true },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
@@ -227,7 +229,7 @@ router.post('/cases/:id/handoff/initiate', async (req: Request, res: Response) =
     const { attorneyPartnerId, notes } = initiateSchema.parse(req.body);
 
     const c = await prisma.case.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, organizationId: { in: req.orgIds! } },
     });
     if (!c) return res.status(404).json({ error: 'Case not found' });
 

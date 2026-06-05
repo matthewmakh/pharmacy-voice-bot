@@ -29,7 +29,7 @@ export default function DebtorPortalCard({ caseData }: { caseData: Case }) {
     <SectionCard
       title={
         <div className="flex items-center gap-2">
-          <LinkIcon className="w-4 h-4 text-blue-500" />
+          <LinkIcon className="w-4 h-4 text-primary" />
           Debtor Response Link
         </div>
       }
@@ -55,13 +55,13 @@ export default function DebtorPortalCard({ caseData }: { caseData: Case }) {
             </a>
           </div>
           {caseData.portalLastViewedAt && (
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Eye className="w-3.5 h-3.5" />
               Debtor last viewed {fmtDateTime(caseData.portalLastViewedAt)}
             </div>
           )}
           {caseData.portalTokenExpiresAt && (
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-muted-foreground">
               Link expires {fmtDate(caseData.portalTokenExpiresAt)}
             </div>
           )}

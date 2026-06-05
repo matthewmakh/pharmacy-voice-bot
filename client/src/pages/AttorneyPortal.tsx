@@ -98,7 +98,7 @@ export default function AttorneyPortal() {
       <Centered>
         <AlertCircle className="w-8 h-8 text-amber-500" />
         <h2 className="text-lg font-semibold mt-2">Link not found</h2>
-        <p className="text-sm text-slate-500 mt-1">This referral link is invalid or expired.</p>
+        <p className="text-sm text-muted-foreground mt-1">This referral link is invalid or expired.</p>
       </Centered>
     );
   }
@@ -110,15 +110,15 @@ export default function AttorneyPortal() {
     : '—';
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto px-6 py-8">
         <header className="mb-6">
-          <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Attorney case referral</p>
-          <h1 className="text-2xl font-semibold text-slate-900">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Attorney case referral</p>
+          <h1 className="text-2xl font-semibold text-foreground">
             {summary.claimant} v. {summary.debtor}
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Amount: <strong className="text-slate-800">{amountStr}</strong>
+          <p className="text-sm text-muted-foreground mt-1">
+            Amount: <strong className="text-foreground">{amountStr}</strong>
             {data.handoff.partner && (
               <> · Referral fee: <strong>{data.handoff.partner.referralFeePercent}%</strong> of contingency</>
             )}
@@ -169,8 +169,8 @@ export default function AttorneyPortal() {
           </button>
         )}
         {decisionMode === 'reporting' && (
-          <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6 space-y-3">
-            <div className="text-base font-semibold text-slate-900">Report outcome</div>
+          <div className="card p-5 mb-6 space-y-3">
+            <div className="text-base font-semibold text-foreground">Report outcome</div>
             <div>
               <label className="label">Status</label>
               <select value={reportStatus} onChange={(e) => setReportStatus(e.target.value as typeof reportStatus)} className="input">
@@ -191,7 +191,7 @@ export default function AttorneyPortal() {
                   placeholder="e.g. 8500.00"
                   className="input"
                 />
-                <p className="text-xs text-slate-500 mt-1">Used to compute the Reclaim referral fee.</p>
+                <p className="text-xs text-muted-foreground mt-1">Used to compute the Reclaim referral fee.</p>
               </div>
             )}
             <div>
@@ -214,9 +214,9 @@ export default function AttorneyPortal() {
 
         {/* Notes from claimant */}
         {data.handoff.notes && (
-          <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
-            <div className="text-sm font-semibold text-slate-700 mb-2">Notes from claimant</div>
-            <p className="text-sm text-slate-700 whitespace-pre-wrap">{data.handoff.notes}</p>
+          <div className="card p-5 mb-6">
+            <div className="text-sm font-semibold text-foreground mb-2">Notes from claimant</div>
+            <p className="text-sm text-foreground whitespace-pre-wrap">{data.handoff.notes}</p>
           </div>
         )}
 
@@ -227,7 +227,7 @@ export default function AttorneyPortal() {
 
         {/* Documents */}
         <Section title="Documents" icon={<FileText className="w-4 h-4" />}>
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-border">
             {PRE_TRIAL_DOCS.map((d) => {
               const has = data.preTrial[d.field];
               return (
@@ -238,14 +238,14 @@ export default function AttorneyPortal() {
                     ) : (
                       <span className="w-4 h-4 inline-block" />
                     )}
-                    <span className={has ? 'text-slate-700' : 'text-slate-400'}>{d.label}</span>
+                    <span className={has ? 'text-foreground' : 'text-muted-foreground'}>{d.label}</span>
                   </div>
                   {has && (
                     <a
                       href={getAttorneyDocUrl(token, d.kind)}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-blue-600 hover:underline text-xs inline-flex items-center gap-1"
+                      className="text-primary hover:underline text-xs inline-flex items-center gap-1"
                     >
                       <ExternalLink className="w-3 h-3" /> Open
                     </a>
@@ -260,8 +260,8 @@ export default function AttorneyPortal() {
         <Section title="Case timeline" icon={null} defaultOpen={false}>
           <ol className="space-y-2 text-sm">
             {data.timeline.map((a, i) => (
-              <li key={i} className="text-slate-600">
-                <span className="text-slate-400 text-xs mr-2">{new Date(a.createdAt).toLocaleDateString()}</span>
+              <li key={i} className="text-muted-foreground">
+                <span className="text-muted-foreground text-xs mr-2">{new Date(a.createdAt).toLocaleDateString()}</span>
                 {a.label || a.type}
               </li>
             ))}
@@ -270,12 +270,12 @@ export default function AttorneyPortal() {
 
         {/* Investigation */}
         <Section title="Debtor investigation" icon={null} defaultOpen={false}>
-          <pre className="text-xs text-slate-600 bg-slate-50 rounded p-3 overflow-x-auto">
+          <pre className="text-xs text-muted-foreground bg-muted/40 rounded p-3 overflow-x-auto">
 {JSON.stringify(data.investigation, null, 2)}
           </pre>
         </Section>
 
-        <p className="text-xs text-slate-400 text-center mt-8">
+        <p className="text-xs text-muted-foreground text-center mt-8">
           Powered by Reclaim · Secure attorney portal · Case ID hidden for confidentiality
         </p>
       </div>
@@ -287,7 +287,7 @@ export default function AttorneyPortal() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 gap-2 text-slate-500">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 gap-2 text-muted-foreground">
       {children}
     </div>
   );
@@ -306,27 +306,27 @@ function Section({
 }) {
   const [open, setOpen] = React.useState(defaultOpen);
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm mb-4 overflow-hidden">
+    <div className="card mb-4 overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-5 py-3 text-left hover:bg-slate-50 transition-colors"
+        className="w-full flex items-center gap-2 px-5 py-3 text-left hover:bg-muted/40 transition-colors"
       >
-        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
         {icon}
-        <span className="text-sm font-semibold text-slate-700">{title}</span>
+        <span className="text-sm font-semibold text-foreground">{title}</span>
       </button>
-      {open && <div className="px-5 pb-5 pt-0 border-t border-slate-100">{children}</div>}
+      {open && <div className="px-5 pb-5 pt-0 border-t border-border">{children}</div>}
     </div>
   );
 }
 
 function StatusBanner({ status, handoff }: { status: string; handoff: HandoffCaseView['handoff'] }) {
   const map: Record<string, { color: string; label: string }> = {
-    accepted: { color: 'bg-blue-50 border-blue-200 text-blue-900', label: 'You accepted this case' },
-    'in-progress': { color: 'bg-blue-50 border-blue-200 text-blue-900', label: 'Case in progress' },
+    accepted: { color: 'bg-accent border-primary/30 text-accent-foreground', label: 'You accepted this case' },
+    'in-progress': { color: 'bg-accent border-primary/30 text-accent-foreground', label: 'Case in progress' },
     declined: { color: 'bg-red-50 border-red-200 text-red-900', label: 'You declined this case' },
     resolved: { color: 'bg-emerald-50 border-emerald-200 text-emerald-900', label: 'Case resolved' },
-    lost: { color: 'bg-slate-100 border-slate-300 text-slate-700', label: 'Case closed without recovery' },
+    lost: { color: 'bg-muted border-border text-foreground', label: 'Case closed without recovery' },
   };
   const m = map[status] || map.accepted;
   return (
@@ -356,8 +356,8 @@ function SummaryGrid({
   const Row = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value !== null && value !== undefined && value !== '' ? (
       <div className="flex justify-between gap-4 py-1.5 text-sm">
-        <span className="text-slate-500">{label}</span>
-        <span className="text-slate-800 font-medium text-right">{value}</span>
+        <span className="text-muted-foreground">{label}</span>
+        <span className="text-foreground font-medium text-right">{value}</span>
       </div>
     ) : null;
 
@@ -385,9 +385,9 @@ function SummaryGrid({
         <Row label="Already collected" value={collected.amountCollectedCents ? `$${(collected.amountCollectedCents / 100).toLocaleString()}` : null} />
       </div>
       {summary.notes && (
-        <div className="md:col-span-2 mt-2 pt-2 border-t border-slate-100">
-          <div className="text-xs text-slate-500 mb-1">Claimant notes</div>
-          <div className="text-sm text-slate-700 whitespace-pre-wrap">{summary.notes as string}</div>
+        <div className="md:col-span-2 mt-2 pt-2 border-t border-border">
+          <div className="text-xs text-muted-foreground mb-1">Claimant notes</div>
+          <div className="text-sm text-foreground whitespace-pre-wrap">{summary.notes as string}</div>
         </div>
       )}
     </div>

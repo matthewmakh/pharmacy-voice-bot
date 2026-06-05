@@ -69,7 +69,7 @@ export default function WalkthroughPage() {
   });
 
   if (caseQuery.isLoading) {
-    return <Centered><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></Centered>;
+    return <Centered><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></Centered>;
   }
   if (!caseQuery.data) {
     return <Centered><AlertCircle className="w-6 h-6 text-amber-500" /> <span>Case not found</span></Centered>;
@@ -93,7 +93,7 @@ export default function WalkthroughPage() {
 
   // Active walkthrough
   if (wkQuery.isLoading || !wkQuery.data) {
-    return <Centered><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></Centered>;
+    return <Centered><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></Centered>;
   }
 
   return (
@@ -128,12 +128,12 @@ function PickerView({
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
-      <Link to={`/cases/${caseId}`} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-4">
+      <Link to={`/cases/${caseId}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
         <ChevronLeft className="w-4 h-4" /> Back to case
       </Link>
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">File your {purposeLabel}</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-semibold text-foreground">File your {purposeLabel}</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Pick the right court for your claim amount. We'll walk you through every step.
         </p>
       </header>
@@ -174,7 +174,7 @@ function PickerView({
         />
       </div>
 
-      <p className="text-xs text-slate-500 mt-6 leading-relaxed">
+      <p className="text-xs text-muted-foreground mt-6 leading-relaxed">
         <strong>Not sure?</strong> Pick the court that matches your claim amount. Filing in the wrong court is a common mistake — the clerk will reject your filing or transfer it, costing weeks.
       </p>
     </div>
@@ -204,14 +204,14 @@ function PickerCard({
 }) {
   return (
     <div
-      className={`rounded-xl border p-5 bg-white shadow-sm ${
-        highlight ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200'
+      className={`rounded-xl border p-5 bg-card shadow-sm ${
+        highlight ? 'border-primary ring-2 ring-primary/20' : 'border-border'
       }`}
     >
-      <div className="text-xs uppercase tracking-wider text-slate-400 mb-1">{subtitle}</div>
-      <h3 className="text-lg font-semibold text-slate-900 mb-2">{title}</h3>
-      <p className="text-sm text-slate-600 mb-4 leading-relaxed">{description}</p>
-      <div className="space-y-1 text-xs text-slate-500 mb-4">
+      <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">{subtitle}</div>
+      <h3 className="text-lg font-semibold text-foreground mb-2">{title}</h3>
+      <p className="text-sm text-muted-foreground mb-4 leading-relaxed">{description}</p>
+      <div className="space-y-1 text-xs text-muted-foreground mb-4">
         <div>📍 {location}</div>
         <div>⏱ {time}</div>
         <div>💵 {fee}</div>
@@ -263,8 +263,8 @@ function RunnerView({
       <Centered>
         <div className="text-center max-w-md">
           <Check className="w-10 h-10 text-emerald-500 mx-auto" />
-          <h2 className="text-xl font-semibold text-slate-900 mt-3">Filing complete</h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <h2 className="text-xl font-semibold text-foreground mt-3">Filing complete</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             We've recorded the filing on this case. You'll see it in the case timeline.
           </p>
           <Link to={`/cases/${caseId}`} className="btn-primary mt-6">Back to case</Link>
@@ -294,37 +294,37 @@ function RunnerView({
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <div className="flex items-center justify-between mb-6">
-        <Link to={`/cases/${caseId}`} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+        <Link to={`/cases/${caseId}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ChevronLeft className="w-4 h-4" /> Back to case
         </Link>
         <button
           onClick={() => {
             if (confirm('Abandon this walkthrough? Progress will be lost.')) onAbandon();
           }}
-          className="text-sm text-slate-400 hover:text-red-600 inline-flex items-center gap-1"
+          className="text-sm text-muted-foreground hover:text-red-600 inline-flex items-center gap-1"
         >
           <X className="w-4 h-4" /> Abandon
         </button>
       </div>
 
       <header className="mb-2">
-        <p className="text-xs uppercase tracking-wider text-slate-400">Filing via {platformLabel}</p>
-        <h1 className="text-xl font-semibold text-slate-900 mt-0.5">
+        <p className="text-xs uppercase tracking-wider text-muted-foreground">Filing via {platformLabel}</p>
+        <h1 className="text-xl font-semibold text-foreground mt-0.5">
           Step {idx + 1} of {walkthrough.steps.length}: {step.title}
         </h1>
       </header>
 
-      <div className="w-full bg-slate-100 rounded-full h-1 mb-6 overflow-hidden">
+      <div className="w-full bg-muted rounded-full h-1 mb-6 overflow-hidden">
         <div
-          className="bg-blue-500 h-full transition-all"
+          className="bg-primary h-full transition-all"
           style={{ width: `${((idx + 1) / walkthrough.steps.length) * 100}%` }}
         />
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 mb-6">
+      <div className="card p-6 mb-6">
         <div className="prose prose-sm max-w-none prose-slate">
           {step.body.split('\n\n').map((para, i) => (
-            <p key={i} className="text-sm text-slate-700 leading-relaxed mb-3 last:mb-0 whitespace-pre-line">
+            <p key={i} className="text-sm text-foreground leading-relaxed mb-3 last:mb-0 whitespace-pre-line">
               {renderMarkdownLite(para)}
             </p>
           ))}
@@ -335,7 +335,7 @@ function RunnerView({
             href={step.link.url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1.5 mt-4 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            className="inline-flex items-center gap-1.5 mt-4 text-sm text-primary hover:text-primary/90 font-medium"
           >
             <ExternalLink className="w-4 h-4" /> {step.link.label}
           </a>
@@ -355,7 +355,7 @@ function RunnerView({
         )}
 
         {step.estimatedMinutes && (
-          <div className="flex items-center gap-1.5 mt-4 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 mt-4 text-xs text-muted-foreground">
             <Clock className="w-3 h-3" /> ~{step.estimatedMinutes} min
           </div>
         )}
@@ -419,7 +419,7 @@ function RunnerView({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-center min-h-[60vh] gap-2 text-slate-500">
+    <div className="flex items-center justify-center min-h-[60vh] gap-2 text-muted-foreground">
       {children}
     </div>
   );
@@ -433,7 +433,7 @@ function renderMarkdownLite(text: string): React.ReactNode {
       return <strong key={i}>{p.slice(2, -2)}</strong>;
     }
     if (p.startsWith('`') && p.endsWith('`')) {
-      return <code key={i} className="px-1 py-0.5 rounded bg-slate-100 text-xs">{p.slice(1, -1)}</code>;
+      return <code key={i} className="px-1 py-0.5 rounded bg-muted text-xs">{p.slice(1, -1)}</code>;
     }
     return <React.Fragment key={i}>{p}</React.Fragment>;
   });
