@@ -43,6 +43,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // When any API call returns 401 (expired/invalid session), log out cleanly so the
+  // user sees the login screen instead of a generic "failed to load" error.
+  useEffect(() => {
+    const onUnauthorized = () => { setToken(null); setUser(null); };
+    window.addEventListener('auth:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+  }, []);
+
   const login = async (email: string, password: string) => {
     const { data } = await axios.post('/api/auth/login', { email, password });
     setToken(data.token);

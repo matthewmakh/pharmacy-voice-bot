@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Scale } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Alert from '../components/ui/Alert';
+import AuthLayout from '../components/layout/AuthLayout';
 
 export default function Login() {
   const { login } = useAuth();
@@ -28,64 +28,51 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
-            <Scale className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <div className="text-white font-bold text-xl">Reclaim</div>
-            <div className="text-slate-400 text-xs">Collections Platform</div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-8 shadow-xl">
-          <h1 className="text-xl font-bold text-slate-900 mb-1">Sign in</h1>
-          <p className="text-slate-500 text-sm mb-6">Access your collections cases</p>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="label">Email</label>
-              <input
-                className="input"
-                type="email"
-                placeholder="you@yourbusiness.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div>
-              <label className="label">Password</label>
-              <input
-                className="input"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
-            </div>
-
-            {error && <Alert tone="danger">{error}</Alert>}
-
-            <button type="submit" disabled={loading} className="btn-primary w-full py-2.5">
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-          </form>
-
-          <p className="text-center text-sm text-slate-500 mt-5">
-            Don't have an account?{' '}
-            <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
-              Create one
-            </Link>
-          </p>
-        </div>
+    <AuthLayout>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-foreground tracking-tight">Sign in</h1>
+        <p className="text-muted-foreground text-sm mt-1">Access your collections cases</p>
       </div>
-    </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="label">Email</label>
+          <input
+            className="input"
+            type="email"
+            placeholder="you@yourbusiness.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+        </div>
+        <div>
+          <label className="label">Password</label>
+          <input
+            className="input"
+            type="password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="current-password"
+          />
+        </div>
+
+        {error && <Alert tone="danger">{error}</Alert>}
+
+        <button type="submit" disabled={loading} className="btn-primary w-full py-2.5">
+          {loading ? 'Signing in…' : 'Sign In'}
+        </button>
+      </form>
+
+      <p className="text-center text-sm text-muted-foreground mt-6">
+        Don't have an account?{' '}
+        <Link to="/register" className="text-primary hover:text-primary/80 font-medium">
+          Create one
+        </Link>
+      </p>
+    </AuthLayout>
   );
 }

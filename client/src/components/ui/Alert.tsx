@@ -3,7 +3,7 @@ import { Info, CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react';
 import type { Tone } from './Badge';
 
 const TONE_STYLES: Record<Tone, { wrap: string; icon: string; Icon: React.ElementType }> = {
-  neutral: { wrap: 'bg-slate-50 border-slate-200 text-slate-700', icon: 'text-slate-500', Icon: Info },
+  neutral: { wrap: 'bg-muted border-border text-foreground', icon: 'text-muted-foreground', Icon: Info },
   info: { wrap: 'bg-blue-50 border-blue-200 text-blue-900', icon: 'text-blue-500', Icon: Info },
   success: { wrap: 'bg-emerald-50 border-emerald-200 text-emerald-900', icon: 'text-emerald-500', Icon: CheckCircle2 },
   warning: { wrap: 'bg-amber-50 border-amber-200 text-amber-900', icon: 'text-amber-500', Icon: AlertTriangle },

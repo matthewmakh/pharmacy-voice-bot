@@ -8,8 +8,8 @@ export interface StepItem {
   body: React.ReactNode;
 }
 
-const p = (text: string) => <p className="text-sm text-slate-600 leading-relaxed">{text}</p>;
-const sub = (text: string) => <p className="text-xs text-slate-500 leading-relaxed">{text}</p>;
+const p = (text: string) => <p className="text-sm text-muted-foreground leading-relaxed">{text}</p>;
+const sub = (text: string) => <p className="text-xs text-muted-foreground leading-relaxed">{text}</p>;
 
 export function buildSteps(track: CourtTrack, hasDemand: boolean): StepItem[] {
   if (track === 'commercial') {

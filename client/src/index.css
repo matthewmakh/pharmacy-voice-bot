@@ -2,9 +2,82 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens (shadcn-style). Colors are HSL channels consumed as hsl(var(--x))
+ * via the Tailwind theme, so the whole UI is themeable from one place and dark mode
+ * comes for free. Light is the default; `.dark` on <html> would flip it.
+ */
 @layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 100% 96%;
+    --accent-foreground: 221 83% 40%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 70% 40%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+    --radius: 0.625rem;
+
+    /* App sidebar (light, refined) */
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-muted: 215 16% 47%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-accent: 213 100% 96%;
+    --sidebar-accent-foreground: 221 83% 45%;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222 44% 9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 44% 9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 20%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 11%;
+    --border: 217 33% 20%;
+    --input: 217 33% 22%;
+    --ring: 224 76% 60%;
+
+    --sidebar: 222 47% 9%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-muted: 215 20% 65%;
+    --sidebar-border: 217 33% 18%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 40% 98%;
+  }
+
   * {
-    box-sizing: border-box;
+    @apply border-border;
   }
 
   html {
@@ -13,7 +86,8 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900;
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv11', 'ss01';
   }
 
   input[type='file'] {
@@ -23,27 +97,27 @@
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 disabled:pointer-events-none;
   }
 
   .btn-primary {
-    @apply btn bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 px-4 py-2 text-sm;
+    @apply btn bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 px-4 py-2 text-sm;
   }
 
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-slate-400 px-4 py-2 text-sm;
+    @apply btn border border-input bg-card text-foreground shadow-sm hover:bg-muted px-4 py-2 text-sm;
   }
 
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 px-4 py-2 text-sm;
+    @apply btn bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 px-4 py-2 text-sm;
   }
 
   .btn-ghost {
-    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900 px-3 py-2 text-sm;
+    @apply btn text-muted-foreground hover:bg-muted hover:text-foreground px-3 py-2 text-sm;
   }
 
   .btn-lg {
-    @apply px-6 py-3 text-base;
+    @apply px-5 py-2.5 text-base;
   }
 
   .btn-sm {
@@ -51,31 +125,31 @@
   }
 
   .card {
-    @apply bg-white rounded-xl border border-slate-200 shadow-sm;
+    @apply bg-card text-card-foreground rounded-xl border border-border shadow-sm;
   }
 
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-500;
+    @apply w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .label {
-    @apply block text-sm font-medium text-slate-700 mb-1;
+    @apply block text-sm font-medium text-foreground mb-1.5;
   }
 
   .section-title {
-    @apply text-lg font-semibold text-slate-900;
+    @apply text-lg font-semibold tracking-tight text-foreground;
   }
 
   .muted {
-    @apply text-sm text-slate-500;
+    @apply text-sm text-muted-foreground;
   }
 
   .divider {
-    @apply border-t border-slate-200/70;
+    @apply border-t border-border;
   }
 
   .kbd-label {
-    @apply text-[11px] font-semibold text-slate-500 uppercase tracking-wider;
+    @apply text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
   }
 
   .stack-sm > * + * { @apply mt-2; }
@@ -83,10 +157,14 @@
   .stack-lg > * + * { @apply mt-6; }
 
   .field-label {
-    @apply text-xs font-medium text-slate-500;
+    @apply text-xs font-medium text-muted-foreground;
   }
 
   .field-value {
-    @apply text-sm font-medium text-slate-900;
+    @apply text-sm font-medium text-foreground;
+  }
+
+  .divider {
+    @apply border-t border-border;
   }
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, CheckCircle2, CircleDashed, Sparkles } from 'lucide-react';
+import { Loader2, CheckCircle2, CircleDashed, Sparkles, TrendingUp, TrendingDown } from 'lucide-react';
 import {
   analyzeCase,
   setStrategy,
@@ -13,7 +13,7 @@ import Alert from '../../components/ui/Alert';
 import Badge from '../../components/ui/Badge';
 import { RotatingFact } from './shared/RotatingFact';
 import { VerificationPanel } from './shared/VerificationPanel';
-import { computeSOL, SOL_STATUS_TONE } from './shared/sol';
+import { solForCase, SOL_STATUS_TONE } from './shared/sol';
 import AcrisLookup from './strategy/AcrisLookup';
 import CourtHistoryLookup from './strategy/CourtHistoryLookup';
 import NysEntityLookup from './strategy/NysEntityLookup';
@@ -50,6 +50,43 @@ const STRATEGIES: { id: Strategy; title: string; description: string; traits: st
   },
 ];
 
+// The AI returns counterclaim signals prefixed "RISK-ELEVATING:" / "RISK-REDUCING:".
+// Split them so what hurts vs. helps the case is obvious instead of one flat list.
+function categorizeSignals(signals: string[]) {
+  const strip = (s: string) => s.replace(/^\s*RISK-(ELEVATING|REDUCING)\s*[:\-—]*\s*/i, '').trim();
+  const up: string[] = [];
+  const down: string[] = [];
+  const other: string[] = [];
+  for (const s of signals) {
+    if (/^\s*RISK-ELEVATING/i.test(s)) up.push(strip(s));
+    else if (/^\s*RISK-REDUCING/i.test(s)) down.push(strip(s));
+    else other.push(s);
+  }
+  return { up, down, other };
+}
+
+function SignalGroup({ items, variant }: { items: string[]; variant: 'up' | 'down' }) {
+  if (items.length === 0) return null;
+  const up = variant === 'up';
+  const Icon = up ? TrendingUp : TrendingDown;
+  return (
+    <div className={`rounded-lg border p-3 ${up ? 'border-red-200 bg-red-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
+      <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide mb-2 ${up ? 'text-red-700' : 'text-emerald-700'}`}>
+        <Icon className="w-3.5 h-3.5" /> {up ? 'Raises risk' : 'Reduces risk'}
+        <span className={`ml-auto rounded-full px-1.5 text-[10px] font-semibold ${up ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{items.length}</span>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((s, i) => (
+          <li key={i} className="flex items-start gap-2 text-xs leading-relaxed">
+            <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${up ? 'bg-red-400' : 'bg-emerald-500'}`} />
+            <span className={up ? 'text-red-900/90' : 'text-emerald-900/90'}>{s}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function StrategyTab({ caseData }: { caseData: Case }) {
   const queryClient = useQueryClient();
   const analyzeClickedAt = React.useRef<Date | null>(null);
@@ -82,7 +119,7 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
   const analysisEstimatedSeconds = 20 + caseData.documents.length * 12;
 
   const a = caseData.caseAssessment as CaseAssessment | null;
-  const sol = computeSOL(caseData.paymentDueDate);
+  const sol = solForCase(caseData);
 
   return (
     <div className="space-y-6">
@@ -90,8 +127,8 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
         <SectionCard padding="lg">
           <div className="text-center py-4">
             <Sparkles className="w-8 h-8 text-blue-500 mx-auto mb-3" />
-            <div className="text-sm font-semibold text-slate-900 mb-1">Run AI Analysis</div>
-            <p className="text-sm text-slate-500 mb-4 max-w-md mx-auto leading-relaxed">
+            <div className="text-sm font-semibold text-foreground mb-1">Run AI Analysis</div>
+            <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto leading-relaxed">
               Analyze your case to get a strength assessment, evidence summary, and strategy recommendations.
             </p>
             <button
@@ -164,18 +201,18 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
               <button
                 onClick={() => resetMutation.mutate()}
                 disabled={resetMutation.isPending}
-                className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+                className="text-xs text-muted-foreground hover:text-red-500 transition-colors"
               >
                 {resetMutation.isPending ? 'Resetting…' : 'Reset & Re-run'}
               </button>
             }
           >
             {caseData.caseSummary && (
-              <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{caseData.caseSummary}</p>
             )}
             {a?.recommendedStrategy && (
-              <p className="text-xs text-slate-500 mt-3">
-                AI recommends: <span className="font-semibold text-slate-700">
+              <p className="text-xs text-muted-foreground mt-3">
+                AI recommends: <span className="font-semibold text-foreground">
                   {STRATEGIES.find(s => s.id === a.recommendedStrategy)?.title}
                 </span>
               </p>
@@ -186,12 +223,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
           {a?.primaryCauseOfAction && (
             <SectionCard title="Legal Theory" collapsible defaultOpen>
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm font-bold text-slate-800">
+                <span className="text-sm font-bold text-foreground">
                   {THEORY_LABELS[a.primaryCauseOfAction.theory] ?? a.primaryCauseOfAction.theory}
                 </span>
                 <Badge tone="neutral" size="sm">primary</Badge>
               </div>
-              <p className="text-sm text-slate-500 mb-3 leading-relaxed">{a.primaryCauseOfAction.reasoning}</p>
+              <p className="text-sm text-muted-foreground mb-3 leading-relaxed">{a.primaryCauseOfAction.reasoning}</p>
               <div className="space-y-1.5">
                 {a.primaryCauseOfAction.elements.map((el, i) => (
                   <div key={i} className="flex items-start gap-2">
@@ -201,9 +238,9 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                       <CircleDashed className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
                     )}
                     <div className="flex-1 min-w-0 text-sm">
-                      <span className="font-medium text-slate-700">{el.element}</span>
+                      <span className="font-medium text-foreground">{el.element}</span>
                       {el.satisfied && el.evidence && (
-                        <span className="text-slate-500 ml-1">— {el.evidence}</span>
+                        <span className="text-muted-foreground ml-1">— {el.evidence}</span>
                       )}
                       {!el.satisfied && el.gap && (
                         <span className="text-red-600 ml-1">— {el.gap}</span>
@@ -213,7 +250,7 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                 ))}
               </div>
               {a.alternativeCauses.length > 0 && (
-                <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-100">
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
                   Also plead in the alternative: {a.alternativeCauses.join(', ')}
                 </p>
               )}
@@ -239,15 +276,24 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                   }
                 >
                   <p className="text-xs leading-relaxed mb-1.5">{a.counterclaimRisk.reasoning}</p>
-                  {a.counterclaimRisk.signals.length > 0 && (
-                    <ul className="space-y-0.5">
-                      {a.counterclaimRisk.signals.map((s, i) => (
-                        <li key={i} className="text-xs flex items-start gap-1.5">
-                          <span className="shrink-0 opacity-60">—</span>{s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  {a.counterclaimRisk.signals.length > 0 && (() => {
+                    const sig = categorizeSignals(a.counterclaimRisk.signals);
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                        <SignalGroup items={sig.up} variant="up" />
+                        <SignalGroup items={sig.down} variant="down" />
+                        {sig.other.length > 0 && (
+                          <ul className="space-y-1 sm:col-span-2 mt-1">
+                            {sig.other.map((s, i) => (
+                              <li key={i} className="text-xs flex items-start gap-1.5">
+                                <span className="shrink-0 opacity-60">—</span>{s}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </Alert>
               )}
 
@@ -290,12 +336,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
             defaultOpen={!(caseData.acrisResult || caseData.courtHistory || caseData.entityResult || caseData.uccResult || caseData.ecbResult || caseData.pacerResult)}
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <AcrisLookup caseId={caseData.id} />
-              <CourtHistoryLookup caseId={caseData.id} />
-              <NysEntityLookup caseId={caseData.id} />
-              <EcbLookup caseId={caseData.id} />
-              <UccLookup caseId={caseData.id} />
-              <PacerLookup caseId={caseData.id} />
+              <AcrisLookup caseData={caseData} />
+              <CourtHistoryLookup caseData={caseData} />
+              <NysEntityLookup caseData={caseData} />
+              <EcbLookup caseData={caseData} />
+              <UccLookup caseData={caseData} />
+              <PacerLookup caseData={caseData} />
             </div>
           </SectionCard>
         </>
@@ -322,12 +368,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                 key={s.id}
                 onClick={() => strategyMutation.mutate(s.id)}
                 disabled={strategyMutation.isPending}
-                className={`text-left p-5 rounded-xl border bg-white transition-all relative ${
+                className={`text-left p-5 rounded-xl border bg-card transition-all relative ${
                   isSelected
                     ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/50'
                     : isGeneric
-                    ? 'border-slate-200 opacity-60 hover:opacity-80'
-                    : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
+                    ? 'border-border opacity-60 hover:opacity-80'
+                    : 'border-border hover:border-border hover:shadow-sm'
                 }`}
               >
                 {isRecommended && !isSelected && (
@@ -335,12 +381,12 @@ export default function StrategyTab({ caseData }: { caseData: Case }) {
                     <Badge tone="info" size="sm">AI pick</Badge>
                   </span>
                 )}
-                <div className="text-sm font-semibold text-slate-800 mb-2 pr-16">{s.title}</div>
-                <p className="text-xs text-slate-500 mb-3 leading-relaxed">{s.description}</p>
+                <div className="text-sm font-semibold text-foreground mb-2 pr-16">{s.title}</div>
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{s.description}</p>
                 <ul className="space-y-1">
                   {s.traits.map((t) => (
-                    <li key={t} className="text-xs text-slate-500 flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-slate-300'}`} />
+                    <li key={t} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-muted'}`} />
                       {t}
                     </li>
                   ))}

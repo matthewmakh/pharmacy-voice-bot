@@ -7,7 +7,7 @@ import SectionCard from '../../../components/ui/SectionCard';
 import Alert from '../../../components/ui/Alert';
 import Badge, { type Tone } from '../../../components/ui/Badge';
 
-export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
+export default function ProcessServerPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [notes, setNotes] = useState('');
@@ -51,12 +51,12 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
   return (
     <>
       <SectionCard
-        title={<div className="flex items-center gap-2"><Send className="w-4 h-4 text-blue-500" />Process Server Engagement</div>}
+        title={<div className="flex items-center gap-2"><Send className="w-4 h-4 text-primary" />Process Server Engagement</div>}
         description="For Civil Court and Supreme Court cases, a licensed process server must serve the summons. Log when service is initiated."
         collapsible
-        defaultOpen={!svcAction}
+        defaultOpen={defaultOpen ?? !svcAction}
       >
-        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
           <div>
             <div className="field-label mb-0.5">Defendant</div>
             <div className="field-value">{caseData.debtorBusiness || caseData.debtorName || '[unknown]'}</div>
@@ -129,13 +129,13 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
                   const isUrgent = days >= 0 && days <= 7;
                   const tone: Tone = isPast ? 'danger' : isUrgent ? 'warning' : 'neutral';
                   return (
-                    <div key={label} className={`p-3 rounded-lg border ${isPast ? 'border-red-200 bg-red-50' : isUrgent ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
-                      <div className="text-xs text-slate-500 leading-tight mb-1">{label}</div>
-                      <div className={`text-sm font-semibold ${isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-slate-700'}`}>
+                    <div key={label} className={`p-3 rounded-lg border ${isPast ? 'border-red-200 bg-red-50' : isUrgent ? 'border-amber-200 bg-amber-50' : 'border-border bg-muted'}`}>
+                      <div className="text-xs text-muted-foreground leading-tight mb-1">{label}</div>
+                      <div className={`text-sm font-semibold ${isPast ? 'text-red-700' : isUrgent ? 'text-amber-700' : 'text-foreground'}`}>
                         {fmt(date)}
                       </div>
                       <div className="flex items-center justify-between mt-1">
-                        <div className="text-xs text-slate-400">{note}</div>
+                        <div className="text-xs text-muted-foreground">{note}</div>
                         {isPast && <Badge tone={tone} size="sm">Passed</Badge>}
                         {isUrgent && !isPast && <Badge tone={tone} size="sm">{days}d left</Badge>}
                       </div>
@@ -143,7 +143,7 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
                   );
                 })}
               </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Calendar these immediately. If the defendant does not appear or answer by the applicable deadline, you may move for default judgment.
               </p>
             </div>
@@ -153,18 +153,18 @@ export default function ProcessServerPanel({ caseData }: { caseData: Case }) {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+          <div className="bg-card rounded-xl shadow-xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-slate-900">Log Service Initiated</h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
+              <h3 className="text-base font-semibold text-foreground">Log Service Initiated</h3>
+              <button onClick={() => setShowModal(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="space-y-4">
-              <div className="p-4 bg-slate-50 rounded-lg text-sm">
+              <div className="p-4 bg-muted/40 rounded-lg text-sm">
                 <div className="field-label mb-0.5">Serving</div>
-                <div className="font-semibold text-slate-800">{caseData.debtorBusiness || caseData.debtorName || '[unknown defendant]'}</div>
-                <div className="text-slate-600 mt-1">{caseData.debtorAddress || '[address unknown]'}</div>
+                <div className="font-semibold text-foreground">{caseData.debtorBusiness || caseData.debtorName || '[unknown defendant]'}</div>
+                <div className="text-muted-foreground mt-1">{caseData.debtorAddress || '[address unknown]'}</div>
               </div>
               <div>
                 <label className="label">Notes (optional)</label>

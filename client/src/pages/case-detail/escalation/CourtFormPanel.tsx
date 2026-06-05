@@ -11,7 +11,7 @@ import { RotatingFact } from '../shared/RotatingFact';
 import { VerificationPanel } from '../shared/VerificationPanel';
 import DocumentActions from './DocumentActions';
 
-export default function CourtFormPanel({ caseData }: { caseData: Case }) {
+export default function CourtFormPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const startedRef = React.useRef<Date | null>(null);
 
@@ -30,12 +30,12 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
 
   return (
     <SectionCard
-      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-blue-600" />Court Form — {caseData.courtFormType || courtFormName}</div>}
+      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-primary" />Court Form — {caseData.courtFormType || courtFormName}</div>}
       description={<>
         Based on your outstanding balance of <strong>{formatCurrency(outstanding)}</strong>, the applicable form is <strong>{courtFormName}</strong>.
       </>}
       collapsible
-      defaultOpen={!!caseData.filingPacketHtml}
+      defaultOpen={defaultOpen ?? !!caseData.filingPacketHtml}
     >
       <Alert tone="warning" title="Review every field carefully before filing">
         This form will be pre-filled with your case data. Look for <code>[UNKNOWN — VERIFY BEFORE FILING]</code> placeholders where data is missing.
@@ -80,8 +80,8 @@ export default function CourtFormPanel({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4 mt-4">
-          <div className="text-sm font-semibold text-slate-700 mb-2">{courtFormName}</div>
-          <p className="text-sm text-slate-500 mb-4">
+          <div className="text-sm font-semibold text-foreground mb-2">{courtFormName}</div>
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filled, print-ready version of the correct NYC court form for your case.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">
@@ -132,13 +132,13 @@ function FilingActionsRow({ caseData, courtTrack }: { caseData: import('../../..
   const walkthroughType = courtTrack === 'commercial' ? 'commercial-claims' : courtTrack === 'civil' ? 'edds' : 'nyscef';
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-      <div className="text-sm font-semibold text-slate-700">File this with the court</div>
+    <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
+      <div className="text-sm font-semibold text-foreground">File this with the court</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {courtTrack !== 'commercial' && (
-          <div className="rounded border border-slate-200 bg-white p-3">
-            <div className="font-semibold text-slate-700 text-xs mb-1">Pay $200 + court fee — we file it</div>
-            <p className="text-xs text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to {courtTrack === 'civil' ? 'EDDS' : 'NYSCEF'}.</p>
+          <div className="rounded border border-border bg-card p-3">
+            <div className="font-semibold text-foreground text-xs mb-1">Pay $200 + court fee — we file it</div>
+            <p className="text-xs text-muted-foreground mb-2 leading-relaxed">Reclaim files via InfoTrack to {courtTrack === 'civil' ? 'EDDS' : 'NYSCEF'}.</p>
             <button
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending}
@@ -151,9 +151,9 @@ function FilingActionsRow({ caseData, courtTrack }: { caseData: import('../../..
             )}
           </div>
         )}
-        <div className="rounded border border-slate-200 bg-white p-3">
-          <div className="font-semibold text-slate-700 text-xs mb-1">File it yourself (free)</div>
-          <p className="text-xs text-slate-500 mb-2 leading-relaxed">
+        <div className="rounded border border-border bg-card p-3">
+          <div className="font-semibold text-foreground text-xs mb-1">File it yourself (free)</div>
+          <p className="text-xs text-muted-foreground mb-2 leading-relaxed">
             {courtTrack === 'commercial'
               ? 'In-person at your borough\'s clerk window.'
               : `Step-by-step walkthrough for ${courtTrack === 'civil' ? 'EDDS' : 'NYSCEF'}.`}

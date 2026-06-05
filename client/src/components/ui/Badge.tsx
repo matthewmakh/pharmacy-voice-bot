@@ -3,7 +3,7 @@ import React from 'react';
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 const TONE_CLASSES: Record<Tone, string> = {
-  neutral: 'bg-slate-100 text-slate-700 ring-slate-200',
+  neutral: 'bg-muted text-foreground ring-border',
   info: 'bg-blue-50 text-blue-700 ring-blue-200',
   success: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   warning: 'bg-amber-50 text-amber-700 ring-amber-200',

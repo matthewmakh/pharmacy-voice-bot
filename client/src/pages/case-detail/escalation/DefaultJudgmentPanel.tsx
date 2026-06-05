@@ -10,7 +10,7 @@ import { RotatingFact } from '../shared/RotatingFact';
 import { VerificationPanel } from '../shared/VerificationPanel';
 import DocumentActions from './DocumentActions';
 
-export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
+export default function DefaultJudgmentPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const startedRef = React.useRef<Date | null>(null);
 
@@ -24,9 +24,9 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
 
   return (
     <SectionCard
-      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-slate-500" />Default Judgment Motion</div>}
+      title={<div className="flex items-center gap-2"><Scale className="w-4 h-4 text-muted-foreground" />Default Judgment Motion</div>}
       collapsible
-      defaultOpen={!!caseData.defaultJudgmentHtml}
+      defaultOpen={defaultOpen ?? !!caseData.defaultJudgmentHtml}
     >
       {!svcAction ? (
         <Alert tone="neutral">
@@ -49,7 +49,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
 
         return (
           <>
-            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
               The answer deadline has passed. If the defendant has not appeared or answered, you can move for a default judgment. Service was initiated on {fmtDate(svcDate)}; the 30-day answer deadline was {fmtDate(altDeadline)}.
             </p>
             {mutation.isPending ? (
@@ -74,7 +74,7 @@ export default function DefaultJudgmentPanel({ caseData }: { caseData: Case }) {
               </div>
             ) : (
               <div className="text-center py-4">
-                <p className="text-sm text-slate-500 mb-4">
+                <p className="text-sm text-muted-foreground mb-4">
                   Generate a Motion for Default Judgment package — Notice of Motion, Affidavit in Support, Proposed Order, and blank Affidavit of Service template.
                 </p>
                 <button onClick={() => mutation.mutate()} className="btn-primary">
@@ -144,17 +144,17 @@ function FilingActions({ caseData }: { caseData: Case }) {
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+    <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <FileCheck className="w-4 h-4 text-slate-500" />
-        <div className="text-sm font-semibold text-slate-700">File this motion</div>
+        <FileCheck className="w-4 h-4 text-muted-foreground" />
+        <div className="text-sm font-semibold text-foreground">File this motion</div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
         <InfoTrackTile caseData={caseData} purpose="default-judgment" />
-        <div className="rounded border border-slate-200 bg-white p-3">
-          <div className="font-semibold text-slate-700 mb-1">File it yourself (free)</div>
-          <p className="text-slate-500 mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF, EDDS, or in-person Commercial Claims filing.</p>
+        <div className="rounded border border-border bg-card p-3">
+          <div className="font-semibold text-foreground mb-1">File it yourself (free)</div>
+          <p className="text-muted-foreground mb-2 leading-relaxed">Step-by-step walkthrough for NYSCEF, EDDS, or in-person Commercial Claims filing.</p>
           <Link
             to={`/cases/${caseData.id}/walkthrough?purpose=default-judgment`}
             className="btn-secondary text-xs w-full justify-center"
@@ -162,9 +162,9 @@ function FilingActions({ caseData }: { caseData: Case }) {
             Walk me through it →
           </Link>
         </div>
-        <div className="rounded border border-slate-200 bg-white p-3">
-          <div className="font-semibold text-slate-700 mb-1">Hand off to attorney</div>
-          <p className="text-slate-500 mb-2 leading-relaxed">Package case + drafts and route to a partner attorney. Coming soon in Phase B.</p>
+        <div className="rounded border border-border bg-card p-3">
+          <div className="font-semibold text-foreground mb-1">Hand off to attorney</div>
+          <p className="text-muted-foreground mb-2 leading-relaxed">Package case + drafts and route to a partner attorney. Coming soon in Phase B.</p>
           <button disabled className="btn-secondary text-xs opacity-50 cursor-not-allowed w-full">Coming soon</button>
         </div>
       </div>
@@ -174,7 +174,7 @@ function FilingActions({ caseData }: { caseData: Case }) {
           Already filed it? Log it manually →
         </button>
       ) : (
-        <div className="rounded border border-slate-200 bg-white p-3 space-y-2">
+        <div className="rounded border border-border bg-card p-3 space-y-2">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <label className="label">Filing method</label>
@@ -267,16 +267,16 @@ function InfoTrackTile({ caseData, purpose }: { caseData: Case; purpose: 'compla
   }
 
   return (
-    <div className="rounded border border-slate-200 bg-white p-3">
-      <div className="font-semibold text-slate-700 mb-1">Pay $200, we file it</div>
-      <p className="text-slate-500 mb-2 leading-relaxed">Reclaim files via InfoTrack to NYSCEF / EDDS. Court fee passthrough + $200 service fee.</p>
+    <div className="rounded border border-border bg-card p-3">
+      <div className="font-semibold text-foreground mb-1">Pay $200, we file it</div>
+      <p className="text-muted-foreground mb-2 leading-relaxed">Reclaim files via InfoTrack to NYSCEF / EDDS. Court fee passthrough + $200 service fee.</p>
       {!showConfirm ? (
         <button onClick={() => setShowConfirm(true)} className="btn-primary text-xs w-full">
           File via InfoTrack →
         </button>
       ) : (
         <div className="space-y-2 text-xs">
-          <p className="text-slate-700">You'll be charged court fees + Reclaim's $200 service fee. Continue?</p>
+          <p className="text-foreground">You'll be charged court fees + Reclaim's $200 service fee. Continue?</p>
           {error && (
             <div className="text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>
           )}

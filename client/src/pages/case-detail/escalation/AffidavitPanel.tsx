@@ -7,7 +7,7 @@ import SectionCard from '../../../components/ui/SectionCard';
 import { RotatingFact } from '../shared/RotatingFact';
 import DocumentActions from './DocumentActions';
 
-export default function AffidavitPanel({ caseData }: { caseData: Case }) {
+export default function AffidavitPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const startedRef = React.useRef<Date | null>(null);
 
@@ -24,7 +24,7 @@ export default function AffidavitPanel({ caseData }: { caseData: Case }) {
       title={<div className="flex items-center gap-2"><FileText className="w-4 h-4 text-emerald-600" />Affidavit of Service</div>}
       description="Service has been initiated. Generate an Affidavit of Service template for your process server to complete and sign after serving the defendant."
       collapsible
-      defaultOpen={!!caseData.affidavitOfServiceHtml}
+      defaultOpen={defaultOpen ?? !!caseData.affidavitOfServiceHtml}
     >
       {mutation.isPending ? (
         <RotatingFact label="Generating affidavit of service…" startedAt={startedRef.current ?? undefined} estimatedSeconds={15} />
@@ -44,7 +44,7 @@ export default function AffidavitPanel({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4">
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filled Affidavit of Service template. Your process server completes and signs this after service.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">Generate Affidavit of Service</button>

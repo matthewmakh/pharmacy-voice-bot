@@ -7,7 +7,7 @@ import SectionCard from '../../../components/ui/SectionCard';
 import { RotatingFact } from '../shared/RotatingFact';
 import DocumentActions from './DocumentActions';
 
-export default function PreFilingNotice({ caseData }: { caseData: Case }) {
+export default function PreFilingNotice({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
   const startedRef = React.useRef<Date | null>(null);
@@ -56,10 +56,10 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
 
   return (
     <SectionCard
-      title={<div className="flex items-center gap-2"><Shield className="w-4 h-4 text-blue-500" />Pre-Filing Notice</div>}
+      title={<div className="flex items-center gap-2"><Shield className="w-4 h-4 text-primary" />Pre-Filing Notice</div>}
       description="Send this before filing to give the debtor a final opportunity to pay and to document your escalation path."
       collapsible
-      defaultOpen={!!caseData.finalNoticeHtml}
+      defaultOpen={defaultOpen ?? !!caseData.finalNoticeHtml}
     >
       {mutation.isPending ? (
         <RotatingFact label="Generating pre-filing notice…" startedAt={startedRef.current ?? undefined} estimatedSeconds={20} />
@@ -79,16 +79,16 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
             }
           />
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-4">
             {anySent ? (
               <div className="space-y-2">
                 {mailed && (
                   <div className="flex items-center gap-2 text-sm">
                     <Check className="w-4 h-4 text-emerald-500" />
-                    <Truck className="w-4 h-4 text-slate-500" />
-                    <span className="text-slate-700">Mailed {fmtDate(caseData.finalNoticeMailedAt)}</span>
+                    <Truck className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-foreground">Mailed {fmtDate(caseData.finalNoticeMailedAt)}</span>
                     {caseData.finalNoticeTracking && (
-                      <span className="text-xs text-slate-500 ml-2">USPS #{caseData.finalNoticeTracking}</span>
+                      <span className="text-xs text-muted-foreground ml-2">USPS #{caseData.finalNoticeTracking}</span>
                     )}
                     {mailDelivered && (
                       <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -100,14 +100,14 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
                 {emailed && (
                   <div className="flex items-center gap-2 text-sm">
                     <Check className="w-4 h-4 text-emerald-500" />
-                    <Mail className="w-4 h-4 text-slate-500" />
-                    <span className="text-slate-700">Emailed {fmtDate(caseData.finalNoticeEmailedAt)}</span>
+                    <Mail className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-foreground">Emailed {fmtDate(caseData.finalNoticeEmailedAt)}</span>
                   </div>
                 )}
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="text-sm font-semibold text-slate-700">Send pre-filing notice</div>
+                <div className="text-sm font-semibold text-foreground">Send pre-filing notice</div>
                 <div className="flex flex-col gap-2">
                   <label className="flex items-center gap-2 text-sm">
                     <input
@@ -116,7 +116,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
                       onChange={() => toggle('mail')}
                       disabled={!caseData.debtorAddress}
                     />
-                    <Truck className="w-4 h-4 text-slate-500" />
+                    <Truck className="w-4 h-4 text-muted-foreground" />
                     Certified mail RRR via Lob
                     {!caseData.debtorAddress && (
                       <span className="text-xs text-amber-600 ml-2">(no debtor address)</span>
@@ -129,7 +129,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
                       onChange={() => toggle('email')}
                       disabled={!caseData.debtorEmail}
                     />
-                    <Mail className="w-4 h-4 text-slate-500" />
+                    <Mail className="w-4 h-4 text-muted-foreground" />
                     Tracked email via Resend
                     {!caseData.debtorEmail && (
                       <span className="text-xs text-amber-600 ml-2">(no debtor email)</span>
@@ -165,7 +165,7 @@ export default function PreFilingNotice({ caseData }: { caseData: Case }) {
         </div>
       ) : (
         <div className="text-center py-4">
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Generate a pre-filing notice — a short, firm letter stating legal action is imminent.
           </p>
           <button onClick={() => mutation.mutate()} className="btn-primary">Generate Pre-Filing Notice</button>

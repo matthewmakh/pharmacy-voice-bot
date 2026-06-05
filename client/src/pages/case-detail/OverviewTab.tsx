@@ -7,7 +7,7 @@ import type { Case, MissingInfoItem } from '../../types';
 import SectionCard from '../../components/ui/SectionCard';
 import Alert from '../../components/ui/Alert';
 import Badge, { type Tone } from '../../components/ui/Badge';
-import { computeSOL, SOL_STATUS_TONE } from './shared/sol';
+import { solForCase, SOL_STATUS_TONE } from './shared/sol';
 
 const IMPACT_TONE: Record<'high' | 'medium' | 'low', Tone> = {
   high: 'danger',
@@ -60,7 +60,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       ) : type === 'checkbox' ? (
         <input
           type="checkbox"
-          className="rounded border-slate-300"
+          className="rounded border-border"
           checked={(form as Record<string, unknown>)[key] as boolean}
           onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
         />
@@ -75,23 +75,29 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
     </div>
   );
 
-  const sol = computeSOL(caseData.paymentDueDate);
+  const sol = solForCase(caseData);
+
+  const isDirty = JSON.stringify(form) !== JSON.stringify(makeForm(caseData));
+  const handleCancel = () => {
+    if (isDirty && !window.confirm('Discard your unsaved changes?')) return;
+    setEditing(false);
+  };
 
   return (
     <div className="space-y-6">
       {/* Key Numbers */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="card p-5">
-          <div className="field-label mb-1">Amount Owed</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountOwed)}</div>
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className="card p-3 sm:p-5">
+          <div className="field-label mb-1 leading-tight">Amount Owed</div>
+          <div className="text-base sm:text-2xl font-bold text-foreground truncate">{formatCurrency(caseData.amountOwed)}</div>
         </div>
-        <div className="card p-5">
-          <div className="field-label mb-1">Amount Paid</div>
-          <div className="text-2xl font-bold text-slate-900">{formatCurrency(caseData.amountPaid || 0)}</div>
+        <div className="card p-3 sm:p-5">
+          <div className="field-label mb-1 leading-tight">Amount Paid</div>
+          <div className="text-base sm:text-2xl font-bold text-foreground truncate">{formatCurrency(caseData.amountPaid || 0)}</div>
         </div>
-        <div className="card p-5 bg-blue-50 border-blue-200">
-          <div className="text-xs font-medium text-blue-700 mb-1">Outstanding Balance</div>
-          <div className="text-2xl font-bold text-blue-900">{formatCurrency(outstanding)}</div>
+        <div className="card p-3 sm:p-5 bg-blue-50 border-blue-200">
+          <div className="text-xs font-medium text-blue-700 mb-1 leading-tight">Balance Due</div>
+          <div className="text-base sm:text-2xl font-bold text-blue-900 truncate">{formatCurrency(outstanding)}</div>
         </div>
       </div>
 
@@ -111,23 +117,23 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             collapsible
             defaultOpen
           >
-            <div className="flex items-baseline gap-6 flex-wrap">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
               <div>
                 <div className="field-label mb-0.5">Principal</div>
-                <div className="text-lg font-semibold text-slate-800">{formatCurrency(outstanding)}</div>
+                <div className="text-base sm:text-lg font-semibold text-foreground">{formatCurrency(outstanding)}</div>
               </div>
-              <div className="text-slate-300 text-xl self-center">+</div>
+              <div className="text-muted-foreground/60 text-lg self-center">+</div>
               <div>
                 <div className="field-label mb-0.5">Interest ({yearsElapsed} yrs)</div>
-                <div className="text-lg font-semibold text-slate-800">{formatCurrency(interest)}</div>
+                <div className="text-base sm:text-lg font-semibold text-foreground">{formatCurrency(interest)}</div>
               </div>
-              <div className="text-slate-300 text-xl self-center">=</div>
+              <div className="text-muted-foreground/60 text-lg self-center">=</div>
               <div>
                 <div className="field-label mb-0.5">Total claim value</div>
-                <div className="text-lg font-bold text-slate-900">{formatCurrency(totalWithInterest)}</div>
+                <div className="text-base sm:text-lg font-bold text-foreground">{formatCurrency(totalWithInterest)}</div>
               </div>
             </div>
-            <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+            <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
               Include pre-judgment interest in your demand letter and court filings. Interest runs from{' '}
               {new Date(caseData.paymentDueDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.
             </p>
@@ -147,7 +153,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Inline edit form */}
       {editing && (
         <SectionCard title="Edit Case Details" padding="lg">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
             <div className="space-y-3">
               <div className="kbd-label mb-1">Claimant</div>
               {field('Name', 'claimantName')}
@@ -202,21 +208,21 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-4">
             {field('Amount Owed', 'amountOwed', 'number')}
             {field('Amount Paid', 'amountPaid', 'number')}
             {field('Invoice Number', 'invoiceNumber')}
-            <label className="flex items-center gap-2 pt-6 text-sm text-slate-700">
+            <label className="flex items-center gap-2 pt-6 text-sm text-foreground">
               <input
                 type="checkbox"
-                className="rounded border-slate-300"
+                className="rounded border-border"
                 checked={form.hasWrittenContract}
                 onChange={(e) => setForm((f) => ({ ...f, hasWrittenContract: e.target.checked }))}
               />
               Has Written Contract
             </label>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-4">
             {field('Agreement Date', 'agreementDate', 'date')}
             {field('Invoice Date', 'invoiceDate', 'date')}
             {field('Payment Due Date', 'paymentDueDate', 'date')}
@@ -236,7 +242,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
               {updateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               Save Changes
             </button>
-            <button onClick={() => setEditing(false)} className="btn-secondary">
+            <button onClick={handleCancel} className="btn-secondary">
               Cancel
             </button>
           </div>
@@ -248,7 +254,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
 
       {/* Parties */}
       {!editing && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <PartyCard label="Claimant (You)" party={{
             business: caseData.claimantBusiness,
             name: caseData.claimantName,
@@ -272,7 +278,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
 
       {/* Key dates & SOL */}
       <SectionCard title="Key Dates" collapsible defaultOpen>
-        <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
           {[
             { label: 'Agreement Date', value: formatDate(caseData.agreementDate) },
             { label: 'Service Start', value: formatDate(caseData.serviceStartDate) },
@@ -302,7 +308,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             </Badge>
           </div>
           {caseData.caseSummary && (
-            <p className="text-sm text-slate-600 leading-relaxed">{caseData.caseSummary}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{caseData.caseSummary}</p>
           )}
         </SectionCard>
       )}
@@ -310,7 +316,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Evidence on file */}
       {evidenceSummary && (
         <SectionCard title="Evidence on File" collapsible defaultOpen>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {[
               { label: 'Contract', key: 'hasContract' },
               { label: 'Invoice', key: 'hasInvoice' },
@@ -320,7 +326,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             ].map(({ label, key }) => (
               <div
                 key={key}
-                className={`flex items-center gap-2 text-sm ${evidenceSummary[key] ? 'text-emerald-700' : 'text-slate-400'}`}
+                className={`flex items-center gap-2 text-sm ${evidenceSummary[key] ? 'text-emerald-700' : 'text-muted-foreground'}`}
               >
                 {evidenceSummary[key] ? (
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -335,8 +341,8 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
             <>
               <div className="divider my-3" />
               <div className="text-xs">
-                <span className="text-slate-500">Strongest evidence: </span>
-                <span className="text-slate-700">{String(evidenceSummary.strongestEvidence)}</span>
+                <span className="text-muted-foreground">Strongest evidence: </span>
+                <span className="text-foreground">{String(evidenceSummary.strongestEvidence)}</span>
               </div>
             </>
           )}
@@ -379,7 +385,7 @@ export default function OverviewTab({ caseData }: { caseData: Case }) {
       {/* Service description */}
       {caseData.serviceDescription && (
         <SectionCard title="Services / Work Performed" collapsible defaultOpen>
-          <p className="text-sm text-slate-700 leading-relaxed">{caseData.serviceDescription}</p>
+          <p className="text-sm text-foreground leading-relaxed">{caseData.serviceDescription}</p>
         </SectionCard>
       )}
     </div>
@@ -399,13 +405,13 @@ function PartyCard({
     <div className="card p-5">
       <div className="kbd-label mb-3">{label}</div>
       <div className="space-y-1">
-        {party.business && <div className="font-semibold text-slate-900">{party.business}</div>}
-        {party.name && <div className="text-sm text-slate-700">{party.name}</div>}
-        {party.address && <div className="text-sm text-slate-500">{party.address}</div>}
-        {party.email && <div className="text-sm text-slate-500">{party.email}</div>}
-        {party.phone && <div className="text-sm text-slate-500">{party.phone}</div>}
+        {party.business && <div className="font-semibold text-foreground">{party.business}</div>}
+        {party.name && <div className="text-sm text-foreground">{party.name}</div>}
+        {party.address && <div className="text-sm text-muted-foreground">{party.address}</div>}
+        {party.email && <div className="text-sm text-muted-foreground">{party.email}</div>}
+        {party.phone && <div className="text-sm text-muted-foreground">{party.phone}</div>}
         {!party.business && !party.name && !party.address && !party.email && !party.phone && (
-          <div className="text-sm text-slate-400 italic">No details on file</div>
+          <div className="text-sm text-muted-foreground italic">No details on file</div>
         )}
         {chips && chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">

@@ -1,14 +1,15 @@
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, FileText, PenTool, Loader2, Check } from 'lucide-react';
-import { generateSettlement, generatePaymentPlan, getPdfDownloadUrl, sendForSignature } from '../../../lib/api';
+import { CheckCircle2, Eye, PenTool, Loader2, Check } from 'lucide-react';
+import { generateSettlement, generatePaymentPlan, sendForSignature } from '../../../lib/api';
 import type { Case } from '../../../types';
 import SectionCard from '../../../components/ui/SectionCard';
 import { InlineProgress } from '../shared/InlineProgress';
 import { VerificationPanel } from '../shared/VerificationPanel';
+import { PdfDownloadButton } from '../shared/PdfDownloadButton';
 import { openHtmlInTab } from '../shared/openHtmlInTab';
 
-export default function SettlementPanel({ caseData }: { caseData: Case }) {
+export default function SettlementPanel({ caseData, defaultOpen }: { caseData: Case; defaultOpen?: boolean }) {
   const queryClient = useQueryClient();
   const settlementRef = React.useRef<Date | null>(null);
   const paymentPlanRef = React.useRef<Date | null>(null);
@@ -55,13 +56,13 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
       title={<div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" />Settlement Track</div>}
       description="Many cases settle after a demand letter or final notice. If the debtor contacts you, put any agreement in writing immediately."
       collapsible
-      defaultOpen={!!(caseData.settlementHtml || caseData.paymentPlanHtml)}
+      defaultOpen={defaultOpen ?? !!(caseData.settlementHtml || caseData.paymentPlanHtml)}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Stipulation of Settlement */}
-        <div className="p-4 rounded-xl border border-slate-200 bg-white">
-          <div className="text-sm font-semibold text-slate-800 mb-1">Stipulation of Settlement</div>
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+        <div className="p-4 rounded-xl border border-border bg-card">
+          <div className="text-sm font-semibold text-foreground mb-1">Stipulation of Settlement</div>
+          <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
             A binding agreement between both parties — settlement amount, payment terms, mutual release, default provisions.
           </p>
           {settlementMutation.isPending && settlementRef.current ? (
@@ -72,9 +73,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 <button onClick={() => openHtmlInTab(caseData.settlementHtml!, 'Stipulation of Settlement')} className="btn-secondary text-xs">
                   <Eye className="w-3.5 h-3.5" /> View
                 </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'settlement')} download="stipulation-of-settlement.pdf" className="btn-primary text-xs">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
+                <PdfDownloadButton caseId={caseData.id} type="settlement" filename="stipulation-of-settlement.pdf" size="xs" />
                 <button onClick={() => settlementMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
               <SignatureRow
@@ -93,9 +92,9 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
         </div>
 
         {/* Payment Plan */}
-        <div className="p-4 rounded-xl border border-slate-200 bg-white">
-          <div className="text-sm font-semibold text-slate-800 mb-1">Payment Plan Agreement</div>
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+        <div className="p-4 rounded-xl border border-border bg-card">
+          <div className="text-sm font-semibold text-foreground mb-1">Payment Plan Agreement</div>
+          <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
             Standalone installment agreement with acknowledgment of debt, acceleration clause, and interest on missed payments.
           </p>
           {paymentPlanMutation.isPending && paymentPlanRef.current ? (
@@ -106,9 +105,7 @@ export default function SettlementPanel({ caseData }: { caseData: Case }) {
                 <button onClick={() => openHtmlInTab(caseData.paymentPlanHtml!, 'Payment Plan Agreement')} className="btn-secondary text-xs">
                   <Eye className="w-3.5 h-3.5" /> View
                 </button>
-                <a href={getPdfDownloadUrl(caseData.id, 'payment-plan')} download="payment-plan-agreement.pdf" className="btn-primary text-xs">
-                  <FileText className="w-3.5 h-3.5" /> Download PDF
-                </a>
+                <PdfDownloadButton caseId={caseData.id} type="payment-plan" filename="payment-plan-agreement.pdf" size="xs" />
                 <button onClick={() => paymentPlanMutation.mutate()} className="btn-ghost text-xs">Regenerate</button>
               </div>
               <SignatureRow
@@ -159,7 +156,7 @@ function SignatureRow({
   }
   if (requestId) {
     return (
-      <div className="flex items-center gap-2 text-xs text-slate-600">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <PenTool className="w-3.5 h-3.5" />
         <span>Out for signature — awaiting parties</span>
       </div>

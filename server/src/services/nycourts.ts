@@ -1,16 +1,37 @@
-// NYC Civil Court case history lookup via WebCivil (iapps.courts.state.ny.us)
-// Searches the NY eCourts CCCS (Civil Court Case Search) by party name.
+// NYC Civil Court case history lookup — WebCivil (iapps.courts.state.ny.us)
 //
-// Fix log:
-//   - Row regex bug fixed: was `/odd|even/` (wrong alternation precedence),
-//     now correctly `/(?:odd|even)/`
-//   - Upgraded to CookieJar (same class as nysUCC.ts) for proper multi-cookie handling
-//   - Extracts and forwards any CSRF/APEX tokens from the initial page load
-//   - Removed `html.includes('login')` false positive — now checks for more specific
-//     indicators that the page is an error/redirect
-//   - Defendant/plaintiff matching now uses full normalized name comparison,
-//     not fragile 6-char substring
-//   - Runs a second search as plaintiff so we don't miss cases where debtor is suing
+// IMPORTANT: iapps.courts.state.ny.us is fronted by Cloudflare with a managed
+// browser challenge. Plain HTTP clients (curl/node fetch) are blocked with 403
+// even from a residential IP unless the request matches a real browser TLS
+// fingerprint AND the challenge is solved. There is no honest way to bypass
+// this from raw fetch in production — set PROXY_URL to a residential proxy
+// that has been used to solve the challenge interactively, or use a managed
+// PDFs-on-demand court-records vendor (UniCourt, CourtListener RECAP, etc.).
+//
+// The scraper still TRIES: it sends Chrome-style headers and forwards any
+// cookies/hidden tokens it sees. On a 403 we return a structured error so the
+// UI can surface a helpful message instead of failing silently.
+
+import { proxyFetch } from './lib/httpClient';
+
+const MAIN_URL   = 'https://iapps.courts.state.ny.us/webcivil/FCASMain';
+const SEARCH_URL = 'https://iapps.courts.state.ny.us/webcivil/FCASSearch';
+
+const HEADERS: Record<string, string> = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'sec-ch-ua': '"Google Chrome";v="126", "Chromium";v="126", "Not_A Brand";v="8"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"macOS"',
+};
+
+// ─── Types (preserved from previous version) ─────────────────────────────────
 
 export interface CourtCaseRecord {
   caseIndex: string;
@@ -35,33 +56,14 @@ export interface CourtHistoryResult {
   scraperNote?: string;
 }
 
-const MAIN_URL   = 'https://iapps.courts.state.ny.us/webcivil/FCASMain';
-const SEARCH_URL = 'https://iapps.courts.state.ny.us/webcivil/FCASSearch';
-
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Cache-Control': 'max-age=0',
-  'Upgrade-Insecure-Requests': '1',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Sec-Fetch-User': '?1',
-  'Connection': 'keep-alive',
-};
-
-// ─── Cookie jar (same pattern as nysUCC.ts) ───────────────────────────────────
+// ─── Cookie jar ───────────────────────────────────────────────────────────────
 
 class CookieJar {
   private map = new Map<string, string>();
-
   ingest(headers: Headers): void {
-    const raw: string[] = typeof (headers as unknown as Record<string, unknown>).getSetCookie === 'function'
+    const raw: string[] = typeof (headers as unknown as { getSetCookie?(): string[] }).getSetCookie === 'function'
       ? (headers as unknown as { getSetCookie(): string[] }).getSetCookie()
       : [headers.get('set-cookie') ?? ''].filter(Boolean);
-
     for (const line of raw) {
       const pair = line.split(';')[0].trim();
       const eq = pair.indexOf('=');
@@ -71,7 +73,6 @@ class CookieJar {
       if (name) this.map.set(name, val);
     }
   }
-
   toString(): string {
     return Array.from(this.map.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
   }
@@ -87,42 +88,30 @@ function stripHtml(html: string): string {
     .replace(/\s+/g, ' ').trim();
 }
 
-/** Extract hidden input values — used to forward any CSRF tokens */
 function extractHiddenInputs(html: string): Record<string, string> {
   const out: Record<string, string> = {};
   const re = /<input[^>]+type=["']hidden["'][^>]*/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
-    const tag    = m[0];
-    const nameM  = /name=["']([^"']*)["']/i.exec(tag);
+    const tag = m[0];
+    const nameM  = /name=["']([^"']+)["']/i.exec(tag);
     const valueM = /value=["']([^"']*)["']/i.exec(tag);
     if (nameM?.[1]) out[nameM[1]] = valueM?.[1] ?? '';
   }
   return out;
 }
 
-// ─── Table parser ─────────────────────────────────────────────────────────────
-
 function parseCourtTable(html: string): CourtCaseRecord[] {
   const cases: CourtCaseRecord[] = [];
-
-  // FIX: was `odd|even` (alternation between "odd" and "even[^"]*...") — wrong.
-  // Correct: `(?:odd|even)` matches either word as a group.
-  const rowPattern = /<tr[^>]*class="[^"]*(?:odd|even)[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
-
-  let rowMatch;
-  while ((rowMatch = rowPattern.exec(html)) !== null) {
-    const rowHtml = rowMatch[1];
+  // Real WebCivil rows alternate <tr class="odd"> / <tr class="even">.
+  const rowRe = /<tr[^>]*class="[^"]*(?:odd|even)[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rm;
+  while ((rm = rowRe.exec(html)) !== null) {
+    const row = rm[1];
     const cells: string[] = [];
-    const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    let cellMatch;
-    while ((cellMatch = cellPattern.exec(rowHtml)) !== null) {
-      cells.push(stripHtml(cellMatch[1]));
-    }
-
-    // WebCivil FCAS table columns (verified structure):
-    // 0: Index Number | 1: Filed Date | 2: Plaintiff | 3: Defendant
-    // 4: Case Type | 5: Status | 6: Court | 7: Amount (optional)
+    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cm;
+    while ((cm = cellRe.exec(row)) !== null) cells.push(stripHtml(cm[1]));
     if (cells.length >= 5) {
       cases.push({
         caseIndex:  cells[0] ?? '',
@@ -136,198 +125,144 @@ function parseCourtTable(html: string): CourtCaseRecord[] {
       });
     }
   }
-
-  // Fallback: if the odd/even class pattern yielded nothing, try any <tr> with <td>
-  if (cases.length === 0) {
-    const fallbackRow = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let fr;
-    while ((fr = fallbackRow.exec(html)) !== null) {
-      const rowHtml = fr[1];
-      if (!rowHtml.includes('<td')) continue;
-      const cells: string[] = [];
-      const cp = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-      let cm;
-      while ((cm = cp.exec(rowHtml)) !== null) cells.push(stripHtml(cm[1]));
-      if (cells.length >= 5 && cells[0] && /\d/.test(cells[0])) {
-        cases.push({
-          caseIndex: cells[0] ?? '',
-          filedDate: cells[1] || null,
-          plaintiff: cells[2] ?? '',
-          defendant: cells[3] ?? '',
-          caseType:  cells[4] ?? '',
-          status:    cells[5] ?? '',
-          court:     cells[6] ?? '',
-          amount:    cells[7] || null,
-        });
-      }
-    }
-  }
-
   return cases;
 }
 
-/** Normalize a party name for comparison — uppercase, strip punctuation/extra spaces */
 function normalizeName(name: string): string {
   return name.toUpperCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Check if a party string contains the searched name.
- * Uses normalized full-string containment, not fragile substring slicing.
- */
-function nameMatches(partyCell: string, searchedName: string): boolean {
-  const normalParty    = normalizeName(partyCell);
-  const normalSearched = normalizeName(searchedName);
-  // Match if the searched name appears as a whole-word sequence in the party cell
-  return normalParty.includes(normalSearched) ||
-    normalSearched.split(' ').every(w => w.length > 2 && normalParty.includes(w));
+function nameMatches(partyCell: string, searched: string): boolean {
+  const a = normalizeName(partyCell);
+  const b = normalizeName(searched);
+  if (a.includes(b)) return true;
+  return b.split(' ').filter(w => w.length > 2).every(w => a.includes(w));
 }
 
-// ─── Single search (by param_type D or P) ─────────────────────────────────────
+function isCloudflareChallenge(html: string): boolean {
+  return /cloudflare|cf-chl|just a moment|enable javascript and cookies/i.test(html);
+}
 
 async function runSearch(
-  partyName: string,
+  name: string,
   paramType: 'D' | 'P',
   jar: CookieJar,
-  hiddenInputs: Record<string, string>,
+  hidden: Record<string, string>,
 ): Promise<{ html: string; status: number }> {
-  const formParams = new URLSearchParams({
-    ...hiddenInputs,        // forward any CSRF / session tokens from the main page
-    court_type:    'NYC',
-    param_type:    paramType,
-    param_name:    partyName,
+  const body = new URLSearchParams({
+    ...hidden,
+    court_type: 'NYC',
+    param_type: paramType,
+    param_name: name,
     param_firstName: '',
-    submit:        'Find',
+    submit: 'Find',
   });
-
-  const resp = await fetch(SEARCH_URL, {
+  const resp = await proxyFetch(SEARCH_URL, {
     method: 'POST',
     headers: {
       ...HEADERS,
       'Content-Type': 'application/x-www-form-urlencoded',
       'Referer': MAIN_URL,
+      'Origin': 'https://iapps.courts.state.ny.us',
       'Cookie': jar.toString(),
     },
-    body: formParams.toString(),
-    signal: AbortSignal.timeout(20_000),
+    body: body.toString(),
+    timeoutMs: 25_000,
   });
-
   jar.ingest(resp.headers);
   return { html: await resp.text(), status: resp.status };
 }
 
-// ─── Main export ─────────────────────────────────────────────────────────────
+// ─── Main export ──────────────────────────────────────────────────────────────
 
 export async function lookupNYCourtHistory(partyName: string): Promise<CourtHistoryResult> {
   const searchedName = partyName.trim().toUpperCase();
   const jar = new CookieJar();
 
-  // ── Step 1: Load main page — establish session + collect any tokens ────────
-  let hiddenInputs: Record<string, string> = {};
+  // ── Step 1: bootstrap session at FCASMain ────────────────────────────────
+  let hidden: Record<string, string> = {};
   try {
-    const initResp = await fetch(MAIN_URL, {
-      headers: HEADERS,
-      signal: AbortSignal.timeout(15_000),
-    });
-    jar.ingest(initResp.headers);
-    const initHtml = await initResp.text();
-    hiddenInputs = extractHiddenInputs(initHtml);
+    const r = await proxyFetch(MAIN_URL, { headers: HEADERS, timeoutMs: 20_000 });
+    jar.ingest(r.headers);
+    const html = await r.text();
+    if (r.status === 403 || isCloudflareChallenge(html)) {
+      return fail(searchedName,
+        'NY courts portal is behind a Cloudflare browser challenge (HTTP 403).',
+        'iapps.courts.state.ny.us cannot be scraped from a plain HTTP client. Options: (1) route via a residential PROXY_URL whose IP has cleared the challenge, (2) use a headless-browser worker (puppeteer + stealth) that solves the challenge, or (3) call a paid court-data vendor (UniCourt, CourtListener RECAP).');
+    }
+    if (!r.ok) return fail(searchedName, `Courts portal returned HTTP ${r.status}`);
+    hidden = extractHiddenInputs(html);
   } catch (err) {
-    return error(searchedName, `Could not reach NYC courts portal: ${err instanceof Error ? err.message : String(err)}`);
+    return fail(searchedName, `Could not reach NYC courts portal: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // ── Step 2: Search as defendant ────────────────────────────────────────────
+  // ── Step 2: search as defendant ──────────────────────────────────────────
   let defendantCases: CourtCaseRecord[] = [];
   let plaintiffCases: CourtCaseRecord[] = [];
 
   try {
-    const { html, status } = await runSearch(searchedName, 'D', jar, hiddenInputs);
+    const { html, status } = await runSearch(searchedName, 'D', jar, hidden);
+    if (status === 403 || isCloudflareChallenge(html)) {
+      return fail(searchedName, 'Cloudflare blocked the defendant search.',
+        'Route through a residential proxy or use a headless browser.');
+    }
     if (status !== 200) {
-      return error(searchedName, `Court defendant search returned HTTP ${status}`, 'Verify POST parameters match the actual court form via browser dev tools at iapps.courts.state.ny.us/webcivil/FCASMain.');
+      return fail(searchedName, `Defendant search returned HTTP ${status}`,
+        'POST field names may have changed — re-capture FCASSearch form in DevTools.');
     }
-    if (isUnexpectedResponse(html)) {
-      return error(searchedName, 'Court search returned an unexpected response (session error or form changed).', 'Check POST parameters against the live iApps interface. The form field names may have changed.');
-    }
-    if (!isNoResults(html)) {
-      defendantCases = parseCourtTable(html);
-    }
+    defendantCases = parseCourtTable(html);
   } catch (err) {
-    return error(searchedName, `Court defendant search failed: ${err instanceof Error ? err.message : String(err)}`);
+    return fail(searchedName, `Defendant search failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // ── Step 3: Search as plaintiff (debtor may also be suing others) ──────────
+  // ── Step 3: search as plaintiff (best-effort) ────────────────────────────
   try {
-    const { html, status } = await runSearch(searchedName, 'P', jar, hiddenInputs);
-    if (status === 200 && !isUnexpectedResponse(html) && !isNoResults(html)) {
+    const { html, status } = await runSearch(searchedName, 'P', jar, hidden);
+    if (status === 200 && !isCloudflareChallenge(html)) {
       plaintiffCases = parseCourtTable(html);
     }
   } catch {
-    // Best-effort — don't fail the whole lookup if plaintiff search errors
+    // ignore — plaintiff side is enrichment
   }
 
-  // ── Step 4: Merge, deduplicate by case index ───────────────────────────────
+  // ── Step 4: dedupe + tally ───────────────────────────────────────────────
   const seen = new Set<string>();
-  const allCases: CourtCaseRecord[] = [];
+  const all: CourtCaseRecord[] = [];
   for (const c of [...defendantCases, ...plaintiffCases]) {
     const key = c.caseIndex || `${c.plaintiff}|${c.defendant}|${c.filedDate}`;
-    if (!seen.has(key)) { seen.add(key); allCases.push(c); }
+    if (!seen.has(key)) { seen.add(key); all.push(c); }
   }
+  const asDefendant = all.filter(c => nameMatches(c.defendant, searchedName)).length;
+  const asPlaintiff = all.filter(c => nameMatches(c.plaintiff, searchedName)).length;
 
-  // ── Step 5: Count roles using full-name matching (not 6-char substring) ────
-  const asDefendant = allCases.filter(c => nameMatches(c.defendant, searchedName)).length;
-  const asPlaintiff = allCases.filter(c => nameMatches(c.plaintiff, searchedName)).length;
-
-  // ── Step 6: Build note ────────────────────────────────────────────────────
-  let note = '';
-  if (allCases.length === 0) {
+  let note: string;
+  if (all.length === 0) {
     note = 'No NYC Civil Court cases found for this name. This covers NYC Civil Court only — not Supreme Court, federal court, or out-of-state cases.';
   } else if (asDefendant > 3) {
-    note = `${allCases.length} NYC Civil Court case(s) found. Debtor has been sued ${asDefendant} time(s) as a defendant — pattern of non-payment or disputes. Consider QUICK_ESCALATION.`;
+    note = `${all.length} NYC Civil Court case(s) found. Debtor has been sued ${asDefendant} time(s) as a defendant — pattern of non-payment or disputes. Consider QUICK_ESCALATION.`;
   } else if (asDefendant > 0) {
-    note = `${allCases.length} NYC Civil Court case(s) found (${asDefendant} as defendant, ${asPlaintiff} as plaintiff). Prior judgments may indicate ability to collect; defaults suggest possible insolvency.`;
+    note = `${all.length} NYC Civil Court case(s) found (${asDefendant} as defendant, ${asPlaintiff} as plaintiff). Prior judgments may indicate ability to collect; defaults suggest possible insolvency.`;
   } else if (asPlaintiff > 0) {
-    note = `${allCases.length} case(s) found — debtor appears primarily as a plaintiff (${asPlaintiff} case(s)). No clear defendant history. Verify roles manually at iApps.`;
+    note = `${all.length} case(s) found — debtor appears primarily as a plaintiff (${asPlaintiff} case(s)). No clear defendant history.`;
   } else {
-    note = `${allCases.length} case(s) found but name matching was uncertain — verify manually at iapps.courts.state.ny.us/webcivil/FCASMain.`;
+    note = `${all.length} case(s) found but name matching was uncertain — verify manually at iapps.courts.state.ny.us/webcivil/FCASMain.`;
   }
 
   return {
-    found: allCases.length > 0,
-    totalCases: allCases.length,
+    found: all.length > 0,
+    totalCases: all.length,
     asDefendant,
     asPlaintiff,
-    cases: allCases,
+    cases: all,
     searchedName,
     note,
   };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function isNoResults(html: string): boolean {
-  const lower = html.toLowerCase();
-  return ['no cases found', 'no records found', '0 cases', 'no results'].some(s => lower.includes(s));
-}
-
-function isUnexpectedResponse(html: string): boolean {
-  // FIX: old `html.includes('login')` was a false positive for pages with nav "Login" links.
-  // Now we check for more specific indicators of a session/error page.
-  const lower = html.toLowerCase();
-  const isErrorPage = lower.includes('session expired') ||
-    lower.includes('please log in') ||
-    lower.includes('access denied') ||
-    (lower.includes('error') && !lower.includes('<table') && html.length < 2000);
-  const hasNoTable = !html.includes('<table');
-  const isTooShort = html.length < 300;
-  return isErrorPage || (hasNoTable && isTooShort);
-}
-
-function error(searchedName: string, msg: string, scraperNote?: string): CourtHistoryResult {
+function fail(searchedName: string, error: string, scraperNote?: string): CourtHistoryResult {
   return {
     found: false, totalCases: 0, asDefendant: 0, asPlaintiff: 0,
     cases: [], searchedName,
-    note: '',
-    error: msg,
-    scraperNote,
+    note: '', error, scraperNote,
   };
 }

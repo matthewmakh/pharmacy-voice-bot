@@ -47,12 +47,12 @@ export interface ECBResult {
 // Override with ECB_DATASET_ID env var if the active ID changes again.
 const DATASET_ID_CANDIDATES = [
   process.env.ECB_DATASET_ID,  // env override first
-  'jz4z-kudi',  // OATH Hearings Division Case Status (canonical, updated Jan 2026)
+  '6bgk-3dad',  // DOB ECB Violations — verified working over undici fetch
   'rjte-hkhv',  // Oath ECB Hearings (filtered view)
+  'jz4z-kudi',  // OATH Hearings Division Case Status (canonical but slow / often times out)
   'jtm6-3c6z',  // ECB OATH Status (filtered view)
   'furn-j2xt',  // NYC ECB Violations
   'a3tu-zh2h',  // ECB general
-  '6bgk-3dad',  // DOB ECB Violations
   'skr7-cxt3',  // DEP ECB Violations
   '6bgk-in4p',  // original (now defunct)
   'nhy8-p4td',
@@ -86,7 +86,7 @@ async function resolveDatasetUrl(headers: Record<string, string>): Promise<{ url
   for (const id of DATASET_ID_CANDIDATES) {
     const url = `https://data.cityofnewyork.us/resource/${id}.json`;
     try {
-      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(8_000) });
+      const resp = await fetch(`${url}?$limit=1`, { headers, signal: AbortSignal.timeout(20_000) });
       if (!resp.ok) continue;
       const records = await resp.json() as Record<string, unknown>[];
       if (!records.length) continue; // empty — skip to avoid false positives
@@ -134,9 +134,21 @@ function parseAmount(raw: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
+/** Strip entity suffixes (LLC, INC, CORP, etc.) so partial matches still hit. */
+function stripEntitySuffix(name: string): string {
+  return name
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(L\s*L\s*C|L\.?L\.?C\.?|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LIMITED|LP|LLP|PLLC|PC|PA|GROUP|HOLDINGS)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
   const searchedName = partyName.trim().toUpperCase();
   const cleanName    = searchedName.replace(/'/g, "''");
+  const stem         = stripEntitySuffix(cleanName);
+  // Use stem for LIKE match if it's meaningfully shorter (avoids matching unrelated names)
+  const likeNeedle   = stem.length >= 4 ? stem : cleanName;
 
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (process.env.NYC_OPEN_DATA_TOKEN) {
@@ -151,17 +163,17 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
     }
     const { url: DATASET_URL, nameField } = resolved;
 
-    // ── Step 1: get real count ───────────────────────────────────────────────
-    const countWhere  = `upper(${nameField})='${cleanName}'`;
-    const countUrl    = `${DATASET_URL}?$where=${encodeURIComponent(countWhere)}&$select=count(*)`;
-    const countResp   = await fetch(countUrl, { headers, signal: AbortSignal.timeout(20_000) });
-    if (!countResp.ok) {
-      return noResult(searchedName, `ECB API returned ${countResp.status}`);
+    // ── Step 1: single fetch — skip count(*) (slow on LIKE without index). ─
+    // Pull DATA_LIMIT+1 records; if we hit the +1, we know there are more.
+    const dataWhere = `upper(${nameField}) like '%${likeNeedle}%'`;
+    const dataUrl   = `${DATASET_URL}?$where=${encodeURIComponent(dataWhere)}&$limit=${DATA_LIMIT + 1}`;
+    const dataResp  = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(30_000) });
+    if (!dataResp.ok) {
+      return noResult(searchedName, `ECB data fetch returned ${dataResp.status}`);
     }
-    const countData  = await countResp.json() as Array<Record<string, string>>;
-    const realTotal  = parseInt(countData[0]?.['count'] ?? '0', 10);
+    const raw = await dataResp.json() as Record<string, unknown>[];
 
-    if (realTotal === 0) {
+    if (raw.length === 0) {
       return {
         found: false, totalViolations: 0, totalImposed: 0, totalOutstanding: 0,
         unpaidViolations: 0, violations: [], searchedName,
@@ -169,25 +181,17 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
       };
     }
 
-    // ── Step 2: fetch violation records ─────────────────────────────────────
-    // No $order clause — field names vary across dataset versions and an
-    // unknown field name causes HTTP 400. Sort client-side after fetch.
-    const dataWhere = encodeURIComponent(countWhere);
-    const dataUrl   = `${DATASET_URL}?$where=${dataWhere}&$limit=${DATA_LIMIT}`;
-    const dataResp  = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(15_000) });
-    if (!dataResp.ok) {
-      return noResult(searchedName, `ECB data fetch returned ${dataResp.status}`);
-    }
-
-    const raw = await dataResp.json() as Record<string, unknown>[];
+    const truncated = raw.length > DATA_LIMIT;
+    const records   = truncated ? raw.slice(0, DATA_LIMIT) : raw;
+    const realTotal = records.length;
 
     // ── Step 3: normalise records ────────────────────────────────────────────
-    const violations: ECBViolation[] = raw.map(r => {
+    const violations: ECBViolation[] = records.map(r => {
       // Field names vary across dataset versions — handle all known names
       // The dataset uses different field names across versions —
       // handle both current and legacy names
       const outstanding = parseAmount(r['outstanding_amount'] ?? r['balance_due'] ?? r['amount_due']);
-      const imposed     = parseAmount(r['imposed_amount'] ?? r['penalty_imposed'] ?? r['total_imposed'] ?? r['fine_amount']);
+      const imposed     = parseAmount(r['imposed_amount'] ?? r['penalty_imposed'] ?? r['penality_imposed'] ?? r['total_imposed'] ?? r['fine_amount']);
       const status      = String(r['hearing_status'] ?? r['decision'] ?? r['case_status'] ?? r['status'] ?? '').trim();
       const vtype       = String(r['violation_type'] ?? r['violation_details'] ?? r['violation_description'] ?? r['infraction_code'] ?? '').trim();
       const boro        = String(r['boro'] ?? r['borough'] ?? r['borocode'] ?? '').trim() || null;
@@ -232,8 +236,8 @@ export async function lookupNYCECB(partyName: string): Promise<ECBResult> {
       note += ` ${defaultCount} violation(s) are in DEFAULT status (debtor failed to appear at hearing).`;
     }
 
-    if (realTotal > DATA_LIMIT) {
-      note += ` (Showing first ${DATA_LIMIT} of ${realTotal} total violations — outstanding balance may be higher.)`;
+    if (truncated) {
+      note += ` (Showing first ${DATA_LIMIT} violations; more exist — outstanding balance may be higher.)`;
     }
 
     return {

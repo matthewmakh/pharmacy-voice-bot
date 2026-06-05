@@ -59,7 +59,7 @@ export default function PayoutStatusCard({ caseData }: { caseData: Case }) {
           <span>
             Released {fmtDateTime(caseData.payoutCompletedAt)}
             {caseData.payoutTransferId && (
-              <span className="text-xs text-slate-500 ml-2 font-mono">{caseData.payoutTransferId}</span>
+              <span className="text-xs text-muted-foreground ml-2 font-mono">{caseData.payoutTransferId}</span>
             )}
           </span>
         </div>
@@ -87,7 +87,7 @@ export default function PayoutStatusCard({ caseData }: { caseData: Case }) {
               <><ArrowRight className="w-4 h-4" /> Release funds to my Stripe account</>
             )}
           </button>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             Card payments need 1–2 business days to clear before transfer succeeds. ACH takes 3–5 business days.
           </p>
         </div>
@@ -110,11 +110,11 @@ function Stat({
       className={`rounded-lg border p-3 ${
         accent === 'emerald'
           ? 'bg-emerald-50 border-emerald-200'
-          : 'bg-slate-50 border-slate-200'
+          : 'bg-muted/40 border-border'
       }`}
     >
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
-      <div className={`text-lg font-semibold ${accent === 'emerald' ? 'text-emerald-700' : 'text-slate-900'}`}>
+      <div className="text-xs text-muted-foreground mb-1">{label}</div>
+      <div className={`text-lg font-semibold ${accent === 'emerald' ? 'text-emerald-700' : 'text-foreground'}`}>
         ${(amount / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </div>
     </div>

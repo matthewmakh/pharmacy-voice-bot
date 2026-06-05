@@ -63,6 +63,7 @@ export interface Document {
   supportsTags: string[];
   confidence: number | null;
   summary: string | null;
+  analysisError: boolean;
   uploadedAt: string;
 }
 
@@ -186,6 +187,7 @@ export interface Case {
   uccResult: Record<string, unknown> | null;
   ecbResult: Record<string, unknown> | null;
   pacerResult: Record<string, unknown> | null;
+  lookupMeta: Record<string, { status: 'running' | 'done' | 'error'; fetchedAt?: string; startedAt?: string; error?: string }> | null;
 
   // Additional pre-trial documents
   affidavitOfServiceHtml: string | null;
@@ -290,6 +292,34 @@ export type CaseListItem = Case & {
   documents: Pick<Document, 'id' | 'originalName' | 'classification'>[];
   actions: Pick<CaseAction, 'id' | 'type' | 'label' | 'createdAt'>[];
 };
+
+export type IntakeFieldName =
+  | 'claimantName' | 'claimantBusiness' | 'claimantAddress' | 'claimantEmail' | 'claimantPhone'
+  | 'debtorName' | 'debtorBusiness' | 'debtorAddress' | 'debtorEmail' | 'debtorPhone' | 'debtorEntityType'
+  | 'amountOwed' | 'amountPaid' | 'serviceDescription'
+  | 'agreementDate' | 'serviceStartDate' | 'serviceEndDate' | 'invoiceDate' | 'paymentDueDate'
+  | 'hasWrittenContract' | 'invoiceNumber' | 'industry';
+
+export interface IntakeFieldExtraction {
+  value: string | number | boolean | null;
+  confidence: 'high' | 'medium' | 'low';
+  sourceDocId: string | null;
+  sourceExcerpt: string | null;
+}
+
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  why: string;
+  field: IntakeFieldName | null;
+  suggestions?: string[];
+}
+
+export interface IntakeAutofillResult {
+  fields: Record<IntakeFieldName, IntakeFieldExtraction>;
+  documentSummary: string;
+  clarifyingQuestions: ClarifyingQuestion[];
+}
 
 export interface CreateCaseInput {
   title?: string;

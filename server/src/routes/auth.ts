@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { signToken, requireAuth } from '../middleware/auth';
+import { signToken, signDownloadToken, requireAuth } from '../middleware/auth';
+import { ensurePersonalOrg } from '../lib/org';
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const user = await prisma.user.create({
       data: { email, passwordHash, name },
     });
+    await ensurePersonalOrg(user);
 
     const token = signToken({ id: user.id, email: user.email });
     res.status(201).json({ token, user: { id: user.id, email: user.email, name: user.name } });
@@ -78,6 +80,12 @@ router.post('/login', async (req: Request, res: Response) => {
       res.status(500).json({ error: 'Login failed' });
     }
   }
+});
+
+// GET /api/auth/download-token — mint a short-lived token for file/PDF URLs
+router.get('/download-token', requireAuth, (req: Request, res: Response) => {
+  const token = signDownloadToken({ id: req.user!.id, email: req.user!.email });
+  res.json({ token, expiresInSeconds: 600 });
 });
 
 // GET /api/auth/me

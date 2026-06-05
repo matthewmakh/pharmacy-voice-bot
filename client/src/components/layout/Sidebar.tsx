@@ -1,6 +1,15 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Scale, X, LogOut, User, CreditCard } from 'lucide-react';
+import { LayoutDashboard, Plus, Scale, X, LogOut, User, CreditCard, Users } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { cn } from '../../lib/utils';
+
+const navClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+    isActive
+      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+      : 'text-sidebar-muted hover:text-sidebar-foreground hover:bg-muted',
+  );
 
 interface Props {
   onClose?: () => void;
@@ -21,30 +30,30 @@ export default function Sidebar({ onClose }: Props) {
   };
 
   return (
-    <aside className="w-60 bg-slate-900 flex flex-col h-full">
+    <aside className="w-60 bg-sidebar border-r border-sidebar-border flex flex-col h-full">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-slate-700/60 flex items-center justify-between">
+      <div className="px-5 h-16 border-b border-sidebar-border flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
-            <Scale className="w-4 h-4 text-white" />
+          <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+            <Scale className="w-[18px] h-[18px] text-primary-foreground" />
           </div>
-          <div>
-            <div className="font-bold text-white text-sm tracking-tight">Reclaim</div>
-            <div className="text-slate-400 text-xs">Collections Platform</div>
+          <div className="leading-tight">
+            <div className="font-semibold text-sidebar-foreground text-[15px] tracking-tight">Reclaim</div>
+            <div className="text-sidebar-muted text-[11px]">Collections Platform</div>
           </div>
         </div>
         {onClose && (
-          <button onClick={onClose} className="lg:hidden text-slate-400 hover:text-white transition-colors ml-2">
+          <button onClick={onClose} className="lg:hidden text-sidebar-muted hover:text-sidebar-foreground transition-colors ml-2">
             <X className="w-5 h-5" />
           </button>
         )}
       </div>
 
       {/* New Case button */}
-      <div className="px-4 pt-4">
+      <div className="px-3 pt-4">
         <button
           onClick={handleNewCase}
-          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2.5 px-3 rounded-lg transition-colors"
+          className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium py-2.5 px-3 rounded-lg transition-colors shadow-sm"
         >
           <Plus className="w-4 h-4" />
           New Case
@@ -53,62 +62,45 @@ export default function Sidebar({ onClose }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        <NavLink
-          to="/"
-          end
-          onClick={onClose}
-          className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`
-          }
-        >
+        <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-muted/70">Workspace</div>
+        <NavLink to="/" end onClick={onClose} className={navClass}>
           <LayoutDashboard className="w-4 h-4 shrink-0" />
           Cases
         </NavLink>
-        <NavLink
-          to="/settings/payouts"
-          onClick={onClose}
-          className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`
-          }
-        >
+        <NavLink to="/settings/payouts" onClick={onClose} className={navClass}>
           <CreditCard className="w-4 h-4 shrink-0" />
           Payouts
+        </NavLink>
+        <NavLink to="/team" onClick={onClose} className={navClass}>
+          <Users className="w-4 h-4 shrink-0" />
+          Team
         </NavLink>
       </nav>
 
       {/* User + logout */}
-      <div className="px-4 py-4 border-t border-slate-700/60 space-y-2">
+      <div className="px-3 py-4 border-t border-sidebar-border space-y-1">
         {user && (
           <div className="flex items-center gap-2.5 px-2 py-1.5">
-            <div className="w-7 h-7 bg-slate-700 rounded-full flex items-center justify-center shrink-0">
-              <User className="w-3.5 h-3.5 text-slate-300" />
+            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center shrink-0">
+              <User className="w-4 h-4 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium text-slate-300 truncate">
+              <div className="text-[13px] font-medium text-sidebar-foreground truncate">
                 {user.name || user.email}
               </div>
               {user.name && (
-                <div className="text-xs text-slate-500 truncate">{user.email}</div>
+                <div className="text-[11px] text-sidebar-muted truncate">{user.email}</div>
               )}
             </div>
           </div>
         )}
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-sidebar-muted hover:text-sidebar-foreground hover:bg-muted transition-colors"
         >
           <LogOut className="w-4 h-4 shrink-0" />
           Sign out
         </button>
-        <div className="text-xs text-slate-600 px-2">New York B2B Collections</div>
       </div>
     </aside>
   );

@@ -1,85 +1,113 @@
-import fs from 'fs';
-import path from 'path';
+/**
+ * Text extraction for uploaded evidence.
+ *
+ * Coverage (previously: plain text, text-layer PDFs, and images only):
+ *  - Plain text / CSV / md / json  → decoded directly
+ *  - Word .docx                    → mammoth (was accepted by the uploader but never
+ *                                    parsed — it fell through to a binary read and fed
+ *                                    the model mojibake)
+ *  - PDF with a text layer         → pdf-parse
+ *  - Scanned / image-only PDF      → Claude reads the PDF natively (was silently empty)
+ *  - Images                        → Claude vision transcription
+ *
+ * Operates on Buffers so it is agnostic to where the bytes came from (local disk or S3).
+ */
 
-export async function extractTextFromFile(
-  filePath: string,
-  mimeType: string,
-  originalName: string
-): Promise<string> {
-  const ext = path.extname(originalName).toLowerCase();
+import { anthropic, MODEL } from '../lib/anthropic';
 
-  // Plain text files
-  if (
-    mimeType.startsWith('text/') ||
-    ['.txt', '.csv', '.md', '.json'].includes(ext)
-  ) {
-    return fs.readFileSync(filePath, 'utf-8').slice(0, 50000);
+const MAX_CHARS = 50_000;
+/** Below this much extracted text, a PDF is treated as scanned and sent to Claude. */
+const SCANNED_PDF_THRESHOLD = 80;
+
+function isWordDocx(mimeType: string, name: string): boolean {
+  return (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    name.toLowerCase().endsWith('.docx')
+  );
+}
+
+export async function extractText(buffer: Buffer, mimeType: string, originalName: string): Promise<string> {
+  const ext = originalName.toLowerCase().slice(originalName.lastIndexOf('.'));
+
+  // Plain text family
+  if (mimeType.startsWith('text/') || ['.txt', '.csv', '.md', '.json'].includes(ext)) {
+    return buffer.toString('utf-8').slice(0, MAX_CHARS);
+  }
+
+  // Word .docx
+  if (isWordDocx(mimeType, originalName)) {
+    try {
+      const mammoth = require('mammoth');
+      const { value } = await mammoth.extractRawText({ buffer });
+      const text = (value || '').trim();
+      return text ? text.slice(0, MAX_CHARS) : `[Word document ${originalName}: no extractable text]`;
+    } catch (err) {
+      console.error('docx parse error:', err);
+      return `[Word document ${originalName}: text extraction failed]`;
+    }
+  }
+
+  // Legacy binary .doc — mammoth cannot read these.
+  if (mimeType === 'application/msword' || ext === '.doc') {
+    return `[Legacy .doc file ${originalName} — please re-upload as .docx or PDF for analysis]`;
   }
 
   // PDF
   if (mimeType === 'application/pdf' || ext === '.pdf') {
+    let text = '';
     try {
       const pdfParse = require('pdf-parse');
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(dataBuffer);
-      return (data.text || '').slice(0, 50000);
+      const data = await pdfParse(buffer);
+      text = (data.text || '').trim();
     } catch (err) {
       console.error('PDF parse error:', err);
-      return `[PDF file: ${originalName} - text extraction failed]`;
     }
+    if (text.length >= SCANNED_PDF_THRESHOLD) return text.slice(0, MAX_CHARS);
+    // Little or no text layer → likely scanned. Let Claude read the PDF directly.
+    const viaClaude = await pdfViaClaude(buffer, originalName);
+    return viaClaude || (text || `[PDF ${originalName}: no extractable text]`);
   }
 
-  // Images - return a placeholder for Claude Vision (we'll send the file directly)
+  // Images
   if (mimeType.startsWith('image/')) {
-    return `[Image file: ${originalName}]`;
+    return imageViaClaude(buffer, mimeType);
   }
 
-  // Fallback
+  // Unknown binary
+  return `[File ${originalName}: unsupported type ${mimeType} — cannot extract text]`;
+}
+
+/** Send a scanned/image-only PDF to Claude for transcription. */
+async function pdfViaClaude(buffer: Buffer, originalName: string): Promise<string | null> {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return content.slice(0, 50000);
-  } catch {
-    return `[Binary file: ${originalName} - cannot extract text]`;
+    const content: any = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } },
+      { type: 'text', text: 'Transcribe all text content of this document exactly as written. Preserve headings, parties, dates, dollar amounts, and signatures. Output only the transcribed text.' },
+    ];
+    const resp = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content }],
+    });
+    const block = resp.content[0];
+    return block && block.type === 'text' ? block.text.slice(0, MAX_CHARS) : null;
+  } catch (err) {
+    console.error(`Claude PDF transcription failed for ${originalName}:`, err);
+    return null;
   }
 }
 
-export async function extractTextFromImage(filePath: string): Promise<string> {
+/** Transcribe an image with Claude vision. */
+async function imageViaClaude(buffer: Buffer, mimeType: string): Promise<string> {
   try {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const imageData = fs.readFileSync(filePath);
-    const base64 = imageData.toString('base64');
-    const mimeType = filePath.match(/\.(jpg|jpeg)$/i)
-      ? 'image/jpeg'
-      : filePath.match(/\.png$/i)
-      ? 'image/png'
-      : filePath.match(/\.gif$/i)
-      ? 'image/gif'
-      : 'image/webp';
-
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mimeType, data: base64 },
-            },
-            {
-              type: 'text',
-              text: 'Please transcribe all text visible in this image. Include all text exactly as shown. If this is a screenshot of a conversation, include all messages. If it is a document, transcribe the full content.',
-            },
-          ],
-        },
-      ],
-    });
-
-    const content = response.content[0];
-    return content.type === 'text' ? content.text : '[Image: could not extract text]';
+    const mediaType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mimeType) ? mimeType : 'image/png';
+    const content: any = [
+      { type: 'image', source: { type: 'base64', media_type: mediaType, data: buffer.toString('base64') } },
+      { type: 'text', text: 'Transcribe all text visible in this image exactly as shown. If it is a screenshot of a conversation, include every message with its sender. If it is a document, transcribe the full content.' },
+    ];
+    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 2048, messages: [{ role: 'user', content }] });
+    const block = resp.content[0];
+    return block && block.type === 'text' ? block.text.slice(0, MAX_CHARS) : '[Image: could not extract text]';
   } catch (err) {
     console.error('Image text extraction error:', err);
     return '[Image: text extraction failed]';

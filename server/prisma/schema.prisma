@@ -13,6 +13,7 @@ model User {
   passwordHash String
   name         String?
   cases        Case[]
+  memberships  Membership[]
 
   // Stripe Connect (claimant payout account)
   stripeAccountId         String?
@@ -50,6 +51,34 @@ model AttorneyPartner {
   @@index([userId])
 }
 
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  memberships Membership[]
+  cases       Case[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role         @default(MEMBER)
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
 model Case {
   id     String     @id @default(cuid())
   status CaseStatus @default(DRAFT)
@@ -58,6 +87,10 @@ model Case {
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id])
+
+  // Owning organization (every member of the org can see the case)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   // Claimant
   claimantName     String?
@@ -123,6 +156,7 @@ model Case {
   uccResult      Json?
   ecbResult      Json?
   pacerResult    Json?
+  lookupMeta     Json?  // per-lookup status+timestamp: { acris: { status, fetchedAt, error? }, ... }
 
   // Additional pre-trial documents
   affidavitOfServiceHtml String? @db.Text
@@ -243,6 +277,7 @@ model Case {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([organizationId])
   @@index([status])
   @@index([createdAt])
 }
@@ -264,6 +299,7 @@ model Document {
   supportsTags   String[]
   confidence     Float?
   summary        String? @db.Text
+  analysisError  Boolean @default(false)
 
   uploadedAt DateTime @default(now())
 

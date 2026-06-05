@@ -1,4 +1,11 @@
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 import type { CaseStatus, Strategy } from '../types';
+
+/** Merge Tailwind class names (shadcn convention): conditional classes + conflict resolution. */
+export function cn(...inputs: ClassValue[]): string {
+  return twMerge(clsx(inputs));
+}
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 

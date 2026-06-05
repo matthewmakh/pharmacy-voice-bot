@@ -1,24 +1,50 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import path from 'path';
 import fs from 'fs';
 import rateLimit from 'express-rate-limit';
 import casesRouter from './routes/cases';
 import documentsRouter from './routes/documents';
 import authRouter from './routes/auth';
+import orgsRouter from './routes/orgs';
 import webhooksRouter from './routes/webhooks';
 import portalRouter from './routes/portal';
 import payoutsRouter from './routes/payouts';
 import handoffRouter from './routes/handoff';
 import attorneyRouter from './routes/attorney';
 import prisma from './lib/prisma';
+import { storageHealthWarning } from './lib/storage';
+import { ensurePersonalOrg, primaryOrgId } from './lib/org';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
 app.set('trust proxy', 1);
+
+// ─── Security headers ───────────────────────────────────────────────────────────
+// CSP is tailored so it does not break the Vite SPA or the inline-styled legal
+// documents we render in blob tabs, while still blocking foreign scripts/frames.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'self'"],
+        baseUri: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }),
+);
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 // Strict limit for auth routes (prevents brute force)
@@ -84,6 +110,7 @@ function keyState(key: string | undefined, mode?: string): { configured: boolean
 }
 
 app.use('/api/auth', authLimiter, authRouter);
+app.use('/api/orgs', apiLimiter, orgsRouter);
 app.use('/api/cases', apiLimiter, casesRouter);
 app.use('/api/cases/:caseId/documents', apiLimiter, documentsRouter);
 app.use('/api/portal', apiLimiter, portalRouter);
@@ -113,6 +140,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 async function start() {
+  const warning = storageHealthWarning();
+  if (warning) console.warn(`\n⚠ ${warning}\n`);
+
   // Reset any cases left stuck in ANALYZING/GENERATING from a previous server crash or restart.
   // These cases will never self-recover because the error handler never ran.
   try {
@@ -125,6 +155,24 @@ async function start() {
     }
   } catch (err) {
     console.error('Startup cleanup failed (non-fatal):', err);
+  }
+
+  // Multi-tenancy backfill (idempotent): give every pre-existing user a personal org
+  // and assign every unscoped case to its creator's org. Safe to run on every boot.
+  try {
+    const usersWithoutOrg = await prisma.user.findMany({ where: { memberships: { none: {} } }, select: { id: true, email: true, name: true } });
+    for (const u of usersWithoutOrg) await ensurePersonalOrg(u);
+
+    const orphanCases = await prisma.case.findMany({ where: { organizationId: null, userId: { not: null } }, select: { id: true, userId: true } });
+    for (const c of orphanCases) {
+      const orgId = await primaryOrgId(c.userId!);
+      if (orgId) await prisma.case.update({ where: { id: c.id }, data: { organizationId: orgId } });
+    }
+    if (usersWithoutOrg.length || orphanCases.length) {
+      console.log(`Startup: provisioned ${usersWithoutOrg.length} org(s), assigned ${orphanCases.length} case(s) to an org`);
+    }
+  } catch (err) {
+    console.error('Org backfill failed (non-fatal):', err);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

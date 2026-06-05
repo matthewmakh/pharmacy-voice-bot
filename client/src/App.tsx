@@ -1,8 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
+import Team from './pages/Team';
 import CaseDetail from './pages/case-detail';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -17,8 +19,8 @@ function ProtectedRoutes() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-slate-400 text-sm">Loading...</div>
+      <div className="min-h-screen bg-muted flex items-center justify-center">
+        <div className="text-muted-foreground text-sm">Loading...</div>
       </div>
     );
   }
@@ -33,6 +35,7 @@ function ProtectedRoutes() {
         <Route path="cases/:id" element={<CaseDetail />} />
         <Route path="cases/:id/walkthrough" element={<WalkthroughPage />} />
         <Route path="settings/payouts" element={<PayoutSettings />} />
+        <Route path="team" element={<Team />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -43,15 +46,17 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
-          <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
-          <Route path="/respond/submitted" element={<DebtorPortalSubmitted />} />
-          <Route path="/respond/paid" element={<DebtorPortalSubmitted />} />
-          <Route path="/respond/:token" element={<DebtorPortal />} />
-          <Route path="/attorney/:token" element={<AttorneyPortal />} />
-          <Route path="/*" element={<ProtectedRoutes />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+            <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+            <Route path="/respond/submitted" element={<DebtorPortalSubmitted />} />
+            <Route path="/respond/paid" element={<DebtorPortalSubmitted />} />
+            <Route path="/respond/:token" element={<DebtorPortal />} />
+            <Route path="/attorney/:token" element={<AttorneyPortal />} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );
