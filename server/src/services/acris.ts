@@ -1,11 +1,12 @@
-// NYC ACRIS Real Property Parties lookup via NYC Open Data (free, no auth required)
+// NYC ACRIS Real Property Parties lookup via NYC Open Data (Socrata)
 // Dataset: ACRIS Real Property Parties — https://data.cityofnewyork.us/resource/636b-3b5g.json
 // party_type "2" = GRANTEE (buyer/current holder), "1" = GRANTOR (seller/transferor)
 //
-// Fix log:
-//   - Use a $count query first to get the real total (old $limit=50 silently truncated)
-//   - Raise data fetch limit to 500 rows; warn in note when count exceeds it
-//   - Ignore party_type values outside '1'/'2' so asGrantee+asGrantor always = totalRecords
+// Auth: optional X-App-Token from NYC_OPEN_DATA_TOKEN — strongly recommended.
+// Anonymous requests are heavily throttled and return 500 under load.
+// Retries on 429/5xx via shared fetchWithRetry.
+
+import { fetchWithRetry } from './lib/httpClient';
 
 export interface ACRISResult {
   found: boolean;
@@ -15,14 +16,15 @@ export interface ACRISResult {
   searchedName: string;
   note: string;
   error?: string;
+  scraperNote?: string;
 }
 
 const DATA_LIMIT = 500;
+const BASE_URL   = 'https://data.cityofnewyork.us/resource/636b-3b5g.json';
 
 export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
-  const cleanName = partyName.trim().toUpperCase().replace(/'/g, "''");
+  const cleanName   = partyName.trim().toUpperCase().replace(/'/g, "''");
   const whereClause = `upper(name)='${cleanName}'`;
-  const baseUrl = 'https://data.cityofnewyork.us/resource/636b-3b5g.json';
 
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (process.env.NYC_OPEN_DATA_TOKEN) {
@@ -30,16 +32,17 @@ export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
   }
 
   try {
-    // ── Step 1: get accurate total count ──────────────────────────────────────
-    const countUrl = `${baseUrl}?$where=${encodeURIComponent(whereClause)}&$select=count(*)`;
-    const countResp = await fetch(countUrl, { headers, signal: AbortSignal.timeout(25_000) });
-    if (!countResp.ok) {
-      return noResult(partyName, `ACRIS API returned ${countResp.status}`);
+    // Single query — fetch only party_type for up to DATA_LIMIT+1 records.
+    // Socrata's count(*) is O(table) on this dataset (~40s for common names);
+    // skip it and infer truncation by asking for one extra row.
+    const dataUrl = `${BASE_URL}?$where=${encodeURIComponent(whereClause)}&$select=party_type&$limit=${DATA_LIMIT + 1}`;
+    const dataResp = await fetchWithRetry(dataUrl, { headers, timeoutMs: 15_000 }, 4);
+    if (!dataResp.ok) {
+      return noResult(partyName, `ACRIS returned ${dataResp.status}`, hintForStatus(dataResp.status));
     }
-    const countData = await countResp.json() as Array<Record<string, string>>;
-    const realTotal = parseInt(countData[0]?.['count'] ?? '0', 10);
+    const records = await dataResp.json() as Array<{ party_type: string }>;
 
-    if (realTotal === 0) {
+    if (records.length === 0) {
       return {
         found: false, totalRecords: 0, asGrantee: 0, asGrantor: 0,
         searchedName: partyName.trim().toUpperCase(),
@@ -47,40 +50,27 @@ export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
       };
     }
 
-    // ── Step 2: fetch records (capped at DATA_LIMIT, only columns we need) ───
-    const dataUrl = `${baseUrl}?$where=${encodeURIComponent(whereClause)}&$select=party_type&$limit=${DATA_LIMIT}`;
-    const dataResp = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(25_000) });
-    if (!dataResp.ok) {
-      return noResult(partyName, `ACRIS data fetch returned ${dataResp.status}`);
-    }
-
-    const records = await dataResp.json() as Array<{ party_type: string }>;
-    // Only count the two canonical party types — ignore reference/other entries
-    const asGrantee = records.filter(r => r.party_type === '2').length;
-    const asGrantor = records.filter(r => r.party_type === '1').length;
-    const fetchedCount = records.length;
-    const truncated = realTotal > DATA_LIMIT;
+    const truncated = records.length > DATA_LIMIT;
+    const sample    = truncated ? records.slice(0, DATA_LIMIT) : records;
+    const asGrantee = sample.filter(r => r.party_type === '2').length;
+    const asGrantor = sample.filter(r => r.party_type === '1').length;
+    const realTotal = truncated ? DATA_LIMIT : records.length;
 
     // ── Step 3: build note ───────────────────────────────────────────────────
-    const displayTotal = realTotal; // always show the real total, not the fetched count
     let note: string;
-
     if (asGrantee > asGrantor) {
-      note = `${displayTotal} NYC property record(s) found${truncated ? ` (showing first ${DATA_LIMIT})` : ''} — debtor has more acquisitions (${asGrantee}) than sales (${asGrantor}). May currently own NYC real estate that can be liened after judgment. Verify current ownership on ACRIS before filing a lien.`;
+      note = `${realTotal} NYC property record(s) found${truncated ? ` (showing first ${DATA_LIMIT})` : ''} — debtor has more acquisitions (${asGrantee}) than sales (${asGrantor}). May currently own NYC real estate that can be liened after judgment. Verify current ownership on ACRIS before filing a lien.`;
     } else if (asGrantee > 0 && asGrantor === 0) {
-      note = `${displayTotal} NYC property record(s) found — debtor acquired property with no corresponding sale on record. May currently own NYC real estate. Verify on ACRIS.`;
+      note = `${realTotal} NYC property record(s) found — debtor acquired property with no corresponding sale on record. May currently own NYC real estate. Verify on ACRIS.`;
     } else if (asGrantor > 0 && asGrantee === 0) {
-      note = `${displayTotal} NYC property record(s) found — debtor appears only as a grantor (seller/transferor). They may no longer hold NYC real property. Verify on ACRIS.`;
+      note = `${realTotal} NYC property record(s) found — debtor appears only as a grantor (seller/transferor). They may no longer hold NYC real property. Verify on ACRIS.`;
     } else if (asGrantee === 0 && asGrantor === 0) {
-      // Records exist but none have party_type 1 or 2 — reference entries
-      note = `${displayTotal} ACRIS record(s) found but none are ownership records (all appear to be reference entries). Verify manually on ACRIS.`;
+      note = `${realTotal} ACRIS record(s) found but none are ownership records (all appear to be reference entries). Verify manually on ACRIS.`;
     } else {
-      note = `${displayTotal} NYC property record(s) found (${asGrantee} acquisitions, ${asGrantor} transfers). Debtor may retain ownership of some NYC property — verify on ACRIS to confirm current holdings.`;
+      note = `${realTotal} NYC property record(s) found (${asGrantee} acquisitions, ${asGrantor} transfers). Debtor may retain ownership of some NYC property — verify on ACRIS.`;
     }
 
-    if (truncated) {
-      note += ` Note: this debtor has more than ${DATA_LIMIT} ACRIS records — results are partial.`;
-    }
+    if (truncated) note += ` Note: at least ${DATA_LIMIT} ACRIS records — counts above reflect the first ${DATA_LIMIT} only.`;
 
     return {
       found: true,
@@ -96,11 +86,18 @@ export async function lookupACRIS(partyName: string): Promise<ACRISResult> {
   }
 }
 
-function noResult(partyName: string, error: string): ACRISResult {
+function hintForStatus(status: number): string | undefined {
+  if (status === 429) return 'Set NYC_OPEN_DATA_TOKEN to bypass anonymous throttling (free at data.cityofnewyork.us/profile/app_tokens).';
+  if (status >= 500) return 'Socrata is returning server errors — retried 4x. Try again in a minute.';
+  return undefined;
+}
+
+function noResult(partyName: string, error: string, scraperNote?: string): ACRISResult {
   return {
     found: false, totalRecords: 0, asGrantee: 0, asGrantor: 0,
     searchedName: partyName.trim().toUpperCase(),
     note: '',
     error,
+    scraperNote,
   };
 }
